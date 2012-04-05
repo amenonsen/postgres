@@ -42,6 +42,7 @@
 #include "postmaster/startup.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
+#include "replication/logical.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -4985,6 +4986,13 @@ StartupXLOG(void)
 	SetTransactionIdLimit(checkPoint.oldestXid, checkPoint.oldestXidDB);
 	XLogCtl->ckptXidEpoch = checkPoint.nextXidEpoch;
 	XLogCtl->ckptXid = checkPoint.nextXid;
+
+
+	/*
+	 * Startup logical state, needs to be setup now so we have proper data
+	 * during restore. XXX
+	 */
+	StartupLogicalReplication(checkPoint.redo);
 
 	/*
 	 * We must replay WAL entries using the same TimeLineID they were created
