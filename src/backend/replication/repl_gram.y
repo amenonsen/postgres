@@ -73,6 +73,9 @@ Node *replication_parse_result;
 %token K_BASE_BACKUP
 %token K_IDENTIFY_SYSTEM
 %token K_START_REPLICATION
+%token K_INIT_LOGICAL_REPLICATION
+%token K_START_LOGICAL_REPLICATION
+%token K_FREE_LOGICAL_REPLICATION
 %token K_TIMELINE_HISTORY
 %token K_LABEL
 %token K_PROGRESS
@@ -82,7 +85,7 @@ Node *replication_parse_result;
 %token K_TIMELINE
 
 %type <node>	command
-%type <node>	base_backup start_replication identify_system timeline_history
+%type <node>	base_backup start_replication start_logical_replication init_logical_replication free_logical_replication identify_system timeline_history
 %type <list>	base_backup_opt_list
 %type <defelt>	base_backup_opt
 %type <intval>	opt_timeline
@@ -102,6 +105,9 @@ command:
 			identify_system
 			| base_backup
 			| start_replication
+			| init_logical_replication
+			| start_logical_replication
+			| free_logical_replication
 			| timeline_history
 			;
 
@@ -186,6 +192,42 @@ opt_timeline:
 				| /* nothing */			{ $$ = 0; }
 			;
 
+/* FIXME: don't use SCONST */
+init_logical_replication:
+			K_INIT_LOGICAL_REPLICATION SCONST
+				{
+					InitLogicalReplicationCmd *cmd;
+					cmd = makeNode(InitLogicalReplicationCmd);
+					cmd->plugin = $2;
+
+					$$ = (Node *) cmd;
+				}
+			;
+
+/* FIXME: don't use SCONST */
+start_logical_replication:
+			K_START_LOGICAL_REPLICATION SCONST RECPTR
+				{
+					StartLogicalReplicationCmd *cmd;
+					cmd = makeNode(StartLogicalReplicationCmd);
+					cmd->name = $2;
+					cmd->startpoint = $3;
+
+					$$ = (Node *) cmd;
+				}
+			;
+
+/* FIXME: don't use SCONST */
+free_logical_replication:
+			K_FREE_LOGICAL_REPLICATION SCONST
+				{
+					FreeLogicalReplicationCmd *cmd;
+					cmd = makeNode(FreeLogicalReplicationCmd);
+					cmd->name = $2;
+					$$ = (Node *) cmd;
+				}
+			;
+
 /*
  * TIMELINE_HISTORY %d
  */
@@ -205,6 +247,7 @@ timeline_history:
 					$$ = (Node *) cmd;
 				}
 			;
+
 %%
 
 #include "repl_scanner.c"

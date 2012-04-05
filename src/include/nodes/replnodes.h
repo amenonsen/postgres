@@ -52,6 +52,39 @@ typedef struct StartReplicationCmd
 
 
 /* ----------------------
+ *		INIT_LOGICAL_REPLICATION command
+ * ----------------------
+ */
+typedef struct InitLogicalReplicationCmd
+{
+	NodeTag		type;
+	char       *plugin;
+} InitLogicalReplicationCmd;
+
+
+/* ----------------------
+ *		START_LOGICAL_REPLICATION command
+ * ----------------------
+ */
+typedef struct StartLogicalReplicationCmd
+{
+	NodeTag		type;
+	char       *name;
+	XLogRecPtr	startpoint;
+} StartLogicalReplicationCmd;
+
+/* ----------------------
+ *		FREE_LOGICAL_REPLICATION command
+ * ----------------------
+ */
+typedef struct FreeLogicalReplicationCmd
+{
+	NodeTag		type;
+	char       *name;
+} FreeLogicalReplicationCmd;
+
+
+/* ----------------------
  *		TIMELINE_HISTORY command
  * ----------------------
  */

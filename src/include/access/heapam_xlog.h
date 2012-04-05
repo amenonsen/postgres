@@ -54,6 +54,7 @@
 #define XLOG_HEAP2_CLEANUP_INFO 0x30
 #define XLOG_HEAP2_VISIBLE		0x40
 #define XLOG_HEAP2_MULTI_INSERT 0x50
+#define XLOG_HEAP2_NEW_CID 0x60
 
 /*
  * All what we need to find changed tuple
@@ -237,6 +238,28 @@ typedef struct xl_heap_visible
 } xl_heap_visible;
 
 #define SizeOfHeapVisible (offsetof(xl_heap_visible, cutoff_xid) + sizeof(TransactionId))
+
+typedef struct xl_heap_new_cid
+{
+	/*
+	 * store toplevel xid so we don't have to merge cids from different
+	 * transactions
+	 */
+	TransactionId top_xid;
+	CommandId cmin;
+	CommandId cmax;
+	/*
+	 * don't really need the combocid but the padding makes it free and its
+	 * useful for debugging.
+	 */
+	CommandId combocid;
+	/*
+	 * Store the relfilenode/ctid pair to facilitate lookups.
+	 */
+	xl_heaptid target;
+} xl_heap_new_cid;
+
+#define SizeOfHeapNewCid (offsetof(xl_heap_new_cid, target) + SizeOfHeapTid)
 
 extern void HeapTupleHeaderAdvanceLatestRemovedXid(HeapTupleHeader tuple,
 									   TransactionId *latestRemovedXid);
