@@ -121,6 +121,14 @@ typedef struct XLogReaderState
 
 } XLogReaderState;
 
+
+typedef struct XLogRecordBuffer
+{
+	XLogRecPtr origptr;
+	XLogRecord record;
+	char *record_data;
+} XLogRecordBuffer;
+
 /*
  * Get a new XLogReader
  *

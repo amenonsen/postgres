@@ -2032,6 +2032,17 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		/* see max_connections */
+		{"max_logical_slots", PGC_POSTMASTER, REPLICATION_SENDING,
+			gettext_noop("Sets the maximum number of simultaneously defined WAL decoding slots."),
+			NULL
+		},
+		&max_logical_slots,
+		0, 0, MAX_BACKENDS /*?*/,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"wal_sender_timeout", PGC_SIGHUP, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum time to wait for WAL replication."),
 			NULL,

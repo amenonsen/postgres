@@ -51,6 +51,8 @@
 #include "access/xact.h"
 #include "access/twophase.h"
 #include "miscadmin.h"
+#include "replication/walsender.h"
+#include "replication/walsender_private.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/spin.h"
@@ -1156,6 +1158,14 @@ GetOldestXmin(bool allDbs, bool ignoreVacuum)
 		}
 	}
 
+	if (max_logical_slots > 0 &&
+		TransactionIdIsValid(WalSndCtl->logical_xmin) &&
+		TransactionIdPrecedes(WalSndCtl->logical_xmin, result))
+	{
+		result = WalSndCtl->logical_xmin;
+	}
+
+
 	if (RecoveryInProgress())
 	{
 		/*
@@ -1442,9 +1452,16 @@ GetSnapshotData(Snapshot snapshot)
 			suboverflowed = true;
 	}
 
+	/* FIXME: comment & concurrency */
+	if (TransactionIdIsValid(WalSndCtl->logical_xmin) &&
+		TransactionIdPrecedes(WalSndCtl->logical_xmin, xmin))
+		xmin = WalSndCtl->logical_xmin;
+
 	if (!TransactionIdIsValid(MyPgXact->xmin))
 		MyPgXact->xmin = TransactionXmin = xmin;
+
 	LWLockRelease(ProcArrayLock);
+
 
 	/*
 	 * Update globalxmin to include actual process xids.  This is a slightly
@@ -1694,6 +1711,12 @@ GetRunningTransactionData(void)
 			}
 		}
 	}
+
+	/*
+	 * Its important *not* to track decoding tasks here because snapbuild.c
+	 * uses ->oldestRunningXid to manage its xmin. If it were to be included
+	 * here the initial value could never increase.
+	 */
 
 	CurrentRunningXacts->xcnt = count - subcount;
 	CurrentRunningXacts->subxcnt = subcount;

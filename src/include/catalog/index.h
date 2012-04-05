@@ -114,4 +114,8 @@ extern bool ReindexIsProcessingHeap(Oid heapOid);
 extern bool ReindexIsProcessingIndex(Oid indexOid);
 extern Oid	IndexGetRelation(Oid indexId, bool missing_ok);
 
+extern void relationFindPrimaryKey(Relation pkrel, Oid *indexOid,
+                                   int16 *nratts, int16 *attnums, Oid *atttypids,
+                                   Oid *opclasses);
+
 #endif   /* INDEX_H */

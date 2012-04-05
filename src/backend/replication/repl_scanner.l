@@ -64,6 +64,8 @@ NOWAIT			{ return K_NOWAIT; }
 PROGRESS			{ return K_PROGRESS; }
 WAL			{ return K_WAL; }
 START_REPLICATION	{ return K_START_REPLICATION; }
+INIT_LOGICAL_REPLICATION	{ return K_INIT_LOGICAL_REPLICATION; }
+START_LOGICAL_REPLICATION	{ return K_START_LOGICAL_REPLICATION; }
 ","				{ return ','; }
 ";"				{ return ';'; }
 

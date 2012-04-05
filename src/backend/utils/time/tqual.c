@@ -64,6 +64,8 @@
 #include "access/xact.h"
 #include "storage/bufmgr.h"
 #include "storage/procarray.h"
+#include "utils/builtins.h"
+#include "utils/combocid.h"
 #include "utils/tqual.h"
 
 
@@ -72,6 +74,8 @@ SnapshotData SnapshotNowData = {HeapTupleSatisfiesNow};
 SnapshotData SnapshotSelfData = {HeapTupleSatisfiesSelf};
 SnapshotData SnapshotAnyData = {HeapTupleSatisfiesAny};
 SnapshotData SnapshotToastData = {HeapTupleSatisfiesToast};
+
+static Snapshot SnapshotNowDecoding;
 
 /* local functions */
 static bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot);
@@ -1406,4 +1410,249 @@ XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot)
 	}
 
 	return false;
+}
+
+static bool
+TransactionIdInArray(TransactionId xid, TransactionId *xip, Size num)
+{
+	return bsearch(&xid, xip, num,
+	               sizeof(TransactionId), xidComparator) != NULL;
+}
+
+static HTAB *tuplecid_data = NULL;
+
+/*
+ * See the comments for HeapTupleSatisfiesMVCC for the semantics this function
+ * obeys.
+ *
+ * Only usable on tuples from catalog tables!
+ *
+ * We don't need to support HEAP_MOVED_(IN|OFF) for now because we only support
+ * reading catalog pages which couldn't have been created in an older version.
+ *
+ * We don't set any hint bits in here as it seems unlikely to be beneficial as
+ * those should already be set by normal access and it seems to be too
+ * dangerous to do so as the semantics of doing so during timetravel are more
+ * complicated than when dealing "only" with the present.
+ */
+bool
+HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
+                                     Buffer buffer)
+{
+	HeapTupleHeader tuple = htup->t_data;
+/*#define DEBUG_ME*/
+	TransactionId xmin = HeapTupleHeaderGetXmin(tuple);
+	TransactionId xmax = HeapTupleHeaderGetXmax(tuple);
+
+	Assert(ItemPointerIsValid(&htup->t_self));
+	Assert(htup->t_tableOid != InvalidOid);
+
+	/* transaction aborted */
+	if (tuple->t_infomask & HEAP_XMIN_INVALID)
+	{
+		Assert(!TransactionIdDidCommit(xmin));
+		goto invisible;
+	}
+    /* check if its one of our txids, toplevel is also in there */
+	else if (TransactionIdInArray(xmin, snapshot->subxip, snapshot->subxcnt))
+	{
+		CommandId cmin = HeapTupleHeaderGetRawCommandId(tuple);
+		CommandId cmax = InvalidCommandId;
+
+		/*
+		 * if another transaction deleted this tuple or if cmin/cmax is stored
+		 * in a combocid we need to to lookup the actual values externally.
+		 */
+		if ((!(tuple->t_infomask & HEAP_XMAX_INVALID) &&
+			 !TransactionIdInArray(xmax, snapshot->subxip, snapshot->subxcnt)) ||
+			tuple->t_infomask & HEAP_COMBOCID
+			)
+		{
+			bool resolved;
+
+			resolved = ResolveCminCmaxDuringDecoding(tuplecid_data, htup,
+													 buffer, &cmin, &cmax);
+
+			if (!resolved)
+				elog(ERROR, "could not resolve cmin/cmax of catalog tuple");
+		}
+
+#ifdef DEBUG_ME
+		elog(LOG, "curcid: %u cmin: %u; invisible: %u", snapshot->curcid, cmin,
+			 cmin >= snapshot->curcid);
+#endif
+		if (cmin >= snapshot->curcid)
+			goto invisible;	/* inserted after scan started */
+	}
+	/* normal transaction state counts */
+	else if (TransactionIdPrecedes(xmin, snapshot->xmin))
+	{
+		Assert(!(tuple->t_infomask & HEAP_XMIN_COMMITTED &&
+				 !TransactionIdDidCommit(xmin)));
+
+		if (!(tuple->t_infomask & HEAP_XMIN_COMMITTED) &&
+			!TransactionIdDidCommit(xmin))
+			goto invisible;
+	}
+	/* beyond our xmax horizon, i.e. invisible */
+	else if (TransactionIdFollows(xmin, snapshot->xmax))
+	{
+		goto invisible;
+	}
+	/* check if we know the transaction has committed */
+	else if(TransactionIdInArray(xmin, snapshot->xip, snapshot->xcnt))
+	{
+	}
+	else
+	{
+		goto invisible;
+	}
+
+	/* at this point we know xmin is visible */
+
+	/* why should those be in catalog tables? */
+	Assert(!(tuple->t_infomask & HEAP_XMAX_IS_MULTI));
+
+	/* xid invalid or aborted */
+	if (tuple->t_infomask & HEAP_XMAX_INVALID)
+		goto visible;
+	/* locked tuples are always visible */
+	else if (tuple->t_infomask & HEAP_IS_LOCKED)
+		goto visible;
+    /* check if its one of our txids, toplevel is also in there */
+	else if (TransactionIdInArray(xmax, snapshot->subxip, snapshot->subxcnt))
+	{
+		CommandId cmin;
+		CommandId cmax = HeapTupleHeaderGetRawCommandId(tuple);
+
+		/* Lookup actual cmin/cmax values */
+		if (tuple->t_infomask & HEAP_COMBOCID){
+#ifdef DEBUG_ME
+			CommandId combocid = cmax;
+#endif
+			bool resolved;
+
+			resolved = ResolveCminCmaxDuringDecoding(tuplecid_data, htup,
+													 buffer, &cmin, &cmax);
+
+			if (!resolved)
+			{
+				elog(FATAL, "could not resolve combocid to cmax");
+				goto invisible;
+			}
+
+
+#ifdef DEBUG_ME
+			elog(LOG, "converting combocid %u to cmax %u (cmin %u)",
+				 combocid, cmax, cmin);
+#endif
+		}
+#ifdef DEBUG_ME
+		elog(LOG, "curcid: %u, cmax %u, visible: %u", snapshot->curcid, cmax,
+			 cmax >= snapshot->curcid);
+#endif
+		if (cmax >= snapshot->curcid)
+			goto visible;	/* deleted after scan started */
+		else
+			goto invisible;	/* deleted before scan started */
+	}
+	/* we cannot possibly see the deleting transaction */
+	else if (TransactionIdFollows(xmax, snapshot->xmax))
+	{
+		goto visible;
+	}
+	/* normal transaction state is valid */
+	else if (TransactionIdPrecedes(xmax, snapshot->xmin))
+	{
+		Assert(!(tuple->t_infomask & HEAP_XMAX_COMMITTED &&
+				 !TransactionIdDidCommit(xmax)));
+
+		if (tuple->t_infomask & HEAP_XMAX_COMMITTED)
+			goto invisible;
+
+		if (TransactionIdDidCommit(xmax))
+			goto invisible;
+		else
+			goto visible;
+	}
+	/* do we know that the deleting txn is valid? */
+	else if (TransactionIdInArray(xmax, snapshot->xip, snapshot->xcnt))
+	{
+		goto invisible;
+	}
+	else
+	{
+		goto visible;
+	}
+visible:
+#ifdef DEBUG_ME
+	if (xmin > FirstNormalTransactionId)
+		elog(DEBUG1, "visible tuple with xmin: %u, xmax: %u, cmin %u, snapmin: %u, snapmax: %u, snapcid: %u, owncnt: %u top: %u, combo: %u, (%u, %u)",
+			 xmin, xmax, HeapTupleHeaderGetRawCommandId(tuple),
+			 snapshot->xmin, snapshot->xmax, snapshot->curcid,
+			 snapshot->subxcnt, snapshot->subxcnt ? snapshot->subxip[0] : 0,
+			 !!(tuple->t_infomask & HEAP_COMBOCID),
+			 BlockIdGetBlockNumber(&htup->t_self.ip_blkid), htup->t_self.ip_posid);
+#endif
+	return true;
+
+invisible:
+#ifdef DEBUG_ME
+	if (xmin > FirstNormalTransactionId)
+		elog(DEBUG1, "invisible tuple with xmin: %u, xmax: %u, cmin %u, snapmin: %u, snapmax: %u, snapcid: %u, owncnt: %u top: %u, combo: %u, (%u, %u)",
+			 xmin, xmax, HeapTupleHeaderGetRawCommandId(tuple),
+			 snapshot->xmin, snapshot->xmax, snapshot->curcid,
+			 snapshot->subxcnt, snapshot->subxcnt ? snapshot->subxip[0] : 0,
+			 !!(tuple->t_infomask & HEAP_COMBOCID),
+			 BlockIdGetBlockNumber(&htup->t_self.ip_blkid), htup->t_self.ip_posid);
+#endif
+	return false;
+}
+
+static bool
+FailsSatisfies(HeapTuple htup, Snapshot snapshot, Buffer buffer)
+{
+	elog(ERROR, "Normal snapshots cannot be used during timetravel access.");
+	return false;
+}
+
+static bool
+RedirectSatisfiesNow(HeapTuple htup, Snapshot snapshot, Buffer buffer)
+{
+	Assert(SnapshotNowDecoding != NULL);
+	return HeapTupleSatisfiesMVCCDuringDecoding(htup, SnapshotNowDecoding,
+	                                            buffer);
+}
+
+void
+SetupDecodingSnapshots(Snapshot snapshot_now, HTAB *tuplecids)
+{
+	/* prevent recursively setting up decoding snapshots */
+	Assert(SnapshotNowData.satisfies != RedirectSatisfiesNow);
+
+	SnapshotNowData.satisfies = RedirectSatisfiesNow;
+	/* make sure normal snapshots aren't used*/
+	SnapshotSelfData.satisfies = FailsSatisfies;
+	SnapshotAnyData.satisfies = FailsSatisfies;
+	SnapshotToastData.satisfies = FailsSatisfies;
+
+	/* setup the timetravel snapshot */
+	SnapshotNowDecoding = snapshot_now;
+
+	/* setup (cmin, cmax) lookup hash */
+	tuplecid_data = tuplecids;
+}
+
+
+void
+RevertFromDecodingSnapshots(void)
+{
+	SnapshotNowDecoding = NULL;
+	tuplecid_data = NULL;
+
+	/* rally to restore sanity and/or boredom */
+	SnapshotNowData.satisfies = HeapTupleSatisfiesNow;
+	SnapshotSelfData.satisfies = HeapTupleSatisfiesSelf;
+	SnapshotAnyData.satisfies = HeapTupleSatisfiesAny;
+	SnapshotToastData.satisfies = HeapTupleSatisfiesToast;
 }

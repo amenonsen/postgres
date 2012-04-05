@@ -50,6 +50,7 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "parser/parser.h"
+#include "parser/parse_relation.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -3544,4 +3545,77 @@ static void
 ResetReindexPending(void)
 {
 	pendingReindexedIndexes = NIL;
+}
+
+/*
+ * relationFindPrimaryKey
+ *		Find primary key for a relation if it exists.
+ *
+ * If no primary key is found *indexOid is set to InvalidOid
+ *
+ * This is quite similar to tablecmd.c's transformFkeyGetPrimaryKey.
+ *
+ * XXX: It might be a good idea to change pg_class.relhaspkey into an bool to
+ * make this more efficient.
+ */
+void
+relationFindPrimaryKey(Relation pkrel, Oid *indexOid,
+                       int16 *nratts, int16 *attnums, Oid *atttypids,
+                       Oid *opclasses){
+	List *indexoidlist;
+	ListCell *indexoidscan;
+	HeapTuple indexTuple = NULL;
+	Datum indclassDatum;
+	bool isnull;
+	oidvector  *indclass;
+	int i;
+	Form_pg_index indexStruct = NULL;
+
+	*indexOid = InvalidOid;
+
+	indexoidlist = RelationGetIndexList(pkrel);
+
+	foreach(indexoidscan, indexoidlist)
+	{
+		Oid indexoid = lfirst_oid(indexoidscan);
+
+		indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
+		if(!HeapTupleIsValid(indexTuple))
+			elog(ERROR, "cache lookup failed for index %u", indexoid);
+
+		indexStruct = (Form_pg_index) GETSTRUCT(indexTuple);
+		if(indexStruct->indisprimary && indexStruct->indimmediate)
+		{
+			*indexOid = indexoid;
+			break;
+		}
+		ReleaseSysCache(indexTuple);
+
+	}
+	list_free(indexoidlist);
+
+	if (!OidIsValid(*indexOid))
+		return;
+
+	/* Must get indclass the hard way */
+	indclassDatum = SysCacheGetAttr(INDEXRELID, indexTuple,
+									Anum_pg_index_indclass, &isnull);
+	Assert(!isnull);
+	indclass = (oidvector *) DatumGetPointer(indclassDatum);
+
+	*nratts = indexStruct->indnatts;
+	/*
+	 * Now build the list of PK attributes from the indkey definition (we
+	 * assume a primary key cannot have expressional elements)
+	 */
+	for (i = 0; i < indexStruct->indnatts; i++)
+	{
+		int			pkattno = indexStruct->indkey.values[i];
+
+		attnums[i] = pkattno;
+		atttypids[i] = attnumTypeId(pkrel, pkattno);
+		opclasses[i] = indclass->values[i];
+	}
+
+	ReleaseSysCache(indexTuple);
 }

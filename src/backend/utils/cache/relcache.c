@@ -508,7 +508,6 @@ RelationBuildTupleDesc(Relation relation)
 	if (need != 0)
 		elog(ERROR, "catalog is missing %d attribute(s) for relid %u",
 			 need, RelationGetRelid(relation));
-
 	/*
 	 * The attcacheoff values we read from pg_attribute should all be -1
 	 * ("unknown").  Verify this if assert checking is on.	They will be

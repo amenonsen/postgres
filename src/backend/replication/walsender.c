@@ -48,10 +48,13 @@
 #include "miscadmin.h"
 #include "nodes/replnodes.h"
 #include "replication/basebackup.h"
+#include "replication/decode.h"
+#include "replication/logicalfuncs.h"
 #include "replication/syncrep.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
 #include "replication/walsender_private.h"
+
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
@@ -83,6 +86,9 @@ WalSndCtlData *WalSndCtl = NULL;
 /* My slot in the shared memory array */
 WalSnd	   *MyWalSnd = NULL;
 
+/* My slot for logical rep in the shared memory array */
+LogicalWalSnd *MyLogicalWalSnd = NULL;
+
 /* Global state */
 bool		am_walsender = false;		/* Am I a walsender process ? */
 bool		am_cascading_walsender = false;		/* Am I cascading WAL to
@@ -92,6 +98,7 @@ static bool	replication_started = false; /* Started streaming yet? */
 
 /* User-settable parameters for walsender */
 int			max_wal_senders = 0;	/* the maximum number of concurrent walsenders */
+int			max_logical_slots = 0;	/* the maximum number of logical slots */
 int			wal_sender_timeout = 60 * 1000;	/* maximum time to send one
 												 * WAL data message */
 /*
@@ -129,18 +136,31 @@ static bool	ping_sent = false;
 static volatile sig_atomic_t got_SIGHUP = false;
 volatile sig_atomic_t walsender_ready_to_stop = false;
 
+/* XXX reader */
+static MemoryContext decoding_ctx = NULL;
+static MemoryContext old_decoding_ctx = NULL;
+
+static XLogReaderState *logical_reader = NULL;
+
+
 /* Signal handlers */
 static void WalSndSigHupHandler(SIGNAL_ARGS);
 static void WalSndXLogSendHandler(SIGNAL_ARGS);
 static void WalSndLastCycleHandler(SIGNAL_ARGS);
 
 /* Prototypes for private functions */
-static void WalSndLoop(void) __attribute__((noreturn));
+typedef void (*WalSndSendData)(bool *);
+static void WalSndLoop(WalSndSendData send_data) __attribute__((noreturn));
 static void InitWalSenderSlot(void);
 static void WalSndKill(int code, Datum arg);
-static void XLogSend(bool *caughtup);
+static void XLogSendPhysical(bool *caughtup);
+static void XLogSendLogical(bool *caughtup);
 static void IdentifySystem(void);
 static void StartReplication(StartReplicationCmd *cmd);
+static void CheckLogicalReplicationRequirements(void);
+static void InitLogicalReplication(InitLogicalReplicationCmd *cmd);
+static void StartLogicalReplication(StartLogicalReplicationCmd *cmd);
+static void ComputeLogicalXmin(void);
 static void ProcessStandbyMessage(void);
 static void ProcessStandbyReplyMessage(void);
 static void ProcessStandbyHSFeedbackMessage(void);
@@ -193,6 +213,65 @@ WalSndErrorCleanup()
 }
 
 /*
+ * Set the xmin required for catalog timetravel for the specific decoding slot.
+ */
+extern void
+IncreaseLogicalXminForSlot(XLogRecPtr lsn, TransactionId xmin)
+{
+	Assert(MyLogicalWalSnd != NULL);
+
+	SpinLockAcquire(&MyLogicalWalSnd->mutex);
+	/*
+	 * Only increase if the previous value has been applied...
+	 */
+	if (!TransactionIdIsValid(MyLogicalWalSnd->candidate_xmin))
+	{
+		MyLogicalWalSnd->candidate_xmin_after = lsn;
+		MyLogicalWalSnd->candidate_xmin = xmin;
+		elog(LOG, "got new xmin %u at %lu", xmin, lsn); /* FIXME: log level */
+	}
+	SpinLockRelease(&MyLogicalWalSnd->mutex);
+}
+
+/*
+ * Compute the xmin between all of the decoding slots and store it in
+ * WalSndCtlData.
+ */
+static void
+ComputeLogicalXmin(void)
+{
+	int slot;
+	TransactionId xmin = InvalidTransactionId;
+	LogicalWalSnd *logical_base;
+	LogicalWalSnd *walsnd;
+
+	logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
+
+	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+
+	for (slot = 0; slot < max_logical_slots; slot++)
+	{
+		walsnd = &logical_base[slot];
+
+		SpinLockAcquire(&walsnd->mutex);
+		if (walsnd->in_use &&
+			TransactionIdIsValid(walsnd->xmin) && (
+				!TransactionIdIsValid(xmin) ||
+				TransactionIdPrecedes(walsnd->xmin, xmin))
+			)
+		{
+			xmin = walsnd->xmin;
+		}
+		SpinLockRelease(&walsnd->mutex);
+	}
+	WalSndCtl->logical_xmin = xmin;
+	LWLockRelease(ProcArrayLock);
+
+	elog(LOG, "computed new xmin: %u", xmin);
+
+}
+
+/*
  * IDENTIFY_SYSTEM
  */
 static void
@@ -221,8 +300,6 @@ IdentifySystem(void)
 
 	if (MyDatabaseId != InvalidOid)
 		dbname = get_database_name(MyDatabaseId);
-	else
-		dbname = "(none)";
 
 	/* Send a RowDescription message */
 	pq_beginmessage(&buf, 'T');
@@ -247,22 +324,22 @@ IdentifySystem(void)
 	pq_sendint(&buf, 0, 2);		/* format code */
 
 	/* third field */
-	pq_sendstring(&buf, "xlogpos");
-	pq_sendint(&buf, 0, 4);
-	pq_sendint(&buf, 0, 2);
-	pq_sendint(&buf, TEXTOID, 4);
-	pq_sendint(&buf, -1, 2);
-	pq_sendint(&buf, 0, 4);
-	pq_sendint(&buf, 0, 2);
+	pq_sendstring(&buf, "xlogpos");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);		/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
 
 	/* fourth field */
-	pq_sendstring(&buf, "dbname");
-	pq_sendint(&buf, 0, 4);
-	pq_sendint(&buf, 0, 2);
-	pq_sendint(&buf, TEXTOID, 4);
-	pq_sendint(&buf, -1, 2);
-	pq_sendint(&buf, 0, 4);
-	pq_sendint(&buf, 0, 2);
+	pq_sendstring(&buf, "dbname");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);		/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
 	pq_endmessage(&buf);
 
 	/* Send a DataRow message */
@@ -274,9 +351,16 @@ IdentifySystem(void)
 	pq_sendbytes(&buf, (char *) tli, strlen(tli));
 	pq_sendint(&buf, strlen(xpos), 4);	/* col3 len */
 	pq_sendbytes(&buf, (char *) xpos, strlen(xpos));
-	pq_sendint(&buf, strlen(dbname), 4);	/* col4 len */
-	pq_sendbytes(&buf, (char *) dbname, strlen(dbname));
-
+	/* send NULL if not connected to a database */
+	if (dbname)
+	{
+		pq_sendint(&buf, strlen(dbname), 4);	/* col4 len */
+		pq_sendbytes(&buf, (char *) dbname, strlen(dbname));
+	}
+	else
+	{
+		pq_sendint(&buf, -1, 4);	/* col4 len */
+	}
 	pq_endmessage(&buf);
 }
 
@@ -376,7 +460,438 @@ StartReplication(StartReplicationCmd *cmd)
 	SyncRepInitConfig();
 
 	/* Main loop of walsender */
-	WalSndLoop();
+	WalSndLoop(XLogSendPhysical);
+}
+
+static void
+CheckLogicalReplicationRequirements(void)
+{
+	if (wal_level < WAL_LEVEL_LOGICAL)
+		ereport(ERROR, (errmsg("logical replication requires wal_level=logical")));
+
+	if (MyDatabaseId == InvalidOid)
+		ereport(ERROR, (errmsg("logical replication requires to be connected to a database")));
+}
+
+/*
+ * Initialize logical replication and wait for an initial consistent point to
+ * start sending changes from.
+ */
+static void
+InitLogicalReplication(InitLogicalReplicationCmd *cmd)
+{
+	int slot;
+	LogicalWalSnd *logical_base;
+	LogicalWalSnd *walsnd;
+	char *slot_name;
+	StringInfoData buf;
+	char		xpos[MAXFNAMELEN];
+
+	elog(WARNING, "Initiating logical rep");
+
+	CheckLogicalReplicationRequirements();
+
+	logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
+
+	Assert(!MyLogicalWalSnd);
+
+	/* find free logical slot */
+	for (slot = 0; slot < max_logical_slots; slot++)
+	{
+		walsnd = &logical_base[slot];
+
+		SpinLockAcquire(&walsnd->mutex);
+		if (!walsnd->in_use)
+		{
+			Assert(!walsnd->active);
+			/* NOT releasing the lock yet */
+			break;
+		}
+		SpinLockRelease(&walsnd->mutex);
+		walsnd = NULL;
+	}
+
+	if (!walsnd)
+	{
+		elog(ERROR, "couldn't find free logical slot. free one or increase max_logical_slots");
+	}
+
+	/* so we get reset on exit/failure */
+	MyLogicalWalSnd = walsnd;
+	MyLogicalWalSnd->last_required_checkpoint = GetRedoRecPtr();
+
+	walsnd->in_use = true;
+	/* mark slot as active till we build the base snapshot */
+	walsnd->active = true;
+	walsnd->database = MyDatabaseId;
+
+	strcpy(NameStr(walsnd->plugin), cmd->plugin);
+
+	/* FIXME: permanent name allocation scheme */
+	slot_name = NameStr(walsnd->name);
+	sprintf(slot_name, "id-%d", slot);
+
+	/* release spinlock, so this slot can be examined  */
+	SpinLockRelease(&walsnd->mutex);
+
+	/*
+	 * Loop until we've found an xmin and set it locally without the global
+	 * value being changed in that time. Once we achieved that the global value
+	 * cannot go backwards anymore, as ComputeLogicalXmin() nails the value
+	 * down.
+	 *
+	 * We need to do this *after* releasing the spinlock, otherwise
+	 * GetOldestXmin will deadlock with ourselves.
+	 *
+	 * FIXME: think about solving the race conditions in a nicer way.
+	 */
+recompute_xmin:
+	walsnd->xmin = GetOldestXmin(true, true);
+	ComputeLogicalXmin();
+	if (walsnd->xmin != GetOldestXmin(true, true))
+		goto recompute_xmin;
+
+	decoding_ctx = AllocSetContextCreate(TopMemoryContext,
+										 "decoding context",
+										 ALLOCSET_DEFAULT_MINSIZE,
+										 ALLOCSET_DEFAULT_INITSIZE,
+										 ALLOCSET_DEFAULT_MAXSIZE);
+	old_decoding_ctx = MemoryContextSwitchTo(decoding_ctx);
+	TopTransactionContext = decoding_ctx;
+
+	logical_reader = initial_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint);
+
+	for (;;)
+	{
+		XLogRecord *record;
+		XLogRecordBuffer buf;
+		ReaderApplyState* apply_state = logical_reader->private_data;
+
+		/* the read_page callback waits for new WAL */
+		record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, ERROR);
+		Assert(record);
+
+		buf.origptr = logical_reader->ReadRecPtr;
+		buf.record = *record;
+		buf.record_data = XLogRecGetData(record);
+		DecodeRecordIntoReorderBuffer(logical_reader, apply_state, &buf);
+
+		if (initial_snapshot_ready(logical_reader))
+			break;
+	}
+
+	walsnd->confirmed_flush = logical_reader->EndRecPtr;
+
+	snprintf(xpos, sizeof(xpos), "%X/%X",
+			 (uint32) (walsnd->confirmed_flush >> 32), (uint32) walsnd->confirmed_flush);
+
+	pq_beginmessage(&buf, 'T');
+	pq_sendint(&buf, 4, 2);		/* 4 fields */
+
+	/* first field */
+	pq_sendstring(&buf, "replication_id");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);	/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
+
+	pq_sendstring(&buf, "consistent_point");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);	/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
+
+	pq_sendstring(&buf, "snapshot_name");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);	/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
+
+	pq_sendstring(&buf, "plugin");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);	/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
+
+	pq_endmessage(&buf);
+
+	/* Send a DataRow message */
+	pq_beginmessage(&buf, 'D');
+	pq_sendint(&buf, 4, 2);		/* # of columns */
+
+	/* replication_id */
+	pq_sendint(&buf, strlen(slot_name), 4); /* col1 len */
+	pq_sendbytes(&buf, slot_name, strlen(slot_name));
+
+	/* consistent wal location */
+	pq_sendint(&buf, strlen(xpos), 4); /* col2 len */
+	pq_sendbytes(&buf, xpos, strlen(xpos));
+
+	/* snapshot name */
+	pq_sendint(&buf, strlen("0xDEADBEEF"), 4); /* col3 len */
+	pq_sendbytes(&buf, "0xDEADBEEF", strlen("0xDEADBEEF"));
+
+	/* plugin */
+	pq_sendint(&buf, strlen(cmd->plugin), 4); /* col4 len */
+	pq_sendbytes(&buf, cmd->plugin, strlen(cmd->plugin));
+
+	pq_endmessage(&buf);
+
+	/*
+	 * release active status again, START_LOGICAL_REPLICATION will do so again
+	 */
+	SpinLockAcquire(&walsnd->mutex);
+	walsnd->active = false;
+	MyLogicalWalSnd = NULL;
+	SpinLockRelease(&walsnd->mutex);
+
+	MemoryContextSwitchTo(old_decoding_ctx);
+	TopTransactionContext = NULL;
+}
+
+/*
+ * Load previously initiated logical slot and prepare for sending data (via
+ * WalSndLoop).
+ */
+static void
+StartLogicalReplication(StartLogicalReplicationCmd *cmd)
+{
+	StringInfoData buf;
+
+	int slot;
+	LogicalWalSnd *logical_base;
+	logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
+
+	elog(WARNING, "Starting logical replication");
+
+	Assert(!MyLogicalWalSnd);
+
+	/* make sure that our requirements are still fullfilled */
+	CheckLogicalReplicationRequirements();
+
+	for (slot = 0; slot < max_logical_slots; slot++)
+	{
+		LogicalWalSnd   *walsnd = &logical_base[slot];
+
+		SpinLockAcquire(&walsnd->mutex);
+		if (walsnd->in_use && strcmp(cmd->name, NameStr(walsnd->name)) == 0)
+		{
+			MyLogicalWalSnd = walsnd;
+			/* NOT releasing the lock yet */
+			break;
+		}
+		SpinLockRelease(&walsnd->mutex);
+	}
+
+	if (!MyLogicalWalSnd)
+		elog(ERROR, "couldn't find logical slot for \"%s\"",
+		     cmd->name);
+
+	if (MyLogicalWalSnd->active)
+	{
+		SpinLockRelease(&MyLogicalWalSnd->mutex);
+		elog(ERROR, "slot already active");
+	}
+
+	MyLogicalWalSnd->active = true;
+	SpinLockRelease(&MyLogicalWalSnd->mutex);
+
+	/* Don't let the user switch the database... */
+	if (MyLogicalWalSnd->database != MyDatabaseId)
+	{
+		SpinLockAcquire(&MyLogicalWalSnd->mutex);
+		MyLogicalWalSnd->active = false;
+		SpinLockRelease(&MyLogicalWalSnd->mutex);
+
+		ereport(ERROR, (errmsg("START_LOGICAL_REPLICATION needs to be run in the same database as INIT_LOGICAL_REPLICATION")));
+	}
+
+	MarkPostmasterChildWalSender();
+	SendPostmasterSignal(PMSIGNAL_ADVANCE_STATE_MACHINE);
+	replication_started = true;
+
+	if (am_cascading_walsender && !RecoveryInProgress())
+	{
+		ereport(LOG,
+		   (errmsg("terminating walsender process to force cascaded standby "
+				   "to update timeline and reconnect")));
+		walsender_ready_to_stop = true;
+	}
+
+	WalSndSetState(WALSNDSTATE_CATCHUP);
+
+	/* Send a CopyBothResponse message, and start streaming */
+	pq_beginmessage(&buf, 'W');
+	pq_sendbyte(&buf, 0);
+	pq_sendint(&buf, 0, 2);
+	pq_endmessage(&buf);
+	pq_flush();
+
+	/*
+	 * Initialize position to the received one, then the xlog records begin to
+	 * be shipped from that position
+	 */
+	sentPtr = MyLogicalWalSnd->last_required_checkpoint;
+
+	/* Also update the start position status in shared memory */
+	{
+		/* use volatile pointer to prevent code rearrangement */
+		volatile WalSnd *walsnd = MyWalSnd;
+
+		SpinLockAcquire(&walsnd->mutex);
+		walsnd->sentPtr = MyLogicalWalSnd->last_required_checkpoint;
+		SpinLockRelease(&walsnd->mutex);
+	}
+
+	SyncRepInitConfig();
+
+	logical_reader = normal_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint,
+											NameStr(MyLogicalWalSnd->plugin),
+											cmd->startpoint);
+
+	/* Main loop of walsender */
+	WalSndLoop(XLogSendLogical);
+}
+
+/*
+ * Prepare a write into a StringInfo.
+ *
+ * Don't do anything lasting in here, its quite possible that nothing will done
+ * with the data.
+ */
+void
+WalSndPrepareWrite(StringInfo out, XLogRecPtr lsn)
+{
+	pq_sendbyte(out, 'w');
+	pq_sendint64(out, lsn);	/* dataStart */
+	/* XXX: overwrite when data is assembled */
+	pq_sendint64(out, lsn);	/* walEnd */
+	/* XXX: gather that value later just as its done in XLogSendPhysical */
+	pq_sendint64(out, 0 /*GetCurrentIntegerTimestamp() */);/* sendtime */
+}
+
+/*
+ * Actually write out data previously prepared by WalSndPrepareWrite out to the
+ * network, take as long as needed but process replies from the other side
+ * during that.
+ */
+void
+WalSndWriteData(StringInfo data)
+{
+	long		sleeptime = 10000;		/* 10 s */
+	int			wakeEvents;
+
+	pq_putmessage_noblock('d', data->data, data->len);
+
+	for (;;)
+	{
+		if (!pq_is_send_pending())
+			return;
+
+		/*
+		 * Emergency bailout if postmaster has died.  This is to avoid the
+		 * necessity for manual cleanup of all postmaster children.
+		 */
+		if (!PostmasterIsAlive())
+			exit(1);
+
+		/* Process any requests or signals received recently */
+		if (got_SIGHUP)
+		{
+			got_SIGHUP = false;
+			ProcessConfigFile(PGC_SIGHUP);
+			SyncRepInitConfig();
+		}
+
+		CHECK_FOR_INTERRUPTS();
+
+		/* Check for input from the client */
+		ProcessRepliesIfAny();
+
+		/* Clear any already-pending wakeups */
+		ResetLatch(&MyWalSnd->latch);
+
+		/* Try to flush pending output to the client */
+		if (pq_flush_if_writable() != 0)
+			break;
+
+		if (!pq_is_send_pending())
+			return;
+
+		/* FIXME: wal_sender_timeout integration */
+		wakeEvents = WL_LATCH_SET | WL_POSTMASTER_DEATH |
+			WL_SOCKET_WRITEABLE | WL_SOCKET_READABLE | WL_TIMEOUT;
+
+		ImmediateInterruptOK = true;
+		CHECK_FOR_INTERRUPTS();
+		WaitLatchOrSocket(&MyWalSnd->latch, wakeEvents,
+						  MyProcPort->sock, sleeptime);
+		ImmediateInterruptOK = false;
+	}
+	/* reactivate latch so WalSndLoop knows to continue */
+	SetLatch(&MyWalSnd->latch);
+}
+
+XLogRecPtr
+WalSndWaitForWal(XLogRecPtr loc)
+{
+	long		sleeptime = 10000;		/* 10 s */
+	int			wakeEvents;
+	XLogRecPtr  flushptr;
+
+	/* fast path if everything is there already */
+	flushptr = GetFlushRecPtr();
+	if (XLByteLE(loc, flushptr))
+		return flushptr;
+
+	for (;;)
+	{
+		/*
+		 * Emergency bailout if postmaster has died.  This is to avoid the
+		 * necessity for manual cleanup of all postmaster children.
+		 */
+		if (!PostmasterIsAlive())
+			exit(1);
+
+		/* Process any requests or signals received recently */
+		if (got_SIGHUP)
+		{
+			got_SIGHUP = false;
+			ProcessConfigFile(PGC_SIGHUP);
+			SyncRepInitConfig();
+		}
+
+		CHECK_FOR_INTERRUPTS();
+
+		/* Check for input from the client */
+		ProcessRepliesIfAny();
+
+		/* Clear any already-pending wakeups */
+		ResetLatch(&MyWalSnd->latch);
+
+		/* check whether we're done */
+		flushptr = GetFlushRecPtr();
+		if (XLByteLE(loc, flushptr))
+			return flushptr;
+
+		/* FIXME: wal_sender_timeout integration */
+		wakeEvents = WL_LATCH_SET | WL_POSTMASTER_DEATH |
+			WL_SOCKET_READABLE | WL_TIMEOUT;
+
+		ImmediateInterruptOK = true;
+		CHECK_FOR_INTERRUPTS();
+		WaitLatchOrSocket(&MyWalSnd->latch, wakeEvents,
+						  MyProcPort->sock, sleeptime);
+		ImmediateInterruptOK = false;
+	}
 }
 
 /*
@@ -419,6 +934,14 @@ exec_replication_command(const char *cmd_string)
 
 		case T_StartReplicationCmd:
 			StartReplication((StartReplicationCmd *) cmd_node);
+			break;
+
+		case T_InitLogicalReplicationCmd:
+			InitLogicalReplication((InitLogicalReplicationCmd *) cmd_node);
+			break;
+
+		case T_StartLogicalReplicationCmd:
+			StartLogicalReplication((StartLogicalReplicationCmd *) cmd_node);
 			break;
 
 		case T_BaseBackupCmd:
@@ -588,6 +1111,37 @@ ProcessStandbyReplyMessage(void)
 		SpinLockRelease(&walsnd->mutex);
 	}
 
+	/*
+	 * Do an unlocked check for candidate_xmin first.
+	 */
+	if (MyLogicalWalSnd &&
+		TransactionIdIsValid(MyLogicalWalSnd->candidate_xmin))
+	{
+		bool updated_xmin = false;
+
+		/* use volatile pointer to prevent code rearrangement */
+		volatile LogicalWalSnd *walsnd = MyLogicalWalSnd;
+
+		SpinLockAcquire(&walsnd->mutex);
+
+		/* if were past the location required for bumping xmin, do so */
+		if (TransactionIdIsValid(walsnd->candidate_xmin) &&
+			flushPtr != InvalidXLogRecPtr &&
+			XLByteLE(walsnd->candidate_xmin_after, flushPtr)
+			)
+		{
+			walsnd->xmin = walsnd->candidate_xmin;
+			walsnd->candidate_xmin = InvalidTransactionId;
+			walsnd->candidate_xmin_after = InvalidXLogRecPtr;
+			updated_xmin = true;
+		}
+
+		SpinLockRelease(&walsnd->mutex);
+
+		if (updated_xmin)
+			ComputeLogicalXmin();
+	}
+
 	if (!am_cascading_walsender)
 		SyncRepReleaseWaiters();
 }
@@ -669,7 +1223,7 @@ ProcessStandbyHSFeedbackMessage(void)
 
 /* Main loop of walsender process that streams the WAL over Copy messages. */
 static void
-WalSndLoop(void)
+WalSndLoop(WalSndSendData send_data)
 {
 	bool		caughtup = false;
 
@@ -713,12 +1267,12 @@ WalSndLoop(void)
 
 		/*
 		 * If we don't have any pending data in the output buffer, try to send
-		 * some more.  If there is some, we don't bother to call XLogSend
+		 * some more.  If there is some, we don't bother to call send_data
 		 * again until we've flushed it ... but we'd better assume we are not
 		 * caught up.
 		 */
 		if (!pq_is_send_pending())
-			XLogSend(&caughtup);
+			send_data(&caughtup);
 		else
 			caughtup = false;
 
@@ -754,7 +1308,7 @@ WalSndLoop(void)
 			if (walsender_ready_to_stop)
 			{
 				/* ... let's just be real sure we're caught up ... */
-				XLogSend(&caughtup);
+				send_data(&caughtup);
 				if (caughtup && !pq_is_send_pending())
 				{
 					/* Inform the standby that XLOG streaming is done */
@@ -769,7 +1323,7 @@ WalSndLoop(void)
 		/*
 		 * We don't block if not caught up, unless there is unsent data
 		 * pending in which case we'd better block until the socket is
-		 * write-ready.  This test is only needed for the case where XLogSend
+		 * write-ready.  This test is only needed for the case where send_data
 		 * loaded a subset of the available data but then pq_flush_if_writable
 		 * flushed it all --- we should immediately try to send more.
 		 */
@@ -917,6 +1471,13 @@ WalSndKill(int code, Datum arg)
 	 * for this.
 	 */
 	MyWalSnd->pid = 0;
+
+	/* LOCK? */
+	if(MyLogicalWalSnd && MyLogicalWalSnd->active)
+	{
+		MyLogicalWalSnd->active = false;
+	}
+
 	DisownLatch(&MyWalSnd->latch);
 
 	/* WalSnd struct isn't mine anymore */
@@ -1068,6 +1629,8 @@ retry:
 }
 
 /*
+ * Send out the WAL in its normal physical/stored form.
+ *
  * Read up to MAX_SEND_SIZE bytes of WAL that's been flushed to disk,
  * but not yet sent to the client, and buffer it in the libpq output
  * buffer.
@@ -1076,7 +1639,7 @@ retry:
  * *caughtup is set to false.
  */
 static void
-XLogSend(bool *caughtup)
+XLogSendPhysical(bool *caughtup)
 {
 	XLogRecPtr	SendRqstPtr;
 	XLogRecPtr	startptr;
@@ -1210,6 +1773,85 @@ XLogSend(bool *caughtup)
 }
 
 /*
+ * Send out the WAL after it being decoded into a logical format by the output
+ * plugin specified in INIT_LOGICAL_DECODING
+ */
+static void
+XLogSendLogical(bool *caughtup)
+{
+#ifdef NOT_YET
+	XLogRecPtr endptr;
+	XLogRecPtr curptr;
+#endif
+	XLogRecord *record;
+
+	if (decoding_ctx == NULL)
+	{
+		decoding_ctx = AllocSetContextCreate(TopMemoryContext,
+											 "decoding context",
+											 ALLOCSET_DEFAULT_MINSIZE,
+											 ALLOCSET_DEFAULT_INITSIZE,
+											 ALLOCSET_DEFAULT_MAXSIZE);
+	}
+
+
+	record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, ERROR);
+
+	if (record != NULL)
+	{
+		XLogRecordBuffer buf;
+		ReaderApplyState* apply_state = logical_reader->private_data;
+
+		buf.origptr = logical_reader->ReadRecPtr;
+		buf.record = *record;
+		buf.record_data = XLogRecGetData(record);
+
+		old_decoding_ctx = MemoryContextSwitchTo(decoding_ctx);
+		TopTransactionContext = decoding_ctx;
+
+		DecodeRecordIntoReorderBuffer(logical_reader, apply_state, &buf);
+
+		MemoryContextSwitchTo(old_decoding_ctx);
+		TopTransactionContext = NULL;
+	}
+
+#ifdef NOT_YET
+	logical_reader->endptr = logical_reader->curptr;
+	curptr = logical_reader->curptr;
+
+	/*
+	 * read at most MAX_SEND_SIZE of wal. We chunk the reading only to allow
+	 * reading keepalives and such inbetween.
+	 */
+	XLByteAdvance(logical_reader->endptr, MAX_SEND_SIZE);
+
+	/* only read up to already flushed wal */
+	endptr = GetFlushRecPtr();
+	if (XLByteLT(endptr, logical_reader->endptr))
+		logical_reader->endptr = endptr;
+
+	if (curptr == logical_reader->curptr ||
+		logical_reader->curptr == endptr)
+		*caughtup = true;
+	else
+		*caughtup = false;
+
+#endif
+
+	*caughtup = false;
+
+	/* Update shared memory status */
+	{
+		/* use volatile pointer to prevent code rearrangement */
+		volatile WalSnd *walsnd = MyWalSnd;
+
+		SpinLockAcquire(&walsnd->mutex);
+		walsnd->sentPtr = logical_reader->ReadRecPtr;
+		SpinLockRelease(&walsnd->mutex);
+	}
+}
+
+/*
  * Request walsenders to reload the currently-open WAL file
  */
 void
@@ -1301,6 +1943,8 @@ WalSndShmemSize(void)
 	size = offsetof(WalSndCtlData, walsnds);
 	size = add_size(size, mul_size(max_wal_senders, sizeof(WalSnd)));
 
+	size = add_size(size, mul_size(max_logical_slots, sizeof(LogicalWalSnd)));
+
 	return size;
 }
 
@@ -1328,6 +1972,21 @@ WalSndShmemInit(void)
 
 			SpinLockInit(&walsnd->mutex);
 			InitSharedLatch(&walsnd->latch);
+		}
+
+		WalSndCtl->logical_xmin = InvalidTransactionId;
+
+		if (max_logical_slots > 0)
+		{
+			LogicalWalSnd *logical_base;
+			logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
+
+			for (i = 0; i < max_logical_slots; i++)
+			{
+				LogicalWalSnd   *walsnd = &logical_base[i];
+				walsnd->xmin = InvalidTransactionId;
+				SpinLockInit(&walsnd->mutex);
+			}
 		}
 	}
 }

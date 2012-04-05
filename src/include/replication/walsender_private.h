@@ -66,6 +66,31 @@ typedef struct WalSnd
 
 extern WalSnd *MyWalSnd;
 
+typedef struct
+{
+	TransactionId xmin;
+
+	NameData      name;
+	NameData      plugin;
+
+	Oid           database;
+
+	XLogRecPtr	  last_required_checkpoint;
+	XLogRecPtr	  confirmed_flush;
+
+	TransactionId candidate_xmin;
+	XLogRecPtr	  candidate_xmin_after;
+
+	/* is this slot defined */
+	bool          in_use;
+	/* is somebody streaming out changes for this slot */
+	bool          active;
+	slock_t		mutex;
+} LogicalWalSnd;
+
+extern LogicalWalSnd *MyLogicalWalSnd;
+
+
 /* There is one WalSndCtl struct for the whole database cluster */
 typedef struct
 {
@@ -88,11 +113,18 @@ typedef struct
 	 */
 	bool		sync_standbys_defined;
 
+	/*
+	 * Xmin across all logical slots.
+	 *
+	 * Protected by ProcArrayLock.
+	 */
+	TransactionId logical_xmin;
+
 	WalSnd		walsnds[1];		/* VARIABLE LENGTH ARRAY */
+	LogicalWalSnd logical_walsnds[1];		/* VARIABLE LENGTH ARRAY */
 } WalSndCtlData;
 
 extern WalSndCtlData *WalSndCtl;
-
 
 extern void WalSndSetState(WalSndState state);
 extern void XLogRead(char *buf, XLogRecPtr startptr, Size count);
@@ -108,5 +140,14 @@ extern void replication_scanner_init(const char *query_string);
 extern void replication_scanner_finish(void);
 
 extern Node *replication_parse_result;
+
+/* change logical xmin */
+extern void IncreaseLogicalXminForSlot(XLogRecPtr lsn, TransactionId xmin);
+
+/* logical wal sender data gathering functions */
+extern void WalSndWriteData(StringInfo data);
+extern void WalSndPrepareWrite(StringInfo out, XLogRecPtr lsn);
+extern XLogRecPtr WalSndWaitForWal(XLogRecPtr loc);
+
 
 #endif   /* _WALSENDER_PRIVATE_H */

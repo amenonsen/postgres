@@ -76,9 +76,11 @@ Node *replication_parse_result;
 %token K_NOWAIT
 %token K_WAL
 %token K_START_REPLICATION
+%token K_INIT_LOGICAL_REPLICATION
+%token K_START_LOGICAL_REPLICATION
 
 %type <node>	command
-%type <node>	base_backup start_replication identify_system
+%type <node>	base_backup start_replication identify_system start_logical_replication init_logical_replication
 %type <list>	base_backup_opt_list
 %type <defelt>	base_backup_opt
 %%
@@ -97,6 +99,8 @@ command:
 			identify_system
 			| base_backup
 			| start_replication
+			| init_logical_replication
+			| start_logical_replication
 			;
 
 /*
@@ -166,6 +170,32 @@ start_replication:
 					$$ = (Node *) cmd;
 				}
 			;
+
+/* FIXME: don't use SCONST */
+init_logical_replication:
+			K_INIT_LOGICAL_REPLICATION SCONST
+				{
+					InitLogicalReplicationCmd *cmd;
+					cmd = makeNode(InitLogicalReplicationCmd);
+					cmd->plugin = $2;
+
+					$$ = (Node *) cmd;
+				}
+			;
+
+/* FIXME: don't use SCONST */
+start_logical_replication:
+			K_START_LOGICAL_REPLICATION SCONST RECPTR
+				{
+					StartLogicalReplicationCmd *cmd;
+					cmd = makeNode(StartLogicalReplicationCmd);
+					cmd->name = $2;
+					cmd->startpoint = $3;
+
+					$$ = (Node *) cmd;
+				}
+			;
+
 %%
 
 #include "repl_scanner.c"
