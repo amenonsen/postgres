@@ -86,6 +86,7 @@ static HeapTuple heap_prepare_insert(Relation relation, HeapTuple tup,
 static XLogRecPtr log_heap_update(Relation reln, Buffer oldbuf,
 				ItemPointerData from, Buffer newbuf, HeapTuple newtup,
 				bool all_visible_cleared, bool new_all_visible_cleared);
+static XLogRecPtr log_heap_new_cid(Relation relation, HeapTuple tup);
 static bool HeapSatisfiesHOTUpdate(Relation relation, Bitmapset *hot_attrs,
 					   HeapTuple oldtup, HeapTuple newtup);
 
@@ -1631,10 +1632,16 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 		 */
 		if (!skip)
 		{
+			/* setup the redirected t_self for the benefit of timetravel access */
+			ItemPointerSet(&(heapTuple->t_self), BufferGetBlockNumber(buffer), offnum);
+
 			/* If it's visible per the snapshot, we must return it */
 			valid = HeapTupleSatisfiesVisibility(heapTuple, snapshot, buffer);
 			CheckForSerializableConflictOut(valid, relation, heapTuple,
 											buffer, snapshot);
+			/* reset original, non-redirected, tid */
+			heapTuple->t_self = *tid;
+
 			if (valid)
 			{
 				ItemPointerSetOffsetNumber(tid, offnum);
@@ -1980,9 +1987,23 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 		xl_heap_insert xlrec;
 		xl_heap_header xlhdr;
 		XLogRecPtr	recptr;
-		XLogRecData rdata[3];
+		XLogRecData rdata[4];
 		Page		page = BufferGetPage(buffer);
 		uint8		info = XLOG_HEAP_INSERT;
+
+		/*
+		 * For the logical replication case we need the tuple even if were
+		 * doing a full page write. We could alternatively store a pointer into
+		 * the fpw though.
+		 * For that to work we add another rdata entry for the buffer in that
+		 * case.
+		 */
+		bool        need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL
+			&& RelationGetRelid(relation)  >= FirstNormalObjectId;
+
+		/* For logical decode we need combocids to properly decode the catalog */
+		if (wal_level >= WAL_LEVEL_LOGICAL && RelationGetRelid(relation)  < FirstNormalObjectId)
+			log_heap_new_cid(relation, heaptup);
 
 		xlrec.all_visible_cleared = all_visible_cleared;
 		xlrec.target.node = relation->rd_node;
@@ -2003,16 +2024,31 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 		 */
 		rdata[1].data = (char *) &xlhdr;
 		rdata[1].len = SizeOfHeapHeader;
-		rdata[1].buffer = buffer;
+		rdata[1].buffer = need_tuple_data ? InvalidBuffer : buffer;
 		rdata[1].buffer_std = true;
 		rdata[1].next = &(rdata[2]);
 
 		/* PG73FORMAT: write bitmap [+ padding] [+ oid] + data */
 		rdata[2].data = (char *) heaptup->t_data + offsetof(HeapTupleHeaderData, t_bits);
 		rdata[2].len = heaptup->t_len - offsetof(HeapTupleHeaderData, t_bits);
-		rdata[2].buffer = buffer;
+		rdata[2].buffer = need_tuple_data ? InvalidBuffer : buffer;
 		rdata[2].buffer_std = true;
 		rdata[2].next = NULL;
+
+		/*
+		 * add record for the buffer without actual content thats removed if
+		 * fpw is done for that buffer
+		 */
+		if (need_tuple_data)
+		{
+			rdata[2].next = &(rdata[3]);
+
+			rdata[3].data = NULL;
+			rdata[3].len = 0;
+			rdata[3].buffer = buffer;
+			rdata[3].buffer_std = true;
+			rdata[3].next = NULL;
+		}
 
 		/*
 		 * If this is the single and first tuple on page, we can reinit the
@@ -2023,7 +2059,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 			PageGetMaxOffsetNumber(page) == FirstOffsetNumber)
 		{
 			info |= XLOG_HEAP_INIT_PAGE;
-			rdata[1].buffer = rdata[2].buffer = InvalidBuffer;
+			rdata[1].buffer = rdata[2].buffer = rdata[3].buffer = InvalidBuffer;
 		}
 
 		recptr = XLogInsert(RM_HEAP_ID, info, rdata);
@@ -2149,6 +2185,10 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 	Page		page;
 	bool		needwal;
 	Size		saveFreeSpace;
+	bool        need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL
+		&& RelationGetRelid(relation)  >= FirstNormalObjectId;
+	bool        need_cids = wal_level >= WAL_LEVEL_LOGICAL &&
+		RelationGetRelid(relation)  < FirstNormalObjectId;
 
 	needwal = !(options & HEAP_INSERT_SKIP_WAL) && RelationNeedsWAL(relation);
 	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
@@ -2235,7 +2275,7 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 		{
 			XLogRecPtr	recptr;
 			xl_heap_multi_insert *xlrec;
-			XLogRecData rdata[2];
+			XLogRecData rdata[3];
 			uint8		info = XLOG_HEAP2_MULTI_INSERT;
 			char	   *tupledata;
 			int			totaldatalen;
@@ -2297,6 +2337,15 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 					   datalen);
 				tuphdr->datalen = datalen;
 				scratchptr += datalen;
+
+				/*
+				 * We don't use heap_multi_insert for catalog tuples yet, but
+				 * better be prepared...
+				 */
+				if (need_cids)
+				{
+					log_heap_new_cid(relation, heaptup);
+				}
 			}
 			totaldatalen = scratchptr - tupledata;
 			Assert((scratchptr - scratch) < BLCKSZ);
@@ -2308,9 +2357,24 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 
 			rdata[1].data = tupledata;
 			rdata[1].len = totaldatalen;
-			rdata[1].buffer = buffer;
+			rdata[1].buffer = need_tuple_data ? InvalidBuffer : buffer;
 			rdata[1].buffer_std = true;
 			rdata[1].next = NULL;
+
+			/*
+			 * add record for the buffer without actual content thats removed if
+			 * fpw is done for that buffer
+			 */
+			if (need_tuple_data)
+			{
+				rdata[1].next = &(rdata[2]);
+
+				rdata[2].data = NULL;
+				rdata[2].len = 0;
+				rdata[2].buffer = buffer;
+				rdata[2].buffer_std = true;
+				rdata[2].next = NULL;
+			}
 
 			/*
 			 * If we're going to reinitialize the whole page using the WAL
@@ -2318,7 +2382,7 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 			 */
 			if (init)
 			{
-				rdata[1].buffer = InvalidBuffer;
+				rdata[1].buffer = rdata[2].buffer = InvalidBuffer;
 				info |= XLOG_HEAP_INIT_PAGE;
 			}
 
@@ -2625,7 +2689,14 @@ l1:
 	{
 		xl_heap_delete xlrec;
 		XLogRecPtr	recptr;
-		XLogRecData rdata[2];
+		XLogRecData rdata[4];
+
+		bool need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL &&
+			RelationGetRelid(relation) >= FirstNormalObjectId;
+
+		/* For logical decode we need combocids to properly decode the catalog */
+		if (wal_level >= WAL_LEVEL_LOGICAL && RelationGetRelid(relation)  < FirstNormalObjectId)
+			log_heap_new_cid(relation, &tp);
 
 		xlrec.all_visible_cleared = all_visible_cleared;
 		xlrec.target.node = relation->rd_node;
@@ -2640,6 +2711,66 @@ l1:
 		rdata[1].buffer = buffer;
 		rdata[1].buffer_std = true;
 		rdata[1].next = NULL;
+
+		/*
+		 * Log primary key of the deleted tuple
+		 */
+		if (need_tuple_data)
+		{
+			xl_heap_header xlhdr;
+			TupleDesc desc = RelationGetDescr(relation);
+			Relation idx_rel;
+			TupleDesc idx_desc;
+			Datum idx_vals[INDEX_MAX_KEYS];
+			bool idx_isnull[INDEX_MAX_KEYS];
+			HeapTuple idx_tuple;
+			int natt;
+
+			/* needs to already have been fetched? */
+			if (relation->rd_indexvalid == 0)
+				RelationGetIndexList(relation);
+
+			if (!OidIsValid(relation->rd_primary))
+			{
+				elog(DEBUG1, "Could not find primary key for table with oid %u",
+					 RelationGetRelid(relation));
+			}
+			else
+			{
+				idx_rel = RelationIdGetRelation(relation->rd_primary);
+				idx_desc = RelationGetDescr(idx_rel);
+
+				for (natt = 0; natt < idx_desc->natts; natt++)
+				{
+					int attno = idx_rel->rd_index->indkey.values[natt];
+					idx_vals[natt] =
+						fastgetattr(&tp, attno, desc, &idx_isnull[natt]);
+					Assert(!idx_isnull[natt]);
+				}
+
+				idx_tuple = heap_form_tuple(idx_desc, idx_vals, idx_isnull);
+
+				xlhdr.t_infomask2 = idx_tuple->t_data->t_infomask2;
+				xlhdr.t_infomask = idx_tuple->t_data->t_infomask;
+				xlhdr.t_hoff = idx_tuple->t_data->t_hoff;
+
+				rdata[1].next = &(rdata[2]);
+				rdata[2].data = (char*)&xlhdr;
+				rdata[2].len = SizeOfHeapHeader;
+				rdata[2].buffer = InvalidBuffer;
+				rdata[2].next = NULL;
+
+				rdata[2].next = &(rdata[3]);
+				rdata[3].data = (char *) idx_tuple->t_data
+					+ offsetof(HeapTupleHeaderData, t_bits);
+				rdata[3].len = idx_tuple->t_len
+					- offsetof(HeapTupleHeaderData, t_bits);
+				rdata[3].buffer = InvalidBuffer;
+				rdata[3].next = NULL;
+
+				RelationClose(idx_rel);
+			}
+		}
 
 		recptr = XLogInsert(RM_HEAP_ID, XLOG_HEAP_DELETE, rdata);
 
@@ -3233,10 +3364,20 @@ l2:
 	/* XLOG stuff */
 	if (RelationNeedsWAL(relation))
 	{
-		XLogRecPtr	recptr = log_heap_update(relation, buffer, oldtup.t_self,
-											 newbuf, heaptup,
-											 all_visible_cleared,
-											 all_visible_cleared_new);
+		XLogRecPtr	recptr;
+
+		/* For logical decode we need combocids to properly decode the catalog */
+		if (wal_level >= WAL_LEVEL_LOGICAL &&
+			RelationGetRelid(relation)  < FirstNormalObjectId)
+		{
+			log_heap_new_cid(relation, &oldtup);
+			log_heap_new_cid(relation, heaptup);
+		}
+
+		recptr = log_heap_update(relation, buffer, oldtup.t_self,
+								 newbuf, heaptup,
+								 all_visible_cleared,
+								 all_visible_cleared_new);
 
 		if (newbuf != buffer)
 		{
@@ -4475,8 +4616,14 @@ log_heap_update(Relation reln, Buffer oldbuf, ItemPointerData from,
 	xl_heap_header xlhdr;
 	uint8		info;
 	XLogRecPtr	recptr;
-	XLogRecData rdata[4];
+	XLogRecData rdata[5];
 	Page		page = BufferGetPage(newbuf);
+
+	/*
+	 * Just as for XLOG_HEAP_INSERT we need to make sure the tuple
+	 */
+	bool        need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL
+		&& RelationGetRelid(reln) >= FirstNormalObjectId;
 
 	/* Caller should not call me on a non-WAL-logged relation */
 	Assert(RelationNeedsWAL(reln));
@@ -4508,28 +4655,44 @@ log_heap_update(Relation reln, Buffer oldbuf, ItemPointerData from,
 	xlhdr.t_hoff = newtup->t_data->t_hoff;
 
 	/*
-	 * As with insert records, we need not store the rdata[2] segment if we
-	 * decide to store the whole buffer instead.
+	 * As with insert's logging , we need not store the the Datum containing
+	 * tuples separately from the buffer if we do logical replication that
+	 * is...
 	 */
 	rdata[2].data = (char *) &xlhdr;
 	rdata[2].len = SizeOfHeapHeader;
-	rdata[2].buffer = newbuf;
+	rdata[2].buffer = need_tuple_data ? InvalidBuffer : newbuf;
 	rdata[2].buffer_std = true;
 	rdata[2].next = &(rdata[3]);
 
 	/* PG73FORMAT: write bitmap [+ padding] [+ oid] + data */
 	rdata[3].data = (char *) newtup->t_data + offsetof(HeapTupleHeaderData, t_bits);
 	rdata[3].len = newtup->t_len - offsetof(HeapTupleHeaderData, t_bits);
-	rdata[3].buffer = newbuf;
+	rdata[3].buffer = need_tuple_data ? InvalidBuffer : newbuf;
 	rdata[3].buffer_std = true;
 	rdata[3].next = NULL;
+
+	/*
+	 * separate storage for the buffer reference of the new page in the
+	 * wal_level >= logical case
+	*/
+	if(need_tuple_data)
+	{
+		rdata[3].next = &(rdata[4]);
+
+		rdata[4].data = NULL,
+		rdata[4].len = 0;
+		rdata[4].buffer = newbuf;
+		rdata[4].buffer_std = true;
+		rdata[4].next = NULL;
+	}
 
 	/* If new tuple is the single and first tuple on page... */
 	if (ItemPointerGetOffsetNumber(&(newtup->t_self)) == FirstOffsetNumber &&
 		PageGetMaxOffsetNumber(page) == FirstOffsetNumber)
 	{
 		info |= XLOG_HEAP_INIT_PAGE;
-		rdata[2].buffer = rdata[3].buffer = InvalidBuffer;
+		rdata[2].buffer = rdata[3].buffer = rdata[4].buffer = InvalidBuffer;
 	}
 
 	recptr = XLogInsert(RM_HEAP_ID, info, rdata);
@@ -4633,6 +4796,64 @@ log_newpage_buffer(Buffer buffer)
 		PageSetLSN(page, recptr);
 		PageSetTLI(page, ThisTimeLineID);
 	}
+
+	return recptr;
+}
+
+/*
+ * Perform XLogInsert of a XLOG_HEAP2_NEW_CID record
+ *
+ * The HeapTuple really needs to already have a ComboCid set otherwise we
+ * cannot detect combocid/cmin/cmax.
+ *
+ * This is only used in wal_level >= WAL_LEVEL_LOGICAL
+ */
+static XLogRecPtr
+log_heap_new_cid(Relation relation, HeapTuple tup)
+{
+	xl_heap_new_cid xlrec;
+
+	XLogRecPtr	recptr;
+	XLogRecData rdata[1];
+	HeapTupleHeader hdr = tup->t_data;
+
+	Assert(ItemPointerIsValid(&tup->t_self));
+	Assert(tup->t_tableOid != InvalidOid);
+
+	xlrec.top_xid = GetTopTransactionId();
+	xlrec.target.node = relation->rd_node;
+	xlrec.target.tid = tup->t_self;
+
+	if (hdr->t_infomask & HEAP_COMBOCID)
+	{
+		xlrec.cmin = HeapTupleHeaderGetCmin(hdr);
+		xlrec.cmax = HeapTupleHeaderGetCmax(hdr);
+		xlrec.combocid = HeapTupleHeaderGetRawCommandId(hdr);
+	}
+	else
+	{
+		/* tuple inserted */
+		if (hdr->t_infomask & HEAP_XMAX_INVALID)
+		{
+			xlrec.cmin = HeapTupleHeaderGetRawCommandId(hdr);
+			xlrec.cmax = InvalidCommandId;
+		}
+		/* tuple from a different tx updated or deleted */
+		else
+		{
+			xlrec.cmin = InvalidCommandId;
+			xlrec.cmax = HeapTupleHeaderGetRawCommandId(hdr);
+
+		}
+		xlrec.combocid = InvalidCommandId;
+	}
+
+	rdata[0].data = (char *) &xlrec;
+	rdata[0].len = SizeOfHeapNewCid;
+	rdata[0].buffer = InvalidBuffer;
+	rdata[0].next = NULL;
+
+	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_NEW_CID, rdata);
 
 	return recptr;
 }
@@ -5705,6 +5926,9 @@ heap2_redo(XLogRecPtr lsn, XLogRecord *record)
 			break;
 		case XLOG_HEAP2_MULTI_INSERT:
 			heap_xlog_multi_insert(lsn, record);
+			break;
+		case XLOG_HEAP2_NEW_CID:
+			/* nothing to do on a real replay, only during logical decoding */
 			break;
 		default:
 			elog(PANIC, "heap2_redo: unknown op code %u", info);
