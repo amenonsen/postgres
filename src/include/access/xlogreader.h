@@ -20,6 +20,7 @@
 #ifndef XLOGREADER_H
 #define XLOGREADER_H
 
+#include "access/xlog.h"
 #include "access/xlog_internal.h"
 
 struct XLogReaderState;
@@ -104,6 +105,14 @@ typedef struct XLogReaderState
 	/* Buffer to hold error message */
 	char	   *errormsg_buf;
 } XLogReaderState;
+
+
+typedef struct XLogRecordBuffer
+{
+	XLogRecPtr origptr;
+	XLogRecord record;
+	char *record_data;
+} XLogRecordBuffer;
 
 /*
  * Get a new XLogReader
