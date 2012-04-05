@@ -74,6 +74,9 @@ PROGRESS			{ return K_PROGRESS; }
 WAL			{ return K_WAL; }
 TIMELINE			{ return K_TIMELINE; }
 START_REPLICATION	{ return K_START_REPLICATION; }
+INIT_LOGICAL_REPLICATION	{ return K_INIT_LOGICAL_REPLICATION; }
+START_LOGICAL_REPLICATION	{ return K_START_LOGICAL_REPLICATION; }
+FREE_LOGICAL_REPLICATION	{ return K_FREE_LOGICAL_REPLICATION; }
 TIMELINE_HISTORY	{ return K_TIMELINE_HISTORY; }
 ","				{ return ','; }
 ";"				{ return ';'; }
@@ -94,6 +97,14 @@ TIMELINE_HISTORY	{ return K_TIMELINE_HISTORY; }
 						yyerror("invalid streaming start location");
 					yylval.recptr = ((uint64) hi) << 32 | lo;
 					return RECPTR;
+				}
+
+'[a-zA-Z][a-zA-Z0-9._-]*' 		{
+					if (yyleng-2 > NAMEDATALEN-1)
+						yyerror("name too long");
+					yylval.str = strdup(yytext+1);
+					yylval.str[yyleng-2] = '\0';
+					return NAME;
 				}
 
 {xqstart}		{
