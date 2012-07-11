@@ -1,0 +1,76 @@
+<!--
+doc/src/sgml/ref/pg_xlogdump.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="APP-PGXLOGDUMP">
+ <refmeta>
+  <refentrytitle><application>pg_xlogdump</application></refentrytitle>
+  <manvolnum>1</manvolnum>
+  <refmiscinfo>Application</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>pg_xlogdump</refname>
+  <refpurpose>Display the write-ahead log of a <productname>PostgreSQL</productname> database cluster</refpurpose>
+ </refnamediv>
+
+ <indexterm zone="app-pgxlogdump">
+  <primary>pg_xlogdump</primary>
+ </indexterm>
+
+ <refsynopsisdiv>
+  <cmdsynopsis>
+   <command>pg_xlogdump</command>
+   <arg choice="opt"><option>-b</option></arg>
+   <arg choice="opt"><option>-e</option> <replaceable class="parameter">xlogrecptr</replaceable></arg>
+   <arg choice="opt"><option>-f</option> <replaceable class="parameter">filename</replaceable></arg>
+   <arg choice="opt"><option>-h</option></arg>
+   <arg choice="opt"><option>-p</option> <replaceable class="parameter">directory</replaceable></arg>
+   <arg choice="opt"><option>-s</option> <replaceable class="parameter">xlogrecptr</replaceable></arg>
+   <arg choice="opt"><option>-t</option> <replaceable class="parameter">timelineid</replaceable></arg>
+   <arg choice="opt"><option>-v</option></arg>
+  </cmdsynopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="R1-APP-PGXLOGDUMP-1">
+  <title>Description</title>
+  <para>
+   <command>pg_xlogdump</command> display the write-ahead log (WAL) and is only
+   useful for debugging or educational purposes.
+  </para>
+
+  <para>
+   This utility can only be run by the user who installed the server, because
+   it requires read access to the data directory. It does not perform any
+   modifications.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Options</title>
+
+   <para>
+    The following command-line options control the location and format of the
+    output.
+
+    <variablelist>
+     <varlistentry>
+      <term><option>-p <replaceable class="parameter">directory</replaceable></option></term>
+      <listitem>
+       <para>
+        Directory to find xlog files in.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+   </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Notes</title>
+  <para>
+    Can give wrong results when the server is running.
+  </para>
+ </refsect1>
+</refentry>
