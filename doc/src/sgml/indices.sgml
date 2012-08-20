@@ -116,8 +116,8 @@ CREATE INDEX test1_id_index ON test1 (id);
 
   <para>
    <productname>PostgreSQL</productname> provides several index types:
-   B-tree, Hash, GiST, SP-GiST and GIN.  Each index type uses a different
-   algorithm that is best suited to different types of queries.
+   B-tree, Hash, GiST, SP-GiST, GIN, and Bitmap.  Each index type uses a
+   different algorithm that is best suited to different types of queries.
    By default, the <command>CREATE INDEX</command> command creates
    B-tree indexes, which fit the most common situations.
   </para>
@@ -318,6 +318,31 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
    classes are available in the <literal>contrib</> collection or as separate
    projects.  For more information see <xref linkend="GIN">.
   </para>
+
+  <para>
+   <indexterm>
+    <primary>index</primary>
+    <secondary>Bitmap</secondary>
+   </indexterm>
+   <indexterm>
+    <primary>Bitmap</primary>
+    <see>index</see>
+   </indexterm>
+
+   An on-disk bitmap index (or bit vector index) is an index type that
+   is particularly useful for read-mostly environments such as data warehouses
+   and decision support systems.
+   The advantage of on-disk bitmap indexes is that they can locate large
+   numbers of matches at low cost. They can be really effective on queries
+   with multiple conditions in the <literal>WHERE</literal> clause.
+   </para>
+
+   <para>
+   <productname>PostgreSQL</productname> bitmap indexes currently support only equality queries.
+   They can be defined on one or more columns (see <xref linkend="indexes-multicolumn"> for
+   more information). For more information see <xref linkend="BMI">.
+   </para>
+
  </sect1>
 
 
@@ -353,7 +378,7 @@ CREATE INDEX test2_mm_idx ON test2 (major, minor);
   </para>
 
   <para>
-   Currently, only the B-tree, GiST and GIN index types support multicolumn
+   Currently, only the B-tree, GiST, GIN and Bitmap index types support multicolumn
    indexes.  Up to 32 columns can be specified.  (This limit can be
    altered when building <productname>PostgreSQL</productname>; see the
    file <filename>pg_config_manual.h</filename>.)
@@ -411,6 +436,7 @@ CREATE INDEX test2_mm_idx ON test2 (major, minor);
    <xref linkend="indexes-bitmap-scans"> for some discussion of the
    merits of different index configurations.
   </para>
+
  </sect1>
 
 

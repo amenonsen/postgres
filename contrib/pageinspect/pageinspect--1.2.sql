@@ -105,3 +105,57 @@ CREATE FUNCTION fsm_page_contents(IN page bytea)
 RETURNS text
 AS 'MODULE_PATHNAME', 'fsm_page_contents'
 LANGUAGE C STRICT;
+
+--
+-- bm_metap()
+--
+CREATE OR REPLACE FUNCTION bm_metap(IN relname text,
+    OUT lov_heap_oid oid,
+    OUT lov_index_oid oid,
+    OUT lov_last_page int4)
+AS 'MODULE_PATHNAME', 'bm_metap'
+LANGUAGE C STRICT;
+
+--
+-- bm_page_headers()
+--
+CREATE OR REPLACE FUNCTION bm_page_headers(IN relname text,
+    OUT block_no int4,
+    OUT page_type char(16),
+    OUT page_size int4,
+    OUT pd_lower int4,
+    OUT pd_upper int4,
+    OUT pd_special int4,
+    OUT free_size int4
+)
+AS 'MODULE_PATHNAME', 'bm_page_headers'
+LANGUAGE C STRICT;
+
+--
+-- bm_lov_page_stats()
+--
+CREATE OR REPLACE FUNCTION bm_lov_page_stats(IN relname text, IN blkno int4,
+    OUT block_no int4,
+    OUT page_size int4,
+    OUT free_size int4,
+    OUT max_avail int4,
+    OUT live_items int4,
+    OUT dead_items int4,
+    OUT avg_item_size int4)
+AS 'MODULE_PATHNAME', 'bm_lov_page_stats'
+LANGUAGE C STRICT;
+
+--
+-- bm_bmv_page_stats()
+--
+CREATE OR REPLACE FUNCTION bm_bmv_page_stats(IN relname text, IN blkno int4,
+    OUT block_no int4,
+    OUT page_size int4,
+    OUT free_size int4,
+    OUT bm_hrl_words_used int4,
+    OUT bm_bitmap_next int4,
+    OUT bm_last_tid_location int8,
+    OUT bm_page_id int4
+) AS 'MODULE_PATHNAME', 'bm_bmv_page_stats'
+LANGUAGE C STRICT;
+

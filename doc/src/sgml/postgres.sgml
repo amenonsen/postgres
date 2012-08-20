@@ -247,6 +247,7 @@
   &gist;
   &spgist;
   &gin;
+  &bitmap;
   &storage;
   &bki;
   &planstats;

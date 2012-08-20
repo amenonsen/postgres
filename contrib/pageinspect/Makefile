@@ -1,7 +1,7 @@
 # contrib/pageinspect/Makefile
 
 MODULE_big	= pageinspect
-OBJS		= rawpage.o heapfuncs.o btreefuncs.o fsmfuncs.o
+OBJS		= rawpage.o heapfuncs.o btreefuncs.o fsmfuncs.o bmfuncs.o
 
 EXTENSION = pageinspect
 DATA = pageinspect--1.2.sql pageinspect--1.0--1.1.sql \

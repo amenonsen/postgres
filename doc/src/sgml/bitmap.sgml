@@ -1,0 +1,136 @@
+<!-- $PostgreSQL: pgsql/doc/src/sgml/gist.sgml,v 1.30 2008/04/14 17:05:32 tgl Exp $ -->
+
+<chapter id="BMI">
+<title>Bitmap Indexes</title>
+
+   <indexterm>
+    <primary>index</primary>
+    <secondary>Bitmap</secondary>
+   </indexterm>
+   <indexterm>
+    <primary>Bitmap</primary>
+    <see>index</see>
+   </indexterm>
+
+<sect1 id="bitmap-intro">
+ <title>Introduction</title>
+
+    <para>
+    An <emphasis>on-disk bitmap</emphasis> index (or <emphasis>bit
+    vector</emphasis> index) is an index type that is particularly
+    useful for read-mostly environments, such as data warehouses and
+    decision support systems.
+    </para>
+
+    <para>
+    In its simplest form, a bitmap index consists of a vector of bits
+    (bitmap) for each of the values of an index column.  The size of
+    each bitmap is the number of rows of the table.</para>
+
+    <para>Bitmap indexes normally require less disk space than B-tree
+    indexes, because of particular compression
+    algorithms. <productname>PostgreSQL</productname> implementation
+    uses the <firstterm>Hybrid Run-Length</firstterm> (HRL) encoding mechanism. The creation
+    of a bitmap index is generally faster than the creation of a
+    B-tree index.</para>
+
+    <para>
+    <productname>PostgreSQL</productname> bitmap indexes currently
+    support only equality queries.  They can be defined on one or more
+    columns (see <xref linkend="indexes-multicolumn"> for more
+    information).
+    </para>
+
+</sect1>
+
+
+<sect1 id="bitmap-procons">
+ <title>Pros and Cons of Bitmap Indexes</title>
+
+ <para>One advantage of on-disk bitmap indexes is that they can locate
+   large numbers of matches at low cost: they can be really effective
+   on queries with multiple conditions in the <literal>WHERE</literal>
+   clause.</para>
+
+ <para>Another advantage is that, under certain conditions, bitmap
+    indexes occupy far less disk space than other index types; this
+    can mean much faster performance, e. g. if I/O is smaller because
+    the whole index relation can fit in RAM.</para>
+
+ <para>The "price to pay" for these advantages is that bitmap indexes
+    are not suited for <emphasis>high cardinality columns</emphasis>:
+    they work better as far as the indexed attribute(s) assume a small
+    number of distinct values, as in the case
+    of <literal>boolean</literal> columns, or more generally for
+    enumerative values of low cardinality.</para>
+
+ <para>To clarify, consider the following simple example. On a table
+    having one row per each person that lives in a certain country,
+    good candidates for bitmap indexes would be the attributes
+    describing age, gender, state, etc.</para>
+ 
+</sect1>
+
+<sect1 id="bitmap-internals">
+ <title>Internals</title>
+
+<para>On-disk Bitmap indexes are logically organised using three data structures:</para>
+
+  <itemizedlist>
+   <listitem>
+    <para>a list of values (<literal>LOV</literal>), which contains the distinct values
+    of an attribute (or more attributes in case of a multi-column index)
+    for a particular table;</para>
+   </listitem>
+   <listitem>
+    <para>an index for the list of values structure (implemented using a B-tree index);</para>
+   </listitem>
+   <listitem>
+    <para>the real bitmap, a vector of '<literal>n</literal>' bits for each value,
+    where '<literal>n</literal>' is the number of rows (cardinality) of the index table.</para>
+   </listitem>
+  </itemizedlist>
+
+ <para>
+    During the creation of the index, the relation is scanned and all the distinct values
+    of the column(s) of the index are inserted in the <literal>LOV</literal> table. The associated
+    B-tree index is used for fast retrieval of the distinct values.
+ </para>
+
+ <para>
+    The interesting part is how the index points to the rows - which is the ultimate goal of an index.
+    Every value in the index has a corresponding vector of bits. Every bit represents a tuple
+    in the table. If the bit for a particular tuple is set to <literal>0</literal>, that means
+    that the tuple does not match the value associated to the bitmap. If, on the other hand,
+    the bit is set to <literal>1</literal>, the row matches that value.
+ </para>
+
+ <para>
+    Bitmap indexes in <productname>PostgreSQL</productname> currently support compression
+    of the bit vectors, using an encoding mechanism known as <emphasis>Hybrid Run-Length</emphasis>.
+    The outcomes of the compression algorithm depend on several factors, including the number
+    of distinct values of the index and their distribution along the relation. In general,
+    a low-cardinality of distinct values produces better results in terms of disk usage
+    compared to B-tree indexes.
+ </para>
+
+</sect1>
+
+<sect1 id="bitmap-create">
+ <title>How to create a Bitmap index</title>
+
+ <para>
+    A Bitmap index can be created using the <xref linkend="sql-createindex" endterm="sql-createindex-title">
+    command, by specifying the <literal>bitmap</literal> method.
+ </para>
+
+ <para>
+    For instance, it is possible to create a bitmap index on the <literal>players</literal> table for the
+    <literal>position</literal> attribute using the following command:
+    <programlisting>
+CREATE INDEX idx_bm_position ON players USING bitmap (position);
+    </programlisting>
+ </para>
+
+</sect1>
+</chapter>

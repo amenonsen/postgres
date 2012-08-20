@@ -818,4 +818,393 @@ DATA(insert (	3474   3831 3831 8 s	3892 4000 0 ));
 DATA(insert (	3474   3831 2283 16 s	3889 4000 0 ));
 DATA(insert (	3474   3831 3831 18 s	3882 4000 0 ));
 
+/*
+ * on-disk bitmap index operators
+ */
+
+/*
+ *	bitmap integer_ops
+ */
+
+/* default operators int2 */
+DATA(insert (	3026   21 21 1	95	3013 ));
+DATA(insert (	3026   21 21 2	522	3013 ));
+DATA(insert (	3026   21 21 3	94	3013 ));
+DATA(insert (	3026   21 21 4	524	3013 ));
+DATA(insert (	3026   21 21 5	520	3013 ));
+/* crosstype operators int24 */
+DATA(insert (	3026   21 23 1	534	3013 ));
+DATA(insert (	3026   21 23 2	540	3013 ));
+DATA(insert (	3026   21 23 3	532	3013 ));
+DATA(insert (	3026   21 23 4	542	3013 ));
+DATA(insert (	3026   21 23 5	536	3013 ));
+/* crosstype operators int28 */
+DATA(insert (	3026   21 20 1	1864	3013 ));
+DATA(insert (	3026   21 20 2	1866	3013 ));
+DATA(insert (	3026   21 20 3	1862	3013 ));
+DATA(insert (	3026   21 20 4	1867	3013 ));
+DATA(insert (	3026   21 20 5	1865	3013 ));
+/* default operators int4 */
+DATA(insert (	3026   23 23 1	97	3013 ));
+DATA(insert (	3026   23 23 2	523	3013 ));
+DATA(insert (	3026   23 23 3	96	3013 ));
+DATA(insert (	3026   23 23 4	525	3013 ));
+DATA(insert (	3026   23 23 5	521	3013 ));
+/* crosstype operators int42 */
+DATA(insert (	3026   23 21 1	535	3013 ));
+DATA(insert (	3026   23 21 2	541	3013 ));
+DATA(insert (	3026   23 21 3	533	3013 ));
+DATA(insert (	3026   23 21 4	543	3013 ));
+DATA(insert (	3026   23 21 5	537	3013 ));
+/* crosstype operators int48 */
+DATA(insert (	3026   23 20 1	37	3013 ));
+DATA(insert (	3026   23 20 2	80	3013 ));
+DATA(insert (	3026   23 20 3	15	3013 ));
+DATA(insert (	3026   23 20 4	82	3013 ));
+DATA(insert (	3026   23 20 5	76	3013 ));
+/* default operators int8 */
+DATA(insert (	3026   20 20 1	412	3013 ));
+DATA(insert (	3026   20 20 2	414	3013 ));
+DATA(insert (	3026   20 20 3	410	3013 ));
+DATA(insert (	3026   20 20 4	415	3013 ));
+DATA(insert (	3026   20 20 5	413	3013 ));
+/* crosstype operators int82 */
+DATA(insert (	3026   20 21 1	1870	3013 ));
+DATA(insert (	3026   20 21 2	1872	3013 ));
+DATA(insert (	3026   20 21 3	1868	3013 ));
+DATA(insert (	3026   20 21 4	1873	3013 ));
+DATA(insert (	3026   20 21 5	1871	3013 ));
+/* crosstype operators int84 */
+DATA(insert (	3026   20 23 1	418	3013 ));
+DATA(insert (	3026   20 23 2	420	3013 ));
+DATA(insert (	3026   20 23 3	416	3013 ));
+DATA(insert (	3026   20 23 4	430	3013 ));
+DATA(insert (	3026   20 23 5	419	3013 ));
+
+/*
+ *	bitmap oid_ops
+ */
+
+DATA(insert (	3033   26 26 1	609	3013 ));
+DATA(insert (	3033   26 26 2	611	3013 ));
+DATA(insert (	3033   26 26 3	607	3013 ));
+DATA(insert (	3033   26 26 4	612	3013 ));
+DATA(insert (	3033   26 26 5	610	3013 ));
+
+/*
+ *	bitmap oidvector_ops
+ */
+
+DATA(insert (	3034   30 30 1	645	3013 ));
+DATA(insert (	3034   30 30 2	647	3013 ));
+DATA(insert (	3034   30 30 3	649	3013 ));
+DATA(insert (	3034   30 30 4	648	3013 ));
+DATA(insert (	3034   30 30 5	646	3013 ));
+
+/*
+ *	bitmap float_ops
+ */
+
+/* default operators float4 */
+DATA(insert (	3023   700 700 1	622 3013 ));
+DATA(insert (	3023   700 700 2	624 3013 ));
+DATA(insert (	3023   700 700 3	620 3013 ));
+DATA(insert (	3023   700 700 4	625 3013 ));
+DATA(insert (	3023   700 700 5	623 3013 ));
+/* crosstype operators float48 */
+DATA(insert (	3023   700 701 1	1122 3013 ));
+DATA(insert (	3023   700 701 2	1124 3013 ));
+DATA(insert (	3023   700 701 3	1120 3013 ));
+DATA(insert (	3023   700 701 4	1125 3013 ));
+DATA(insert (	3023   700 701 5	1123 3013 ));
+/* default operators float8 */
+DATA(insert (	3023   701 701 1	672 3013 ));
+DATA(insert (	3023   701 701 2	673 3013 ));
+DATA(insert (	3023   701 701 3	670 3013 ));
+DATA(insert (	3023   701 701 4	675 3013 ));
+DATA(insert (	3023   701 701 5	674 3013 ));
+/* crosstype operators float84 */
+DATA(insert (	3023   701 700 1	1132 3013 ));
+DATA(insert (	3023   701 700 2	1134 3013 ));
+DATA(insert (	3023   701 700 3	1130 3013 ));
+DATA(insert (	3023   701 700 4	1135 3013 ));
+DATA(insert (	3023   701 700 5	1133 3013 ));
+
+/*
+ *	bitmap char_ops
+ */
+
+DATA(insert (	3020   18 18 1	631	3013 ));
+DATA(insert (	3020   18 18 2	632	3013 ));
+DATA(insert (	3020   18 18 3	92	3013 ));
+DATA(insert (	3020   18 18 4	634	3013 ));
+DATA(insert (	3020   18 18 5	633	3013 ));
+
+/*
+ *	bitmap name_ops
+ */
+
+DATA(insert (	3031   19 19 1	660	3013 ));
+DATA(insert (	3031   19 19 2	661	3013 ));
+DATA(insert (	3031   19 19 3	93	3013 ));
+DATA(insert (	3031   19 19 4	663	3013 ));
+DATA(insert (	3031   19 19 5	662	3013 ));
+
+/*
+ *	bitmap text_ops
+ */
+
+DATA(insert (	3035   25 25 1	664	3013 ));
+DATA(insert (	3035   25 25 2	665	3013 ));
+DATA(insert (	3035   25 25 3	98	3013 ));
+DATA(insert (	3035   25 25 4	667	3013 ));
+DATA(insert (	3035   25 25 5	666	3013 ));
+
+/*
+ *	bitmap bpchar_ops
+ */
+
+DATA(insert (	3018   1042 1042 1	1058	3013 ));
+DATA(insert (	3018   1042 1042 2	1059	3013 ));
+DATA(insert (	3018   1042 1042 3	1054	3013 ));
+DATA(insert (	3018   1042 1042 4	1061	3013 ));
+DATA(insert (	3018   1042 1042 5	1060	3013 ));
+
+/*
+ *	bitmap bytea_ops
+ */
+
+DATA(insert (	3019   17 17 1	1957	3013 ));
+DATA(insert (	3019   17 17 2	1958	3013 ));
+DATA(insert (	3019   17 17 3	1955	3013 ));
+DATA(insert (	3019   17 17 4	1960	3013 ));
+DATA(insert (	3019   17 17 5	1959	3013 ));
+
+/*
+ *	bitmap abstime_ops
+ */
+
+DATA(insert (	3014   702 702 1	562	3013 ));
+DATA(insert (	3014   702 702 2	564	3013 ));
+DATA(insert (	3014   702 702 3	560	3013 ));
+DATA(insert (	3014   702 702 4	565	3013 ));
+DATA(insert (	3014   702 702 5	563	3013 ));
+
+/*
+ *	bitmap datetime_ops
+ */
+
+/* default operators date */
+DATA(insert (	3037   1082 1082 1	1095	3013 ));
+DATA(insert (	3037   1082 1082 2	1096	3013 ));
+DATA(insert (	3037   1082 1082 3	1093	3013 ));
+DATA(insert (	3037   1082 1082 4	1098	3013 ));
+DATA(insert (	3037   1082 1082 5	1097	3013 ));
+/* crosstype operators vs timestamp */
+DATA(insert (	3037   1082 1114 1	2345	3013 ));
+DATA(insert (	3037   1082 1114 2	2346	3013 ));
+DATA(insert (	3037   1082 1114 3	2347	3013 ));
+DATA(insert (	3037   1082 1114 4	2348	3013 ));
+DATA(insert (	3037   1082 1114 5	2349	3013 ));
+/* crosstype operators vs timestamptz */
+DATA(insert (	3037   1082 1184 1	2358	3013 ));
+DATA(insert (	3037   1082 1184 2	2359	3013 ));
+DATA(insert (	3037   1082 1184 3	2360	3013 ));
+DATA(insert (	3037   1082 1184 4	2361	3013 ));
+DATA(insert (	3037   1082 1184 5	2362	3013 ));
+/* default operators timestamp */
+DATA(insert (	3037   1114 1114 1	2062	3013 ));
+DATA(insert (	3037   1114 1114 2	2063	3013 ));
+DATA(insert (	3037   1114 1114 3	2060	3013 ));
+DATA(insert (	3037   1114 1114 4	2065	3013 ));
+DATA(insert (	3037   1114 1114 5	2064	3013 ));
+/* crosstype operators vs date */
+DATA(insert (	3037   1114 1082 1	2371	3013 ));
+DATA(insert (	3037   1114 1082 2	2372	3013 ));
+DATA(insert (	3037   1114 1082 3	2373	3013 ));
+DATA(insert (	3037   1114 1082 4	2374	3013 ));
+DATA(insert (	3037   1114 1082 5	2375	3013 ));
+/* crosstype operators vs timestamptz */
+DATA(insert (	3037   1114 1184 1	2534	3013 ));
+DATA(insert (	3037   1114 1184 2	2535	3013 ));
+DATA(insert (	3037   1114 1184 3	2536	3013 ));
+DATA(insert (	3037   1114 1184 4	2537	3013 ));
+DATA(insert (	3037   1114 1184 5	2538	3013 ));
+/* default operators timestamptz */
+DATA(insert (	3037   1184 1184 1	1322	3013 ));
+DATA(insert (	3037   1184 1184 2	1323	3013 ));
+DATA(insert (	3037   1184 1184 3	1320	3013 ));
+DATA(insert (	3037   1184 1184 4	1325	3013 ));
+DATA(insert (	3037   1184 1184 5	1324	3013 ));
+/* crosstype operators vs date */
+DATA(insert (	3037   1184 1082 1	2384	3013 ));
+DATA(insert (	3037   1184 1082 2	2385	3013 ));
+DATA(insert (	3037   1184 1082 3	2386	3013 ));
+DATA(insert (	3037   1184 1082 4	2387	3013 ));
+DATA(insert (	3037   1184 1082 5	2388	3013 ));
+/* crosstype operators vs timestamp */
+DATA(insert (	3037   1184 1114 1	2540	3013 ));
+DATA(insert (	3037   1184 1114 2	2541	3013 ));
+DATA(insert (	3037   1184 1114 3	2542	3013 ));
+DATA(insert (	3037   1184 1114 4	2543	3013 ));
+DATA(insert (	3037   1184 1114 5	2544	3013 ));
+
+/*
+ *	bitmap time_ops
+ */
+
+DATA(insert (	3036   1083 1083 1	1110	3013 ));
+DATA(insert (	3036   1083 1083 2	1111	3013 ));
+DATA(insert (	3036   1083 1083 3	1108	3013 ));
+DATA(insert (	3036   1083 1083 4	1113	3013 ));
+DATA(insert (	3036   1083 1083 5	1112	3013 ));
+
+/*
+ *	bitmap timetz_ops
+ */
+
+DATA(insert (	3038   1266 1266 1	1552	3013 ));
+DATA(insert (	3038   1266 1266 2	1553	3013 ));
+DATA(insert (	3038   1266 1266 3	1550	3013 ));
+DATA(insert (	3038   1266 1266 4	1555	3013 ));
+DATA(insert (	3038   1266 1266 5	1554	3013 ));
+
+/*
+ *	bitmap interval_ops
+ */
+
+DATA(insert (	3029   1186 1186 1	1332	3013 ));
+DATA(insert (	3029   1186 1186 2	1333	3013 ));
+DATA(insert (	3029   1186 1186 3	1330	3013 ));
+DATA(insert (	3029   1186 1186 4	1335	3013 ));
+DATA(insert (	3029   1186 1186 5	1334	3013 ));
+
+/*
+ *	bitmap macaddr
+ */
+
+DATA(insert (	3030   829 829 1	1222	3013 ));
+DATA(insert (	3030   829 829 2	1223	3013 ));
+DATA(insert (	3030   829 829 3	1220	3013 ));
+DATA(insert (	3030   829 829 4	1225	3013 ));
+DATA(insert (	3030   829 829 5	1224	3013 ));
+
+/*
+ *	bitmap network
+ */
+
+DATA(insert (	3021   869 869 1	1203	3013 ));
+DATA(insert (	3021   869 869 2	1204	3013 ));
+DATA(insert (	3021   869 869 3	1201	3013 ));
+DATA(insert (	3021   869 869 4	1206	3013 ));
+DATA(insert (	3021   869 869 5	1205	3013 ));
+
+/*
+ *	bitmap numeric
+ */
+
+DATA(insert (	3032   1700 1700 1	1754	3013 ));
+DATA(insert (	3032   1700 1700 2	1755	3013 ));
+DATA(insert (	3032   1700 1700 3	1752	3013 ));
+DATA(insert (	3032   1700 1700 4	1757	3013 ));
+DATA(insert (	3032   1700 1700 5	1756	3013 ));
+
+/*
+ *	bitmap bool
+ */
+
+DATA(insert (	3017   16 16 1	58	3013 ));
+DATA(insert (	3017   16 16 2	1694	3013 ));
+DATA(insert (	3017   16 16 3	91	3013 ));
+DATA(insert (	3017   16 16 4	1695	3013 ));
+DATA(insert (	3017   16 16 5	59	3013 ));
+
+/*
+ *	bitmap bit
+ */
+
+DATA(insert (	3016   1560 1560 1	1786	3013 ));
+DATA(insert (	3016   1560 1560 2	1788	3013 ));
+DATA(insert (	3016   1560 1560 3	1784	3013 ));
+DATA(insert (	3016   1560 1560 4	1789	3013 ));
+DATA(insert (	3016   1560 1560 5	1787	3013 ));
+
+/*
+ *	bitmap varbit
+ */
+
+DATA(insert (	3039   1562 1562 1	1806	3013 ));
+DATA(insert (	3039   1562 1562 2	1808	3013 ));
+DATA(insert (	3039   1562 1562 3	1804	3013 ));
+DATA(insert (	3039   1562 1562 4	1809	3013 ));
+DATA(insert (	3039   1562 1562 5	1807	3013 ));
+
+/*
+ *	bitmap text pattern
+ */
+
+DATA(insert (	3042   25 25 1	2314	3013 ));
+DATA(insert (	3042   25 25 2	2315	3013 ));
+DATA(insert (	3042   25 25 3	2317	3013 ));
+DATA(insert (	3042   25 25 4	2318	3013 ));
+
+/*
+ *	bitmap bpchar pattern
+ */
+
+DATA(insert (	3044   1042 1042 1	2326	3013 ));
+DATA(insert (	3044   1042 1042 2	2327	3013 ));
+DATA(insert (	3044   1042 1042 3	2329	3013 ));
+DATA(insert (	3044   1042 1042 4	2330	3013 ));
+
+/*
+ *	bitmap money_ops
+ */
+
+DATA(insert (	3046   790 790 1	902	3013 ));
+DATA(insert (	3046   790 790 2	904	3013 ));
+DATA(insert (	3046   790 790 3	900	3013 ));
+DATA(insert (	3046   790 790 4	905	3013 ));
+DATA(insert (	3046   790 790 5	903	3013 ));
+
+/*
+ *	bitmap reltime_ops
+ */
+
+DATA(insert (	3047   703 703 1	568	3013 ));
+DATA(insert (	3047   703 703 2	570	3013 ));
+DATA(insert (	3047   703 703 3	566	3013 ));
+DATA(insert (	3047   703 703 4	571	3013 ));
+DATA(insert (	3047   703 703 5	569	3013 ));
+
+/*
+ *	bitmap tinterval_ops
+ */
+
+DATA(insert (	3048   704 704 1	813	3013 ));
+DATA(insert (	3048   704 704 2	815	3013 ));
+DATA(insert (	3048   704 704 3	811	3013 ));
+DATA(insert (	3048   704 704 4	816	3013 ));
+DATA(insert (	3048   704 704 5	814	3013 ));
+
+/*
+ *	bitmap array_ops
+ */
+
+DATA(insert (	3015   2277 2277 1	1072	3013 ));
+DATA(insert (	3015   2277 2277 2	1074	3013 ));
+DATA(insert (	3015   2277 2277 3	1070	3013 ));
+DATA(insert (	3015   2277 2277 4	1075	3013 ));
+DATA(insert (	3015   2277 2277 5	1073	3013 ));
+
+/* 
+ * bitmap uuid_ops 
+ */
+ 
+DATA(insert (	3024  2950 2950 1	2974	3013 ));
+DATA(insert (	3024  2950 2950 2	2976	3013 ));
+DATA(insert (	3024  2950 2950 3	2972	3013 ));
+DATA(insert (	3024  2950 2950 4	2977	3013 ));
+DATA(insert (	3024  2950 2950 5	2975	3013 ));
+
 #endif   /* PG_AMOP_H */

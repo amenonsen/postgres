@@ -154,4 +154,34 @@ DATA(insert OID = 4036 (	2742	jsonb_ops		PGNSP PGUID ));
 DATA(insert OID = 4037 (	2742	jsonb_hash_ops	PGNSP PGUID ));
 #define TEXT_SPGIST_FAM_OID 4017
 
+/* On-disk bitmap indexes opfamily entries */
+DATA(insert OID = 3014 (      3013    abstime_ops             PGNSP PGUID ));
+DATA(insert OID = 3015 (      3013    array_ops               PGNSP PGUID ));
+DATA(insert OID = 3016 (      3013    bit_ops                 PGNSP PGUID ));
+DATA(insert OID = 3017 (      3013    bool_ops                PGNSP PGUID ));
+DATA(insert OID = 3018 (      3013    bpchar_ops              PGNSP PGUID ));
+DATA(insert OID = 3019 (      3013    bytea_ops               PGNSP PGUID ));
+DATA(insert OID = 3020 (      3013    char_ops                PGNSP PGUID ));
+DATA(insert OID = 3023 (      3013    float_ops               PGNSP PGUID ));
+DATA(insert OID = 3021 (      3013    network_ops             PGNSP PGUID ));
+DATA(insert OID = 3026 (      3013    integer_ops             PGNSP PGUID ));
+DATA(insert OID = 3029 (      3013    interval_ops    PGNSP PGUID ));
+DATA(insert OID = 3030 (      3013    macaddr_ops             PGNSP PGUID ));
+DATA(insert OID = 3031 (      3013    name_ops                PGNSP PGUID ));
+DATA(insert OID = 3032 (      3013    numeric_ops             PGNSP PGUID ));
+DATA(insert OID = 3033 (      3013    oid_ops                 PGNSP PGUID ));
+DATA(insert OID = 3034 (      3013    oidvector_ops   PGNSP PGUID ));
+DATA(insert OID = 3035 (      3013    text_ops                PGNSP PGUID ));
+DATA(insert OID = 3036 (      3013    time_ops                PGNSP PGUID ));
+DATA(insert OID = 3037 (      3013    datetime_ops    PGNSP PGUID ));
+DATA(insert OID = 3038 (      3013    timetz_ops              PGNSP PGUID ));
+DATA(insert OID = 3039 (      3013    varbit_ops        PGNSP PGUID ));
+DATA(insert OID = 3042 (      3013    text_pattern_ops        PGNSP PGUID ));
+DATA(insert OID = 3044 (      3013    bpchar_pattern_ops  PGNSP PGUID ));
+DATA(insert OID = 3045 (      3013    name_pattern_ops        PGNSP PGUID ));
+DATA(insert OID = 3046 (      3013    money_ops          PGNSP PGUID ));
+DATA(insert OID = 3047 (	3013	reltime_ops	 PGNSP PGUID ));
+DATA(insert OID = 3048 (	3013	tinterval_ops   PGNSP PGUID ));
+DATA(insert OID = 3024 (      3013    uuid_ops                PGNSP PGUID ));
+
 #endif   /* PG_OPFAMILY_H */

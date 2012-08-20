@@ -57,8 +57,8 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ <replaceable class="parameter">name</
 
   <para>
    <productname>PostgreSQL</productname> provides the index methods
-   B-tree, hash, GiST, SP-GiST, and GIN.  Users can also define their own index
-   methods, but that is fairly complicated.
+   B-tree, hash, GiST, SP-GiST, GIN, and Bitmap.  Users can also define their
+   own index methods, but that is fairly complicated.
   </para>
 
   <para>
@@ -154,8 +154,9 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ <replaceable class="parameter">name</
        <para>
         The name of the index method to be used.  Choices are
         <literal>btree</literal>, <literal>hash</literal>,
-        <literal>gist</literal>, <literal>spgist</> and <literal>gin</>.
-        The default method is <literal>btree</literal>.
+        <literal>gist</literal>, <literal>spgist</>, <literal>gin</>, and
+        <literal>bitmap</literal>. The default method is 
+        <literal>btree</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -479,7 +480,7 @@ Indexes:
   </caution>
 
   <para>
-   Currently, only the B-tree, GiST and GIN index methods support
+   Currently, only the B-tree, GiST, GIN and Bitmap index methods support
    multicolumn indexes. Up to 32 fields can be specified by default.
    (This limit can be altered when building
    <productname>PostgreSQL</productname>.)  Only B-tree currently
@@ -607,6 +608,20 @@ CREATE INDEX gin_idx ON documents_table USING gin (locations) WITH (fastupdate =
 CREATE INDEX code_idx ON films (code) TABLESPACE indexspace;
 </programlisting>
   </para>
+
+  <para>
+   To create a Bitmap index on the column <literal>media_type</literal> in
+   the table <literal>films</literal>:
+<programlisting>
+CREATE INDEX idx_bm_media_type ON films USING bitmap (media_type);
+</programlisting>
+  </para>
+
+<!--
+<comment>
+Is this example correct?
+</comment>
+-->
 
   <para>
    To create a GiST index on a point attribute so that we
