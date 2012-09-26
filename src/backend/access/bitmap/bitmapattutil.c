@@ -80,8 +80,8 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 		 * the LOV index, and the parent bitmap index before 
 		 * we drop the lov heap and index.
 		 */
-		deleteDependencyRecordsFor(RelationRelationId, heapid);
-		deleteDependencyRecordsFor(RelationRelationId, indid);
+		deleteDependencyRecordsFor(RelationRelationId, heapid, false);
+		deleteDependencyRecordsFor(RelationRelationId, indid, false);
 		CommandCounterIncrement();
 
 		object.classId = RelationRelationId;
