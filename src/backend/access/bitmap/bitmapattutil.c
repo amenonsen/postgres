@@ -51,9 +51,12 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 	IndexInfo  *indexInfo;
 	ObjectAddress	objAddr, referenced;
 	Oid		   *classObjectId;
+    Oid		   *collationObjectId;
 	Oid			heapid;
+	Relation	heapRel;
 	Oid			indid;
 	int			indattrs;
+	List	   *indexColNames;
 	int			i;
 
 	/* create the new names for the new lov heap and index */
@@ -135,6 +138,8 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 
 	recordDependencyOn(&objAddr, &referenced, DEPENDENCY_INTERNAL);
 
+	heapRel = RelationIdGetRelation(*lovHeapId); /* open relation */
+
 	/*
 	 * create a btree index on the newly-created heap. 
 	 * The key includes all attributes to be indexed in this bitmap index.
@@ -148,27 +153,60 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 	indexInfo->ii_PredicateState = NIL;
 	indexInfo->ii_Unique = true;
 
+	indexColNames = NIL;
 	classObjectId = (Oid *) palloc(indattrs * sizeof(Oid));
+	collationObjectId = (Oid *) palloc(indattrs * sizeof(Oid));
 	for (i = 0; i < indattrs; i++)
 	{
-		Oid typid = tupDesc->attrs[i]->atttypid;
-
 		indexInfo->ii_KeyAttrNumbers[i] = i + 1;
-		classObjectId[i] = GetDefaultOpClass(typid, BTREE_AM_OID);
+
+		/*
+		 * Append just a pointer to the name character data in the descriptor
+		 * to the column name list.  This is safe because it will be
+		 * immediately copied by index_create.
+		 */
+		indexColNames = lappend(indexColNames,
+								NameStr(tupDesc->attrs[i]->attname)); 
+
+		/* Use the default class respective to the attribute type. */
+		classObjectId[i] = GetDefaultOpClass(tupDesc->attrs[i]->atttypid,
+											 BTREE_AM_OID);
+
+		/* Copy the collation objects from the index. */
+		collationObjectId[i] = tupDesc->attrs[i]->attcollation;
 	}
 
-	*lovIndexId = index_create(*lovHeapId, lovIndexName, InvalidOid,
-						 	   indexInfo, BTREE_AM_OID, 
-							   rel->rd_rel->reltablespace, 
-							   classObjectId, NULL, 0, false, false, true, 
-							   false, false);
-
+	*lovIndexId = index_create(heapRel,						/* heapRelation */
+						   /* *lovHeapId, */				/* heapRelationId */			/* removed */
+							   lovIndexName,				/* indexRelationName */
+							   InvalidOid,					/* indexRelationId */
+							   InvalidOid,					/* relFileNode */
+						 	   indexInfo,					/* indexInfo */
+							   indexColNames,				/* indexColNames */
+							   BTREE_AM_OID,				/* accessMethodObjectId */
+							   rel->rd_rel->reltablespace,	/* tableSpaceId */
+							   collationObjectId,			/* collationObjectId */
+							   classObjectId,				/* classObjectId */
+							   NULL,						/* coloptions */
+							   0,							/* reloptions */
+							   false,						/* isprimary */
+							   false,						/* isconstant */
+							   false,						/* deferrable */
+							   false,						/* initdeferred */
+							   true,						/* allow_system_table_mods */
+							   false,						/* skip_build */
+							   false);						/* concurrent */
+		
+	list_free(indexColNames);
+	indexColNames = NIL;
 
 	objAddr.classId = RelationRelationId;
 	objAddr.objectId = *lovIndexId;
 	objAddr.objectSubId = 0 ;
 
 	recordDependencyOn(&objAddr, &referenced, DEPENDENCY_INTERNAL);
+
+	RelationClose(heapRel);
 }
 
 /*
