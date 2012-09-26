@@ -57,7 +57,7 @@ bmbuild(PG_FUNCTION_ARGS)
     tupDesc = RelationGetDescr(index);
 
     /* Initialize the bitmap index by preparing the meta page and inserting the first LOV item */
-    _bitmap_init(index, XLogArchivingActive() && !index->rd_istemp);
+    _bitmap_init(index, XLogArchivingActive() && RelationNeedsWAL(index));
 
     /* Initialize the build state. */
     _bitmap_init_buildstate(index, &bmstate);
@@ -81,7 +81,7 @@ bmbuild(PG_FUNCTION_ARGS)
 	 * fsync the relevant files to disk, unless we're building
 	 * a temporary index
 	 */
-    if (!(XLogArchivingActive() && !index->rd_istemp))
+    if (!(XLogArchivingActive() && RelationNeedsWAL(index)))
     {
 		FlushRelationBuffers(bmstate.bm_lov_heap);
         smgrimmedsync(bmstate.bm_lov_heap->rd_smgr, MAIN_FORKNUM);
