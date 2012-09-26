@@ -230,8 +230,10 @@ _bitmap_create_lov_heapTupleDesc(Relation rel)
 	{
 		/* copy the attribute to be indexed. */
 		memcpy(tupDesc->attrs[attno - 1], oldTupDesc->attrs[attno - 1], 
-			   ATTRIBUTE_TUPLE_SIZE);
+			   ATTRIBUTE_FIXED_PART_SIZE);
 		tupDesc->attrs[attno - 1]->attnum = attno;
+		tupDesc->attrs[attno - 1]->attnotnull = false;
+		tupDesc->attrs[attno - 1]->atthasdef = false;
 	}
 
 	/* the block number */
