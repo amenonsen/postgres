@@ -99,12 +99,25 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 	 */
 	tupDesc = _bitmap_create_lov_heapTupleDesc(rel);
 
-	*lovHeapId = heap_create_with_catalog(lovHeapName, PG_BITMAPINDEX_NAMESPACE,
-										  rel->rd_rel->reltablespace, 
-										  InvalidOid, rel->rd_rel->relowner, 
-										  tupDesc, 0, RELKIND_RELATION,
-										  rel->rd_rel->relisshared, false, 0, 
-										  ONCOMMIT_NOOP, (Datum)0, true);
+	*lovHeapId = heap_create_with_catalog(lovHeapName,					/* relname */
+										  PG_BITMAPINDEX_NAMESPACE,		/* relnamespace */
+										  rel->rd_rel->reltablespace,	/* reltablespace */
+										  InvalidOid,					/* relid */
+										  InvalidOid,					/* reltypeid */
+										  InvalidOid,					/* reloftypeid */
+										  rel->rd_rel->relowner,		/* ownerid */
+										  tupDesc,						/* tupdesc */
+										  NIL,							/* cooked_constraints */
+										  RELKIND_RELATION,				/* relkind */
+										  RELPERSISTENCE_PERMANENT,		/* relpersistence */
+										  rel->rd_rel->relisshared,		/* shared_relation */
+										  RelationIsMapped(rel),		/* mapped_relation */
+										  false,						/* oidislocal */
+										  0,							/* oidinhcount */
+										  ONCOMMIT_NOOP,				/* oncommit */
+										  (Datum)0,						/* reloptions */
+										  false,						/* use_user_acl */
+										  true);						/* allow_system_table_mods */
 
 	/*
 	 * We must bump the command counter to make the newly-created relation
