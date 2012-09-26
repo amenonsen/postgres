@@ -22,9 +22,10 @@
 #include "access/itup.h"
 #include "access/relscan.h"
 #include "access/sdir.h"
-#include "access/xlogutils.h"
+#include "access/xlog.h"
 #include "nodes/tidbitmap.h"
 #include "storage/lock.h"
+#include "storage/relfilenode.h"
 #include "miscadmin.h"
 
 #define BM_READ		BUFFER_LOCK_SHARE
