@@ -395,9 +395,9 @@ _bitmap_init(Relation index, bool use_wal)
     /* Sanity check (the index MUST be empty) */
     if (RelationGetNumberOfBlocks(index) != 0)
 	ereport(ERROR,
-	    (errcode(ERRCODE_INDEX_CORRUPTED),
-	    errmsg("cannot initialize non-empty bitmap index \"%s\"",
-	    RelationGetRelationName(index))));
+			(errcode(ERRCODE_INDEX_CORRUPTED),
+			 errmsg("cannot initialize non-empty bitmap index \"%s\"",
+					RelationGetRelationName(index))));
 
     /*
      * The first step is to create the META page for the BitMap index, which contains some meta-data
@@ -420,7 +420,7 @@ _bitmap_init(Relation index, bool use_wal)
 
     /* Initialise the META page elements (heap and index) */
     _bitmap_create_lov_heapandindex(index, &(metapage->bm_lov_heapId),
-	&(metapage->bm_lov_indexId));
+									&(metapage->bm_lov_indexId));
 
     /* Log the metapage in case of archiving */
     if (use_wal)
@@ -448,20 +448,20 @@ _bitmap_init(Relation index, bool use_wal)
      * after all, we have fixed size data
      */
     o = PageAddItem(page, (Item)lovItem, sizeof(BMLOVItemData),
-	lovOffset, false, false);
+					lovOffset, false, false);
 
     if (o == InvalidOffsetNumber)
 	ereport(ERROR,
-	    (errcode(ERRCODE_INTERNAL_ERROR),
-	    errmsg("failed to add LOV item to \"%s\"",
-	    RelationGetRelationName(index))));
+			(errcode(ERRCODE_INTERNAL_ERROR),
+			 errmsg("failed to add LOV item to \"%s\"",
+					RelationGetRelationName(index))));
 
     /* Set the last page for the LOV */
     metapage->bm_lov_lastpage = BufferGetBlockNumber(lovbuf);
 
     /* Log that a new LOV item has been added to a LOV page */
     if(use_wal)
-	_bitmap_log_lovitem(index, lovbuf, lovOffset, lovItem, metabuf, true);
+			_bitmap_log_lovitem(index, lovbuf, lovOffset, lovItem, metabuf, true);
 
     END_CRIT_SECTION();
 
