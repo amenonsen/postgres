@@ -69,8 +69,8 @@ bmbuild(PG_FUNCTION_ARGS)
 #ifdef DEBUG_BMI
     elog(NOTICE,"[bmbuild] IndexBuildHeapScan PRE");
 #endif
-    reltuples = IndexBuildHeapScan(heap, index, indexInfo,
-	bmbuildCallback, (void *)&bmstate);
+    reltuples = IndexBuildHeapScan(heap, index, indexInfo, true,
+		bmbuildCallback, (void *)&bmstate);
 #ifdef DEBUG_BMI
     elog(NOTICE,"[bmbuild] IndexBuildHeapScan POST");
 #endif
