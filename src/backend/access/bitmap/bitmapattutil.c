@@ -87,10 +87,10 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 		object.classId = RelationRelationId;
 		object.objectId = indid;
 		object.objectSubId = 0;
-		performDeletion(&object, DROP_RESTRICT);
+		performDeletion(&object, DROP_RESTRICT, PERFORM_DELETION_INTERNAL);
 
 		object.objectId = heapid;
-		performDeletion(&object, DROP_RESTRICT);
+		performDeletion(&object, DROP_RESTRICT, PERFORM_DELETION_INTERNAL);
 	}
 
 	/*
