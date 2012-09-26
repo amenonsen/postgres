@@ -28,6 +28,7 @@
 #include "catalog/pg_namespace.h"
 #include "access/heapam.h"
 #include "optimizer/clauses.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
 #include "utils/builtins.h"
