@@ -441,21 +441,15 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		/*
 		 * finds all lov items for this scan through lovHeap and lovIndex.
 		 */
-		while (true)
+		while (_bitmap_findvalue(lovHeap, lovIndex, scanKeys, scanDesc,
+								 &lovBlock, &blockNull, &lovOffset,
+								 &offsetNull))
 		{
-			ItemPos			*itemPos;
-
-			bool res = _bitmap_findvalue(lovHeap, lovIndex, scanKeys, scanDesc,
-							  	         &lovBlock, &blockNull, &lovOffset, 
-										 &offsetNull);
-
-			if(!res)
-				break;
-
 			/*
 			 * We find the position for one LOV item. Append it into the list.
 			 */
-			itemPos = (ItemPos *) palloc0(sizeof(ItemPos));
+			ItemPos	*itemPos = (ItemPos *) palloc0(sizeof(ItemPos));
+
 			itemPos->blockNo = lovBlock;
 			itemPos->offset = lovOffset;
 			lovItemPoss = lappend(lovItemPoss, itemPos);
