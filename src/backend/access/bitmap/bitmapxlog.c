@@ -98,7 +98,6 @@ _bitmap_xlog_newpage(XLogRecPtr lsn, XLogRecord *record)
 {
 	xl_bm_newpage	*xlrec = (xl_bm_newpage *) XLogRecGetData(record);
 
-	Relation		reln;
 	Page			page;
 	uint8			info;
 	Buffer		buffer;
