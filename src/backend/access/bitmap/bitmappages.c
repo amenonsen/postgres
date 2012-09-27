@@ -197,7 +197,7 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 	Oid right_hash_function; /* right hash function */
 
 	/* Get the equality operator OID */
-	get_sort_group_operators(typid, false, true, false, NULL, &eq_opr, NULL);
+	get_sort_group_operators(typid, false, true, false, NULL, &eq_opr, NULL, NULL);
 
 	/* Get the eq and hash operator functions */
 	eq_function = get_opcode(eq_opr);

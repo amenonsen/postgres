@@ -2451,7 +2451,8 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 		Oid eq_opr; /* equality operator */
 
 		/* Get the equality operator OID */
-		get_sort_group_operators(tupDesc->attrs[attno]->atttypid, false, true, false, NULL, &eq_opr, NULL);
+		get_sort_group_operators(tupDesc->attrs[attno]->atttypid, false, true,
+								 false, NULL, &eq_opr, NULL, NULL);
 		opfuncid = get_opcode(eq_opr);
 		scanKey = (ScanKey) (((char *)scanKeys) + attno * sizeof(ScanKeyData));
 
