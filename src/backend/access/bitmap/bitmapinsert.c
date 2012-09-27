@@ -903,8 +903,8 @@ findbitmappage(Relation rel, BMLOVItem lovitem, uint64 tidnum,
 	 * We can't find such a page. This should not happen.
 	 * So we error out.
 	 */
-	elog(ERROR, "cannot find the bitmap page containing tid=%lld",
-		 tidnum);
+	elog(ERROR, "cannot find the bitmap page containing tid=%08x:%04x",
+		 BM_INT_GET_BLOCKNO(tidnum), BM_INT_GET_OFFSET(tidnum));
 }
 
 #ifdef DEBUG_BITMAP
@@ -2514,8 +2514,8 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg)
 	   "\n\tlast_compword = %04x"
 	   "\n\tlast_word = %04x"
 	   "\n\tis_last_compword_fill = %d"
-	   "\n\tstart_tid = 0x%llx"
-	   "\n\tlast_tid = 0x%llx"
+	   "\n\tstart_tid = %08x:%04x"
+	   "\n\tlast_tid = %08x:%04x"
 	   "\n\tcurword = %d"
 	   "\n\tnum_cwords = %d"
 	   "\n\tstart_wordno = %d"
@@ -2528,8 +2528,8 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg)
 	   ,x->last_compword
 	   ,x->last_word
 	   ,x->is_last_compword_fill
-	   ,x->start_tid
-	   ,x->last_tid
+	   ,BM_INT_GET_BLOCKNO(x->start_tid),BM_INT_GET_OFFSET(x->start_tid)
+	   ,BM_INT_GET_BLOCKNO(x->last_tid),BM_INT_GET_OFFSET(x->last_tid)
 	   ,x->curword
 	   ,x->num_cwords
 	   ,x->start_wordno
@@ -2541,16 +2541,17 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg)
 	   );
   Assert(BUF_INIT_WORDS==8);
   for (i=0; i < x->num_cwords; i+=8) {
-	elog(NOTICE,"last_tids[%03x-%03x] = %08llx %08llx %08llx %08llx %08llx %08llx %08llx %08llx"
+	elog(NOTICE,"last_tids[%03x-%03x] = %08x:%04x %08x:%04x %08x:%04x "
+		 "%08x:%04x %08x:%04x %08x:%04x %08x:%04x %08x:%04x",
 	 ,i,i+7
-	 ,(x->last_tids)[i]
-	 ,(x->last_tids)[i+1]
-	 ,(x->last_tids)[i+2]
-	 ,(x->last_tids)[i+3]
-	 ,(x->last_tids)[i+4]
-	 ,(x->last_tids)[i+5]
-	 ,(x->last_tids)[i+6]
-	 ,(x->last_tids)[i+7]
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i]),BM_INT_GET_OFFSET((x->last_tids)[i]),
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+1]),BM_INT_GET_OFFSET((x->last_tids)[i+1]),
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+2]),BM_INT_GET_OFFSET((x->last_tids)[i+2]),
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+3]),BM_INT_GET_OFFSET((x->last_tids)[i+3]),
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+4]),BM_INT_GET_OFFSET((x->last_tids)[i+4]),
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+5]),BM_INT_GET_OFFSET((x->last_tids)[i+5]),
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+6]),BM_INT_GET_OFFSET((x->last_tids)[i+6]),
+	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+7]),BM_INT_GET_OFFSET((x->last_tids)[i+7])
 	 );
   }
 }
