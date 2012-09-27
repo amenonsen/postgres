@@ -18,6 +18,7 @@
 #include "access/xlogutils.h"
 #include "storage/bufmgr.h" /* for buffer manager functions */
 #include "utils/rel.h" /* for RelationGetDescr */
+#include "utils/lsyscache.h"
 
 static void forget_incomplete_insert_bitmapwords(RelFileNode node,
 									 xl_bm_bitmapwords* newWords);
@@ -139,7 +140,6 @@ static void
 _bitmap_xlog_insert_lovitem(XLogRecPtr lsn, XLogRecord *record)
 {
 	xl_bm_lovitem	*xlrec = (xl_bm_lovitem *) XLogRecGetData(record);
-	Relation reln;
 	Buffer			lovBuffer;
 	Page			lovPage;
 
@@ -174,11 +174,20 @@ _bitmap_xlog_insert_lovitem(XLogRecPtr lsn, XLogRecord *record)
 		
 		if (PageAddItem(lovPage, (Item)&(xlrec->bm_lovItem), itemSize, 
 						newOffset, false, false) == InvalidOffsetNumber)
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("_bitmap_xlog_insert_lovitem: failed to add LOV "
-						   "item to \"%s\"",
-					RelationGetRelationName(reln))));
+		{
+			char *rel_name = get_rel_name(xlrec->bm_node.relNode);
+			if (rel_name)
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("_bitmap_xlog_insert_lovitem: failed to add "
+								"LOV item to \"%s\"",
+								rel_name)));
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("_bitmap_xlog_insert_lovitem: failed to add "
+								"LOV item")));
+		}
 
 		if (xlrec->bm_is_new_lov_blkno)
 		{
