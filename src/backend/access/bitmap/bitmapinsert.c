@@ -2253,7 +2253,8 @@ build_inserttuple(Relation index, uint64 tidnum,
 		}
 		}
 
-		index_rescan(state->bm_lov_scanDesc, state->bm_lov_scanKeys);	
+		index_rescan(state->bm_lov_scanDesc, state->bm_lov_scanKeys,
+					 tupDesc->natts, NULL, 0);
 
 		found = _bitmap_findvalue(state->bm_lov_heap, state->bm_lov_index,
 		state->bm_lov_scanKeys, state->bm_lov_scanDesc,
