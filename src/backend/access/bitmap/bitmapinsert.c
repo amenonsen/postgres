@@ -248,6 +248,7 @@ updatesetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 		 * or three words, depending on the splitting position.
 		 */
 		BMTIDBuffer buf;
+
 		MemSet(&buf, 0, sizeof(buf));
 		buf_extend(&buf);
 
@@ -355,7 +356,7 @@ rshift_header_bits(BM_WORD* words, uint64 nwords,
 				   uint32 bits)
 {
 	BM_WORD shifting_bits = 0;
-	uint32 word_no;
+	uint32 	word_no;
 
 	Assert(bits < BM_WORD_SIZE);
 
@@ -387,14 +388,12 @@ lshift_header_bits(BM_WORD* words, uint64 nwords,
 	{
 		BM_WORD shifting_bits = 
 			words[word_no] >> (BM_WORD_SIZE - bits);
-		words[word_no] = ((BM_WORD)words[word_no]) << bits;
+		words[word_no] = ((BM_WORD) words[word_no]) << bits;
 
 		if (word_no != 0)
 			words[word_no - 1] |= shifting_bits;
 	}
 }
-
-
 
 /*
  * shift_header_bits() -- right-shift bits after 'startLoc' for
@@ -408,8 +407,8 @@ lshift_header_bits(BM_WORD* words, uint64 nwords,
  */
 void
 shift_header_bits(BM_WORD* words, uint32 numOfBits,
-						  uint32 maxNumOfWords, uint32 startLoc,
-						  uint32 numOfShiftingBits)
+				  uint32 maxNumOfWords, uint32 startLoc,
+				  uint32 numOfShiftingBits)
 {
 	uint32	startWordNo;
 	uint32	endWordNo;
@@ -418,7 +417,7 @@ shift_header_bits(BM_WORD* words, uint32 numOfBits,
 	BM_WORD tmpWord;
 
 	Assert(startLoc <= numOfBits);
-	Assert((numOfBits-1)/BM_WORD_SIZE < maxNumOfWords);
+	Assert(((numOfBits-1) / BM_WORD_SIZE) < maxNumOfWords);
 
 	startWordNo = startLoc/BM_WORD_SIZE;
 	endWordNo = (numOfBits-1)/BM_WORD_SIZE;
@@ -429,8 +428,8 @@ shift_header_bits(BM_WORD* words, uint32 numOfBits,
 		 * obtain the last 'numOfShiftingBits' bits in the words[wordNo],
 		 * and store them in the high-end of a word.
 		 */
-		tmpWord = (((BM_WORD)words[wordNo])<<
-					(BM_WORD_SIZE-numOfShiftingBits));
+		tmpWord = (((BM_WORD)words[wordNo]) <<
+					(BM_WORD_SIZE - numOfShiftingBits));
 
 		/* right-shift the original word 'numOfShiftingBits' bits. */
 		words[wordNo] =	(((BM_WORD)words[wordNo])>>numOfShiftingBits);
@@ -442,11 +441,12 @@ shift_header_bits(BM_WORD* words, uint32 numOfBits,
 	}
 
 	/* obtain bits after 'startLoc'.*/
-	tmpWord = ((BM_WORD)(words[startWordNo]<<
-				(startLoc%BM_WORD_SIZE)))>>(startLoc%BM_WORD_SIZE);
+	tmpWord =
+		((BM_WORD) (words[startWordNo] << (startLoc%BM_WORD_SIZE))) >>
+		(startLoc%BM_WORD_SIZE);
 
-	words[startWordNo] = ((BM_WORD)(words[startWordNo]>>
-			(BM_WORD_SIZE-startLoc%BM_WORD_SIZE)))<<
+	words[startWordNo] = ((BM_WORD)(words[startWordNo] >>
+			(BM_WORD_SIZE-startLoc%BM_WORD_SIZE))) <<
 			(BM_WORD_SIZE-startLoc%BM_WORD_SIZE);
 
 	numOfFinalShiftingBits = numOfShiftingBits;
@@ -457,7 +457,8 @@ shift_header_bits(BM_WORD* words, uint32 numOfBits,
 
 	if (startWordNo < maxNumOfWords-1)
 	{
-		tmpWord = ((BM_WORD)(tmpWord << (BM_WORD_SIZE - numOfFinalShiftingBits)))>>
+		tmpWord =
+			((BM_WORD) (tmpWord << (BM_WORD_SIZE - numOfFinalShiftingBits))) >>
 			(numOfShiftingBits - numOfFinalShiftingBits);
 		words[startWordNo+1] |= tmpWord;
 	}
@@ -498,7 +499,8 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 	/* if there are no words in the original buffer, we simply copy the new words. */
 	if (words->curword == 0)
 	{
-		memcpy(words->cwords, new_words->cwords, new_words->curword*sizeof(BM_WORD));
+		memcpy(words->cwords, new_words->cwords,
+			   new_words->curword * sizeof(BM_WORD));
 		memcpy(words->hwords, new_words->hwords,
 			   BM_CALC_H_WORDS(new_words->curword) * sizeof(BM_WORD));
 		words->curword = new_words->curword;
@@ -525,7 +527,8 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 
 	/* Calculate how many words left after this insert. */
 	if (words->curword + new_words->curword > words->num_cwords)
-		words_left->curword = words->curword + new_words->curword - words->num_cwords;
+		words_left->curword =
+			words->curword + new_words->curword - words->num_cwords;
 	MemSet(words_left->hwords, 0, BM_NUM_OF_HEADER_WORDS * sizeof(BM_WORD));
 
 	/*
@@ -533,7 +536,9 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 	 * If the word no + new_words->curword is greater than words->num_cwords,
 	 * we store these words in words_left.
 	 */
-	for (wordNo=words->curword-1; wordNo>=0 && wordNo>=insertPos; wordNo--)
+	for (wordNo = words->curword-1;
+		 wordNo >= 0 && wordNo >= insertPos;
+		 wordNo--)
 	{
 		if (wordNo + new_words->curword >= words->num_cwords)
 		{
@@ -541,8 +546,8 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 				words->cwords[wordNo];
 			if (IS_FILL_WORD(words->hwords, wordNo))
 			{
-				uint32		o = (int)wordNo/BM_WORD_SIZE;
-				uint32		n = wordNo + new_words->curword - words->num_cwords;
+				uint32 o = (int)wordNo/BM_WORD_SIZE;
+				uint32 n = wordNo + new_words->curword - words->num_cwords;
 
 				words_left->hwords[0] |= WORDNO_GET_HEADER_BIT(n);
 				words->hwords[o] &= ~(WORDNO_GET_HEADER_BIT(wordNo));
@@ -579,7 +584,7 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 	{
 		if (IS_FILL_WORD(new_words->hwords, bitLoc-insertPos))
 		{
-			uint32		off = (uint32)bitLoc/BM_WORD_SIZE;
+			uint32 off = (uint32) (bitLoc / BM_WORD_SIZE);
 
 			words->hwords[off] |= WORDNO_GET_HEADER_BIT(bitLoc);
 		}
@@ -607,27 +612,27 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 					Buffer bitmapBuffer, uint64 firstTidNumber,
 					bool use_wal)
 {
-	Page 			bitmapPage;
-	BMPageOpaque	bitmapOpaque;
-	BMBitmapVectorPage		bitmap;
-	Buffer			nextBuffer;
-	Page			nextPage;
-	BMPageOpaque	nextOpaque;
-	BMBitmapVectorPage		nextBitmap;
+	Page				bitmapPage;
+	BMPageOpaque		bitmapOpaque;
+	BMBitmapVectorPage	bitmap;
+	Buffer				nextBuffer;
+	Page				nextPage;
+	BMPageOpaque		nextOpaque;
+	BMBitmapVectorPage	nextBitmap;
 
-	uint64			bitNo = 0;
-	uint32			wordNo;
-	uint32          free_words;
-	BM_WORD		word = 0;
-	bool			found = false;
+	uint64		bitNo = 0;
+	uint32		wordNo;
+	uint32      free_words;
+	BM_WORD		word  = 0;
+	bool		found = false;
 
-	BMTIDBuffer     words;
-	BMTIDBuffer     new_words;
-	BMTIDBuffer     words_left;
+	BMTIDBuffer words;
+	BMTIDBuffer new_words;
+	BMTIDBuffer words_left;
 
-	bool			new_page;
-	bool			new_lastpage;
-	int             word_no;
+	bool		new_page;
+	bool		new_lastpage;
+	int         word_no;
 
 	bitmapPage = BufferGetPage(bitmapBuffer);
 	bitmapOpaque = (BMPageOpaque)PageGetSpecialPointer(bitmapPage);
@@ -697,7 +702,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 
 	if (new_words.curword == 1)
 	{
-		uint32		off = wordNo/BM_WORD_SIZE;
+		uint32 off = wordNo/BM_WORD_SIZE;
 
 		START_CRIT_SECTION();
 
@@ -737,7 +742,8 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 			nextOpaque = (BMPageOpaque)PageGetSpecialPointer(nextPage);
 			free_words = BM_NUM_OF_HRL_WORDS_PER_PAGE -
 				nextOpaque->bm_hrl_words_used;
-		} else
+		}
+		else
 		{
 			new_lastpage = true;
 		}
@@ -764,6 +770,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 	{
 		Page 		lovPage;
 		BMLOVItem	lovItem;
+
 		MarkBufferDirty(lovBuffer);
 
 		lovPage = BufferGetPage(lovBuffer);
@@ -775,7 +782,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 	bitmap->cwords[wordNo] = new_words.cwords[0];
 	if (tidnum - firstTidNumber + 1 <= BM_WORD_SIZE)
 	{
-		uint32		off = wordNo/BM_WORD_SIZE;
+		uint32 off = wordNo/BM_WORD_SIZE;
 
 		bitmap->hwords[off] &= ~WORDNO_GET_HEADER_BIT(wordNo);
 	}
@@ -831,7 +838,8 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 		MemSet(&words, 0, sizeof(words));
 		words.cwords = nextBitmap->cwords;
 		memcpy(words.hwords, nextBitmap->hwords,
-			   BM_CALC_H_WORDS(nextOpaque->bm_hrl_words_used) * sizeof(BM_WORD));
+			   BM_CALC_H_WORDS(nextOpaque->bm_hrl_words_used) *
+			   sizeof(BM_WORD));
 		words.num_cwords = BM_NUM_OF_HRL_WORDS_PER_PAGE;
 		words.curword = nextOpaque->bm_hrl_words_used;
 
@@ -845,7 +853,8 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 		 */
 		nextOpaque->bm_hrl_words_used = words.curword;
 		memcpy(nextBitmap->hwords, words.hwords,
-			   BM_CALC_H_WORDS(nextOpaque->bm_hrl_words_used) * sizeof(BM_WORD));
+			   BM_CALC_H_WORDS(nextOpaque->bm_hrl_words_used) *
+			   sizeof(BM_WORD));
 
 		Assert(new_words.curword == 0);
 	}
@@ -883,8 +892,8 @@ findbitmappage(Relation rel, BMLOVItem lovitem, uint64 tidnum,
 
 	while (BlockNumberIsValid(nextBlockNo))
 	{
-		Page bitmapPage;
-		BMPageOpaque bitmapOpaque;
+		Page			bitmapPage;
+		BMPageOpaque	bitmapOpaque;
 
 		*bitmapBufferP = _bitmap_getbuf(rel, nextBlockNo, BM_READ);
 		bitmapPage = BufferGetPage(*bitmapBufferP);
@@ -892,7 +901,7 @@ findbitmappage(Relation rel, BMLOVItem lovitem, uint64 tidnum,
 			PageGetSpecialPointer(bitmapPage);
 
 		if (bitmapOpaque->bm_last_tid_location >= tidnum)
-			return;   		/* find the page */
+			return; /* find the page */
 
 		(*firstTidNumberP) = bitmapOpaque->bm_last_tid_location + 1;
 		nextBlockNo = bitmapOpaque->bm_bitmap_next;
@@ -901,8 +910,7 @@ findbitmappage(Relation rel, BMLOVItem lovitem, uint64 tidnum,
 	}
 
 	/*
-	 * We can't find such a page. This should not happen.
-	 * So we error out.
+	 * We can't find such a page.  This should not happen.  So we error out.
 	 */
 	elog(ERROR, "cannot find the bitmap page containing tid=%08x:%04x",
 		 BM_INT_GET_BLOCKNO(tidnum), BM_INT_GET_OFFSET(tidnum));
@@ -917,15 +925,15 @@ static void
 verify_bitmappages(Relation rel, BMLOVItem lovitem)
 {
 	BlockNumber nextBlockNo = lovitem->bm_lov_head;
-	uint64 tidnum = 0;
+	uint64		tidnum		= 0;
 
 	while (BlockNumberIsValid(nextBlockNo))
 	{
-		Page bitmapPage;
-		BMPageOpaque bitmapOpaque;
-		Buffer bitmapBuffer;
-		uint32 wordNo;
-		BMBitmapVectorPage bitmap;
+		Page					bitmapPage;
+		BMPageOpaque			bitmapOpaque;
+		Buffer					bitmapBuffer;
+		uint32					wordNo;
+		BMBitmapVectorPage		bitmap;
 
 		bitmapBuffer = _bitmap_getbuf(rel, nextBlockNo, BM_READ);
 		bitmapPage = BufferGetPage(bitmapBuffer);
@@ -952,7 +960,6 @@ verify_bitmappages(Relation rel, BMLOVItem lovitem)
 		_bitmap_relbuf(bitmapBuffer);
 	}
 }
-
 #endif /* DEBUG_BITMAP */
 
 /*
@@ -972,10 +979,9 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 	uint64 last_tid = buf->last_tid - (buf->last_tid - 1) % BM_WORD_SIZE - 1;
 
 #ifdef DEBUG_BMI
-	_debug_view_2(buf,"[mergewords] BEGIN");
-	elog(NOTICE,"lastWordFill = %d, last_tid = 0x%llx"
-		 ,lastWordFill
-		 ,last_tid);
+	_debug_view_2(buf, "[mergewords] BEGIN");
+	elog(NOTICE, "lastWordFill = %d, last_tid = 0x%llx",
+		 lastWordFill, last_tid);
 #endif
 
 	/* 
@@ -984,7 +990,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 	 */
 	if (buf->last_compword == LITERAL_ALL_ONE
 		&& buf->last_word == LITERAL_ALL_ONE) 
-	  return bytes_used;
+		return bytes_used;
 
 	/*
 	 * If last_compword is LITERAL_ALL_ONE, it is not set yet.
@@ -993,8 +999,8 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 	if (buf->last_compword == LITERAL_ALL_ONE)
 	{
 #ifdef DEBUG_BMI
-	  elog(NOTICE,"[mergewords] CP1"
-		   "\n\tbuf->last_compword == LITERAL_ALL_ONE");
+		elog(NOTICE, "[mergewords] CP1"
+			 "\n\tbuf->last_compword == LITERAL_ALL_ONE");
 #endif
 		buf->last_compword = buf->last_word;
 		buf->is_last_compword_fill = lastWordFill;
@@ -1007,14 +1013,14 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 		buf->last_tid = last_tid;
 
 #ifdef DEBUG_BMI
-	_debug_view_2(buf,"[mergewords] END 1");
+		_debug_view_2(buf,"[mergewords] END 1");
 #endif
 		return bytes_used;
 	}
 	/*
-	 * If both words are fill words, and have the same fill bit,
-	 * we increment the fill length of the last complete word by
-	 * the fill length stored in the last word.
+	 * If both words are fill words, and have the same fill bit, we increment
+	 * the fill length of the last complete word by the fill length stored in
+	 * the last word.
 	 */
 	if (buf->is_last_compword_fill && lastWordFill &&
 		(GET_FILL_BIT(buf->last_compword) ==
@@ -1045,14 +1051,13 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 	}
 
 	/*
-	 * Here, these two words can not be merged together. We
-	 * move the last complete word to the array, and set it to be the
-	 * last word.
+	 * Here, these two words can not be merged together. We move the last
+	 * complete word to the array, and set it to be the last word.
 	 */
 
 	/*
-	 * When there are not enough space in the array of new words,
-	 * we re-allocate a bigger space.
+	 * When there are not enough space in the array of new words, we
+	 * re-allocate a bigger space.
 	 */
 	bytes_used += buf_extend(buf);
 
@@ -1077,7 +1082,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 	buf->last_tid = last_tid;
 
 #ifdef DEBUG_BMI
-	_debug_view_2(buf,"[mergewords] END 3");
+	_debug_view_2(buf, "[mergewords] END 3");
 #endif
 	return bytes_used;
 }
@@ -1103,13 +1108,13 @@ _bitmap_write_new_bitmapwords(Relation rel,
 	Page		lovPage;
 	BMLOVItem	lovItem;
 
-	Buffer		bitmapBuffer;
-	Page		bitmapPage;
-	BMPageOpaque	bitmapPageOpaque;
+	Buffer				bitmapBuffer;
+	Page				bitmapPage;
+	BMPageOpaque		bitmapPageOpaque;
 		
 	uint64		numFreeWords;
 	uint64		words_written = 0;
-	bool		isFirst = false;
+	bool		isFirst		  = false;
 
 	lovPage = BufferGetPage(lovBuffer);
 	lovItem = (BMLOVItem) PageGetItem(lovPage, 
@@ -1172,9 +1177,10 @@ _bitmap_write_new_bitmapwords(Relation rel,
 									false, isFirst);
 
 #ifdef DEBUG_BMI
-		elog(NOTICE,"[_bitmap_write_new_bitmapwords] CP1 (+=) : buf->start_wordno = %d , words_written = %llu"
-			 ,buf->start_wordno,words_written
-			 );
+		elog(NOTICE,"[_bitmap_write_new_bitmapwords] CP1 (+=) : "
+			 "buf->start_wordno = %d , "
+			 "words_written = %llu",
+			 buf->start_wordno, words_written);
 #endif		
 		buf->start_wordno += words_written;
 
@@ -1223,11 +1229,10 @@ _bitmap_write_new_bitmapwords(Relation rel,
 #ifdef DEBUG_BMI
 		elog(NOTICE,"[_bitmap_write_new_bitmapwords] CP2 (+=) : buf->start_wordno = %d, words_written = %llu"
 			 "\n\tlovItem->bm_last_setbit = %llu"
-			 "\n\tlovItem->bm_last_tid_location = %llu"
-			 ,buf->start_wordno,words_written
-			 ,lovItem->bm_last_setbit
-			 ,lovItem->bm_last_tid_location
-			 );
+			 "\n\tlovItem->bm_last_tid_location = %llu",
+			 buf->start_wordno,words_written,
+			 lovItem->bm_last_setbit,
+			 lovItem->bm_last_tid_location);
 #endif		
 	buf->start_wordno += words_written;
 
@@ -1252,22 +1257,22 @@ _bitmap_write_new_bitmapwords(Relation rel,
 uint64
 _bitmap_write_bitmapwords(Buffer bitmapBuffer, BMTIDBuffer *buf)
 {
-	uint64			startWordNo;
-	Page			bitmapPage;
-	BMPageOpaque	bitmapPageOpaque;
-	BMBitmapVectorPage		bitmap;
-	uint64			cwords;
-	uint64			words_written;
-	uint64			start_hword_no, end_hword_no;
-	uint64			final_start_hword_no, final_end_hword_no;
-	BM_WORD	   *hwords;
-	uint64			num_hwords;
-	uint32			start_hword_bit, end_hword_bit, final_start_hword_bit;
+	uint64				 startWordNo;
+	Page				 bitmapPage;
+	BMPageOpaque		 bitmapPageOpaque;
+	BMBitmapVectorPage	 bitmap;
+	uint64				 cwords;
+	uint64				 words_written;
+	uint64				 start_hword_no, end_hword_no;
+	uint64				 final_start_hword_no, final_end_hword_no;
+	BM_WORD				*hwords;
+	uint64				 num_hwords;
+	uint32				 start_hword_bit, end_hword_bit, final_start_hword_bit;
 
 	startWordNo = buf->start_wordno;
 
 	bitmapPage = BufferGetPage(bitmapBuffer);
-	bitmapPageOpaque = (BMPageOpaque)PageGetSpecialPointer(bitmapPage);
+	bitmapPageOpaque = (BMPageOpaque) PageGetSpecialPointer(bitmapPage);
 
 	cwords = bitmapPageOpaque->bm_hrl_words_used;
 
@@ -1295,7 +1300,7 @@ _bitmap_write_bitmapwords(Buffer bitmapBuffer, BMTIDBuffer *buf)
 		palloc0((num_hwords + 1) * sizeof(BM_WORD));
 
 	memcpy(hwords, buf->hwords + start_hword_no,
-			num_hwords * sizeof(BM_WORD));
+		   num_hwords * sizeof(BM_WORD));
 
 	/* clean up the first and last header words */
 	start_hword_bit = startWordNo % BM_WORD_SIZE;
@@ -1303,9 +1308,9 @@ _bitmap_write_bitmapwords(Buffer bitmapBuffer, BMTIDBuffer *buf)
 
 	hwords[0] = ((BM_WORD)(hwords[0] << start_hword_bit)) >>
 				start_hword_bit;
-	hwords[num_hwords - 1] = (hwords[num_hwords - 1] >>
-			(BM_WORD_SIZE - end_hword_bit - 1)) <<
-			(BM_WORD_SIZE - end_hword_bit - 1);
+	hwords[num_hwords - 1] =
+		(hwords[num_hwords - 1] >> (BM_WORD_SIZE - end_hword_bit - 1)) <<
+		(BM_WORD_SIZE - end_hword_bit - 1);
 
 	final_start_hword_bit = cwords % BM_WORD_SIZE;
 
@@ -1361,21 +1366,28 @@ create_lovitem(Relation rel, Buffer metabuf, uint64 tidnum,
 			   Relation lovHeap, Relation lovIndex, BlockNumber *lovBlockP, 
 			   OffsetNumber *lovOffsetP, bool use_wal)
 {
-
-	const int numOfAttrs = tupDesc->natts; /* number of attributes */
-	Page page = BufferGetPage(metabuf); /* temporary page variable */
-	BMMetaPage metapage; /* Meta page */
+	/* number of attributes */
+	const int	numOfAttrs = tupDesc->natts;
+	/* temporary page variable */
+	Page		page	   = BufferGetPage(metabuf);
+	/* Meta page */
+	BMMetaPage	metapage;
 
 	/* Current LOV buffer and page */
-	Buffer currLovBuffer;
-	Page currLovPage;
+	Buffer		currLovBuffer;
+	Page		currLovPage;
 
-	BMLOVItem lovitem; /* new LOV item */
-	OffsetNumber itemSize; /* LOV item size */
-	bool is_new_lov_blkno = false; /* do we have a new page for this item */
+	/* new LOV item */
+	BMLOVItem			lovitem;
+	/* LOV item size */
+	OffsetNumber		itemSize;
+	/* do we have a new page for this item */
+	bool				is_new_lov_blkno = false;
 
-	Datum* lovDatum; /* array of values (per each attribute) */
-	bool* lovNulls; /* is NULL flag for each attribute */
+	/* array of values (per each attribute) */
+	Datum*		lovDatum;
+	/* is NULL flag for each attribute */
+	bool*		lovNulls;
 
 	/* Get the last LOV page. Meta page should be locked. */
 	metapage = (BMMetaPage) PageGetContents(page);
@@ -1395,35 +1407,34 @@ create_lovitem(Relation rel, Buffer metabuf, uint64 tidnum,
 	 */
 	if (itemSize > PageGetFreeSpace(currLovPage))
 	{
-	Buffer newLovBuffer;
+		Buffer newLovBuffer;
 
-	/* create a new LOV page */
-	newLovBuffer = _bitmap_getbuf(rel, P_NEW, BM_WRITE);
-	_bitmap_init_lovpage(newLovBuffer);
+		/* create a new LOV page */
+		newLovBuffer = _bitmap_getbuf(rel, P_NEW, BM_WRITE);
+		_bitmap_init_lovpage(newLovBuffer);
 
 #if 0
 		START_CRIT_SECTION();
-
-		if(use_wal)
+		if (use_wal)
 			_bitmap_log_newpage(rel, XLOG_BITMAP_INSERT_NEWLOV, 
 								newLovBuffer);
 		END_CRIT_SECTION();
 #endif
 
-	_bitmap_relbuf(currLovBuffer);
+		_bitmap_relbuf(currLovBuffer);
 
-	currLovBuffer = newLovBuffer;
-	currLovPage = BufferGetPage(currLovBuffer);
+		currLovBuffer = newLovBuffer;
+		currLovPage = BufferGetPage(currLovBuffer);
 
-	is_new_lov_blkno = true;
+		is_new_lov_blkno = true;
 	}
 
 	START_CRIT_SECTION();
 
 	if (is_new_lov_blkno)
 	{
-	MarkBufferDirty(metabuf);
-	metapage->bm_lov_lastpage = BufferGetBlockNumber(currLovBuffer);
+		MarkBufferDirty(metabuf);
+		metapage->bm_lov_lastpage = BufferGetBlockNumber(currLovBuffer);
 	}
 
 	MarkBufferDirty(currLovBuffer);
@@ -1445,16 +1456,16 @@ create_lovitem(Relation rel, Buffer metabuf, uint64 tidnum,
 	_bitmap_insert_lov(lovHeap, lovIndex, lovDatum, lovNulls, use_wal);
 
 	if (PageAddItem(currLovPage, (Item)lovitem, itemSize, *lovOffsetP,
-	false, false) == InvalidOffsetNumber)
+					false, false) == InvalidOffsetNumber)
 		ereport(ERROR,
-		(errcode(ERRCODE_INTERNAL_ERROR),
-		errmsg("failed to add LOV item to \"%s\"",
-		RelationGetRelationName(rel))));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("failed to add LOV item to \"%s\"",
+						RelationGetRelationName(rel))));
 
 	/* Log the insertion */
 	if(use_wal)
-	_bitmap_log_lovitem(rel, currLovBuffer, *lovOffsetP, lovitem,
-		metabuf, is_new_lov_blkno);
+		_bitmap_log_lovitem(rel, currLovBuffer, *lovOffsetP, lovitem,
+							metabuf, is_new_lov_blkno);
 
 	END_CRIT_SECTION();
 
@@ -1474,8 +1485,8 @@ static void
 buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum, 
 			BMBuildState *state, BlockNumber lov_block, OffsetNumber off)
 {
-	BMTIDBuffer *buf;
-	BMTIDLOVBuffer *lov_buf = NULL;
+	BMTIDBuffer			*buf;
+	BMTIDLOVBuffer		*lov_buf = NULL;
 
 #ifdef DEBUG_BMI
 	_debug_view_1(tids,"CP1");
@@ -1527,32 +1538,29 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 
 	if (lov_buf->bufs[off - 1])
 	{
-
 		buf = lov_buf->bufs[off - 1];
 
-		buf_add_tid_with_fill
-		  (rel, buf, lov_block, off, 
+		buf_add_tid_with_fill(rel, buf, lov_block, off,
 							  tidnum, state->use_wal);
 	}
 	else
 	{
 		/* no pre-existing buffer found, create a new one */
-		Buffer lovbuf;
-		Page page;
-		BMLOVItem lovitem;
-		uint16 bytes_added;
+		Buffer			lovbuf;
+		Page			page;
+		BMLOVItem		lovitem;
+		uint16			bytes_added;
 		
-		buf = (BMTIDBuffer *)palloc0(sizeof(BMTIDBuffer));
+		buf = (BMTIDBuffer *) palloc0(sizeof(BMTIDBuffer));
 
 #ifdef DEBUG_BMI
 		elog(NOTICE,"[buf_add_tid] create new buf - CP1"
 			 "\n\tlast_tid = 0x%llx"
 			 "\n\tlast_compword = %u"
-			 "\n\tlast_word = %d"
-			 ,buf->last_tid
-			 ,buf->last_compword
-			 ,buf->last_word
-			 );
+			 "\n\tlast_word = %d",
+			 buf->last_tid,
+			 buf->last_compword,
+			 buf->last_word);
 #endif
 		
 		lovbuf = _bitmap_getbuf(rel, lov_block, BM_READ);
@@ -1564,22 +1572,20 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 		elog(NOTICE,"[buf_add_tid] create new buf - CP1.1"
 			 "\n\tlast_tid = 0x%llx"
 			 "\n\tlast_compword = %u"
-			 "\n\tlast_word = %d"
-			 ,buf->last_tid
-			 ,buf->last_compword
-			 ,buf->last_word
-			 );
+			 "\n\tlast_word = %d",
+			 buf->last_tid,
+			 buf->last_compword,
+			 buf->last_word);
 #endif
 		buf->last_compword = lovitem->bm_last_compword;
 #ifdef DEBUG_BMI
 		elog(NOTICE,"[buf_add_tid] create new buf - CP1.2"
 			 "\n\tlast_tid = 0x%llx"
 			 "\n\tlast_compword = %u"
-			 "\n\tlast_word = %d"
-			 ,buf->last_tid
-			 ,buf->last_compword
-			 ,buf->last_word
-			 );
+			 "\n\tlast_word = %d",
+			 buf->last_tid,
+			 buf->last_compword,
+			 buf->last_word);
 #endif
 		buf->last_word = lovitem->bm_last_word;
 		buf->is_last_compword_fill = BM_LAST_COMPWORD_IS_FILL(lovitem);
@@ -1588,11 +1594,10 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 		elog(NOTICE,"[buf_add_tid] create new buf - CP2"
 			 "\n\tlast_tid = 0x%llx"
 			 "\n\tlast_compword = %u"
-			 "\n\tlast_word = %d"
-			 ,buf->last_tid
-			 ,buf->last_compword
-			 ,buf->last_word
-			 );
+			 "\n\tlast_word = %d",
+			 buf->last_tid,
+			 buf->last_compword,
+			 buf->last_word);
 #endif
 
 		_bitmap_relbuf(lovbuf); /* we don't care about locking */
@@ -1610,8 +1615,7 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 		buf->curword = 0;
 		buf->start_wordno = 0;
 
-		buf_add_tid_with_fill
-		  (rel, buf, lov_block, off, tidnum, 
+		buf_add_tid_with_fill(rel, buf, lov_block, off, tidnum,
 							  state->use_wal);
 
 		lov_buf->bufs[off - 1] = buf;
@@ -1624,122 +1628,133 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
  */
 static int16
 hot_buffer_flush(Relation rel, BMTIDBuffer *buf,
-		 BlockNumber lov_block, OffsetNumber off,
-		 bool use_wal, bool merge_words)
+				 BlockNumber lov_block, OffsetNumber off,
+				 bool use_wal, bool merge_words)
 {
-  int i;
-  int16 bytes_used = 0;
+	int			i;
+	int16		bytes_used = 0;
 
 #ifdef DEBUG_BMI
-  elog(NOTICE,"[hot_buffer_flush] BEGIN"
-	   "\n\tBM_SIZEOF_HOT_BUFFER = %d"
-	   "\n\thot_buffer_block = %04x"
-	   "\n\thot_buffer_count = %d"
-	   ,BM_SIZEOF_HOT_BUFFER
-	   ,buf->hot_buffer_block
-	   ,buf->hot_buffer_count);
+	elog(NOTICE,"[hot_buffer_flush] BEGIN"
+		 "\n\tBM_SIZEOF_HOT_BUFFER = %d"
+		 "\n\thot_buffer_block = %04x"
+		 "\n\thot_buffer_count = %d",
+		 BM_SIZEOF_HOT_BUFFER,
+		 buf->hot_buffer_block,
+		 buf->hot_buffer_count);
 #endif
 
 #ifdef DEBUG_BMI
-  /* display buffer contents */
+	/* display buffer contents */
 
-  Assert(BM_WORD_SIZE==16);
-  /* currently there's no need to be more general, and this is only
-	 for debug purposes */
+	Assert(BM_WORD_SIZE == 16);
+	/* currently there's no need to be more general, and this is only
+	   for debug purposes */
 
-  for (i = 0 ; i < BM_SIZEOF_HOT_BUFFER ; i += 4) {
-	if (BM_SIZEOF_HOT_BUFFER - i >= 4) {
-	  elog(NOTICE,"[hot_buffer_flush] %02d-%02d : %04x %04x %04x %04x"
-	   ,i,i+3
-	   ,buf->hot_buffer[i]
-	   ,buf->hot_buffer[i+1]
-	   ,buf->hot_buffer[i+2]
-	   ,buf->hot_buffer[i+3]
-	   );	 
-	  ;
-	} else {
-	  if (BM_SIZEOF_HOT_BUFFER - i == 3) {
-	elog(NOTICE,"[hot_buffer_flush] %02d-%02d : %04x %04x %04x"
-		 ,i,i+2
-		 ,buf->hot_buffer[i]
-		 ,buf->hot_buffer[i+1]
-		 ,buf->hot_buffer[i+2]
-		 );	   
-	;
-	  } else {
-	elog(ERROR,"[hot_buffer_flush] INTERNAL ERROR: check out BM_SIZEOF_HOT_BUFFER");
-	  }}}
+	for (i = 0 ; i < BM_SIZEOF_HOT_BUFFER ; i += 4)
+	{
+		if (BM_SIZEOF_HOT_BUFFER - i >= 4)
+		{
+			elog(NOTICE,"[hot_buffer_flush] %02d-%02d : %04x %04x %04x %04x",
+				 i, i+3,
+				 buf->hot_buffer[i],
+				 buf->hot_buffer[i+1],
+				 buf->hot_buffer[i+2],
+				 buf->hot_buffer[i+3]);
+			;
+		}
+		else
+		{
+			if (BM_SIZEOF_HOT_BUFFER - i == 3)
+			{
+				elog(NOTICE,"[hot_buffer_flush] %02d-%02d : %04x %04x %04x",
+					 i, i+2,
+					 buf->hot_buffer[i],
+					 buf->hot_buffer[i+1],
+					 buf->hot_buffer[i+2]
+					);
+				;
+			}
+			else
+			{
+				elog(ERROR, "[hot_buffer_flush] INTERNAL ERROR: "
+					 "check out BM_SIZEOF_HOT_BUFFER");
+			}
+		}
+	}
 #endif
 
-  /* write the buffer to disk */
-  if (1) { /* only to declare variables here */
-	ItemPointerData _ctid ;
-	int max_offset;
-	bool merge_words = true;
-	ItemPointerSetBlockNumber(&_ctid, buf->hot_buffer_block);
-	for(i=0; i<BM_SIZEOF_HOT_BUFFER; i++) {
-	  max_offset = Min(buf->hot_buffer_last_offset, (i+1)*BM_WORD_SIZE);
-	  ItemPointerSetOffsetNumber(&_ctid, max_offset);
-	  buf->last_tid = BM_IPTR_TO_INT(&_ctid);
+	/* write the buffer to disk */
+	if (1)
+	{ /* only to declare variables here */
+		ItemPointerData _ctid ;
+		int				max_offset;
+		bool			merge_words = true;
+		ItemPointerSetBlockNumber(&_ctid, buf->hot_buffer_block);
+		for(i = 0; i < BM_SIZEOF_HOT_BUFFER; i++) {
+			max_offset = Min(buf->hot_buffer_last_offset, (i+1)*BM_WORD_SIZE);
+			ItemPointerSetOffsetNumber(&_ctid, max_offset);
+			buf->last_tid = BM_IPTR_TO_INT(&_ctid);
 
-	  /*
-	   * don't merge the very last word, and also don't loop any more
-	   */
-	  if (buf->hot_buffer_last_offset <= (i+1) * BM_WORD_SIZE)
-	merge_words=false;
+			/*
+			 * don't merge the very last word, and also don't loop any more
+			 */
+			if (buf->hot_buffer_last_offset <= (i+1) * BM_WORD_SIZE)
+				merge_words = false;
 
 #ifdef DEBUG_BMI
-	  elog(NOTICE,"[hot_buffer_flush] CP0"
-	   "\n\tbuf->hot_buffer_last_offset = %d"
-	   "\n\ti = %d"
-	   ,buf->hot_buffer_last_offset
-	   ,i
-	   );
-#endif	  
-	  bytes_used -= buf_ensure_head_space(rel, buf, lov_block, off, use_wal);
-	  switch(buf->hot_buffer[i]) {
-	  case LITERAL_ALL_ONE:
-	buf->last_word = BM_MAKE_FILL_WORD(1,1);
-	if(merge_words) {
+			elog(NOTICE,"[hot_buffer_flush] CP0"
+				 "\n\tbuf->hot_buffer_last_offset = %d"
+				 "\n\ti = %d",
+				 buf->hot_buffer_last_offset, i);
+#endif
+			bytes_used -=
+				buf_ensure_head_space(rel, buf, lov_block, off, use_wal);
+			switch (buf->hot_buffer[i])
+			{
+				case LITERAL_ALL_ONE:
+					buf->last_word = BM_MAKE_FILL_WORD(1,1);
+					if (merge_words) {
 #ifdef DEBUG_BMI
-	  elog(NOTICE,"[hot_buffer_flush] CP1 merge_words");
-#endif	  
-	  if (merge_words) 
-		bytes_used += mergewords(buf, true);	
-	}
-	break;
-	  case LITERAL_ALL_ZERO:
-	buf->last_word = BM_MAKE_FILL_WORD(0,1);
-	if(merge_words) {
+						elog(NOTICE,"[hot_buffer_flush] CP1 merge_words");
+#endif
+						if (merge_words)
+							bytes_used += mergewords(buf, true);
+					}
+					break;
+				case LITERAL_ALL_ZERO:
+					buf->last_word = BM_MAKE_FILL_WORD(0,1);
+					if (merge_words) {
 #ifdef DEBUG_BMI
-	  elog(NOTICE,"[hot_buffer_flush] CP2 merge_words");
-#endif	  
-	  if (merge_words) 
-		bytes_used += mergewords(buf, true);	
-	}
-	break;		
-	  default:
-	buf->last_word = buf->hot_buffer[i];
-	if(merge_words) {
+						elog(NOTICE, "[hot_buffer_flush] CP2 merge_words");
+#endif
+						if (merge_words)
+							bytes_used += mergewords(buf, true);
+					}
+					break;
+				default:
+					buf->last_word = buf->hot_buffer[i];
+					if (merge_words) {
 #ifdef DEBUG_BMI
-	  elog(NOTICE,"[hot_buffer_flush] CP3 merge_words");
-#endif	  
-	  if (merge_words) 
-		bytes_used += mergewords(buf, false);			 
+						elog(NOTICE, "[hot_buffer_flush] CP3 merge_words");
+#endif
+						if (merge_words)
+							bytes_used += mergewords(buf, false);
+					}
+			}
+			if (merge_words == false)
+				break;
+		}
 	}
-	  }
-	  if (merge_words == false) 
-	break;
-	}
-  }
 
-  /* reset the buffer */
-  for(i=0; i < BM_SIZEOF_HOT_BUFFER; i++) {
-	buf->hot_buffer[i]=(BM_WORD)0;
-  }
-  buf->hot_buffer_count=0;
+	/* reset the buffer */
+	for (i=0; i < BM_SIZEOF_HOT_BUFFER; i++)
+	{
+		buf->hot_buffer[i] = (BM_WORD) 0;
+	}
+	buf->hot_buffer_count = 0;
 
-  return bytes_used;
+	return bytes_used;
 }
 
 /*
@@ -1754,58 +1769,56 @@ buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf,
 			  BlockNumber lov_block, OffsetNumber off,
 			  uint64 tidnum, bool use_wal)
 {
-	int16 bytes_used = 0;
-	BlockNumber _blockno = BM_INT_GET_BLOCKNO(tidnum);
-	OffsetNumber _offset = BM_INT_GET_OFFSET(tidnum);
+	int16			bytes_used = 0;
+	BlockNumber		_blockno   = BM_INT_GET_BLOCKNO(tidnum);
+	OffsetNumber	_offset	   = BM_INT_GET_OFFSET(tidnum);
 #ifdef DEBUG_BMI
-	static int j=0;
+	static int		j		   = 0;
 #endif
 
 #ifdef DEBUG_BMI
-	if (j==1000) {
-	  j=0;
-	  _debug_view_2(buf,"[buf_add_tid_with_fill] BEGIN");
-	  elog(NOTICE,"[buf_add_tid_with_fill] BEGIN"
-		   "\n\ttidnum == 0x%08llx"
-		   "\n\t_blockno == %08x"
-		   "\n\t_offset	 == %04x"
-		   ,tidnum
-		   ,_blockno
-		   ,_offset
-		   );
-	} else
-	  j++;
-#endif
-
-  /* Checking if block number has changed */
-  if (_blockno != buf->hot_buffer_block) {
-	if (buf->hot_buffer_block != InvalidBlockNumber) {
-	  buf->hot_buffer_last_offset = BM_MAX_HTUP_PER_PAGE;
-	  hot_buffer_flush(rel,buf,lov_block,off,use_wal,true);
+	if (j == 1000)
+	{
+		j = 0;
+		_debug_view_2(buf, "[buf_add_tid_with_fill] BEGIN");
+		elog(NOTICE, "[buf_add_tid_with_fill] BEGIN"
+			 "\n\ttidnum   == 0x%08llx"
+			 "\n\t_blockno == %08x"
+			 "\n\t_offset  == %04x",
+			 tidnum, _blockno,_offset);
 	}
-#ifdef DEBUG_BMI
-	elog(NOTICE,"[buf_add_tid_with_fill] updating hot_buffer_block"
-	 "\n\thot_buffer_block == %08x"
-	 "\n\t_blockno == %08x"
-	 ,buf->hot_buffer_block
-	 ,_blockno
-	 );
+	else
+		j++;
 #endif
-	buf->hot_buffer_block = _blockno;
-  }
 
-  /* setting the bit */
-  buf->hot_buffer[(_offset-1) / BM_WORD_SIZE] |= (((unsigned char)1) << ((_offset-1) % BM_WORD_SIZE));
-  buf->hot_buffer_count ++;
-  if (buf->hot_buffer_last_offset < _offset) 
-	buf->hot_buffer_last_offset = _offset;
+	/* Checking if block number has changed */
+	if (_blockno != buf->hot_buffer_block)
+	{
+		if (buf->hot_buffer_block != InvalidBlockNumber)
+		{
+			buf->hot_buffer_last_offset = BM_MAX_HTUP_PER_PAGE;
+			hot_buffer_flush(rel, buf, lov_block, off, use_wal, true);
+		}
 #ifdef DEBUG_BMI
-  elog(NOTICE,"[buf_add_tid_with_fill] setting bit in hot_buffer"
-	   "\n\t(_offset-1) / BM_WORD_SIZE == %d"
-	   "\n\t(_offset-1) %% BM_WORD_SIZE == %d"
-	   ,(_offset-1) / BM_WORD_SIZE
-	   ,(_offset-1) % BM_WORD_SIZE
-	   );
+		elog(NOTICE, "[buf_add_tid_with_fill] updating hot_buffer_block"
+			 "\n\thot_buffer_block == %08x"
+			 "\n\t_blockno == %08x",
+			 buf->hot_buffer_block, _blockno);
+#endif
+		buf->hot_buffer_block = _blockno;
+	}
+
+	/* setting the bit */
+	buf->hot_buffer[(_offset-1) / BM_WORD_SIZE] |=
+		(((unsigned char)1) << ((_offset-1) % BM_WORD_SIZE));
+	buf->hot_buffer_count++;
+	if (buf->hot_buffer_last_offset < _offset)
+		buf->hot_buffer_last_offset = _offset;
+#ifdef DEBUG_BMI
+	elog(NOTICE, "[buf_add_tid_with_fill] setting bit in hot_buffer"
+		 "\n\t(_offset-1) / BM_WORD_SIZE == %d"
+		 "\n\t(_offset-1) %% BM_WORD_SIZE == %d",
+		 (_offset-1) / BM_WORD_SIZE, (_offset-1) % BM_WORD_SIZE);
 #endif
 
 	return bytes_used;
@@ -1827,9 +1840,9 @@ buf_ensure_head_space(Relation rel, BMTIDBuffer *buf,
 	if (buf->curword >= (BM_NUM_OF_HEADER_WORDS * BM_WORD_SIZE))
 	{
 #ifdef DEBUG_BMI
-	  _debug_view_2(buf,"[buf_ensure_head_space] freeing bytes");
+		_debug_view_2(buf, "[buf_ensure_head_space] freeing bytes");
 #endif
-	  bytes_freed = buf_free_mem(rel, buf, lov_block, off, use_wal, false);
+		bytes_freed = buf_free_mem(rel, buf, lov_block, off, use_wal, false);
 		bytes_freed -= buf_extend(buf);
 	}
 
@@ -1847,23 +1860,21 @@ buf_extend(BMTIDBuffer *buf)
 	uint16 size;
 	
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[buf_extend] BEGIN");
+	elog(NOTICE, "[buf_extend] BEGIN");
 #endif
 	if (buf->num_cwords > 0 && buf->curword < buf->num_cwords - 1)
 		return 0; /* already large enough */
 
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[buf_extend] not large enough");
+	elog(NOTICE, "[buf_extend] not large enough");
 #endif
 
 	if(buf->num_cwords == 0)
 	{
 		size = BUF_INIT_WORDS;
-		buf->cwords = (BM_WORD *)
-			palloc0(BUF_INIT_WORDS * sizeof(BM_WORD));
+		buf->cwords = (BM_WORD *) palloc0(BUF_INIT_WORDS * sizeof(BM_WORD));
 		buf->last_tids = (uint64 *)palloc0(BUF_INIT_WORDS * sizeof(uint64));
-		bytes = BUF_INIT_WORDS * sizeof(BM_WORD) +
-			BUF_INIT_WORDS * sizeof(uint64);
+		bytes = BUF_INIT_WORDS * (sizeof(BM_WORD) + sizeof(uint64));
 	}
 	else
 	{
@@ -1872,13 +1883,11 @@ buf_extend(BMTIDBuffer *buf)
 		MemSet(buf->cwords + size, 0, size * sizeof(BM_WORD));
 		buf->last_tids = repalloc(buf->last_tids, 2 * size * sizeof(uint64));
 		MemSet(buf->last_tids + size, 0, size * sizeof(uint64));
-		bytes = 2 * size * sizeof(BM_WORD) +
-			2 * size * sizeof(uint64);
+		bytes = 2 * size * sizeof(BM_WORD) + 2 * size * sizeof(uint64);
 	}
 	buf->num_cwords += size;
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[buf_extend] END , bytes ==> %u",
-		 bytes);
+	elog(NOTICE, "[buf_extend] END , bytes ==> %u", bytes);
 #endif
 	return bytes;
 }
@@ -1901,7 +1910,8 @@ buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber lov_block,
 
 	/* flush hot_buffer to BMTIDBuffer */
 	if (flush_hot_buffer)
-	  bytes_freed += hot_buffer_flush(rel,buf,lov_block,off,use_wal,true);
+		bytes_freed += hot_buffer_flush(rel, buf, lov_block, off, use_wal,
+										true);
 
 	/* already done */
 	if (buf->num_cwords == 0)
@@ -1944,28 +1954,28 @@ buf_make_space(Relation rel, BMTidBuildBuf *locbuf, bool use_wal)
 	foreach(cell, locbuf->lov_blocks)
 	{
 		int i;
-		BMTIDLOVBuffer *lov_buf = (BMTIDLOVBuffer *)lfirst(cell);
+		BMTIDLOVBuffer *lov_buf = (BMTIDLOVBuffer *) lfirst(cell);
 		BlockNumber lov_block = lov_buf->lov_block;
 
 		for(i = 0; i < BM_MAX_LOVITEMS_PER_PAGE; i++)
 		{
-			BMTIDBuffer *buf = (BMTIDBuffer *)lov_buf->bufs[i];
+			BMTIDBuffer *buf = (BMTIDBuffer *) lov_buf->bufs[i];
 			OffsetNumber off;
 
 			/* return if we've freed enough space */
-			if(locbuf->byte_size < (maintenance_work_mem * 1024L))
+			if (locbuf->byte_size < (maintenance_work_mem * 1024L))
 				return;
-			if(!buf || buf->num_cwords == 0)
+			if (!buf || buf->num_cwords == 0)
 				continue;
 
 			off = i + 1;
 #ifdef DEBUG_BMI
-			elog(NOTICE,"invoking buf_free_mem from buf_make_space");
+			elog(NOTICE, "invoking buf_free_mem from buf_make_space");
 #endif
 			locbuf->byte_size -= buf_free_mem(rel, buf, lov_block, off, 
-							  use_wal, false);
+											  use_wal, false);
 		}
-		if(locbuf->byte_size < (maintenance_work_mem * 1024L))
+		if (locbuf->byte_size < (maintenance_work_mem * 1024L))
 			return;
 	}
 }
@@ -2017,13 +2027,13 @@ insertsetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 	if (buf->cwords)
 	{
 		MemSet(buf->cwords, 0,
-				buf->num_cwords * sizeof(BM_WORD));
+			   buf->num_cwords * sizeof(BM_WORD));
 	}
 	MemSet(buf->hwords, 0,
 		   BM_CALC_H_WORDS(buf->num_cwords) * sizeof(BM_WORD));
 	if (buf->last_tids)
 		MemSet(buf->last_tids, 0,
-				buf->num_cwords * sizeof(uint64));
+			   buf->num_cwords * sizeof(uint64));
 	buf->curword = 0;
 
 	/*
@@ -2048,8 +2058,7 @@ insertsetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 	 * To insert this new set bit, we also need to add all zeros between
 	 * this set bit and last set bit. We construct all new words here.
 	 */
-	buf_add_tid_with_fill
-	  (rel, buf, lovBuffer, lovOffset, tidnum, use_wal);
+	buf_add_tid_with_fill(rel, buf, lovBuffer, lovOffset, tidnum, use_wal);
 	
 	/*
 	 * If there are only updates to the last bitmap complete word and
@@ -2068,8 +2077,7 @@ insertsetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 		lovItem->bm_last_tid_location = tidnum - tidnum % BM_WORD_SIZE;
 
 		if (use_wal)
-			_bitmap_log_bitmap_lastwords
-				(rel, lovBuffer, lovOffset, lovItem);
+			_bitmap_log_bitmap_lastwords(rel, lovBuffer, lovOffset, lovItem);
 		
 		END_CRIT_SECTION();
 		return;
@@ -2079,34 +2087,32 @@ insertsetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 	 * Write bitmap words to bitmap pages. When there are no enough
 	 * space for all these bitmap words, new bitmap pages are created.
 	 */
-	_bitmap_write_new_bitmapwords(rel, lovBuffer, lovOffset,
-								  buf, use_wal);
+	_bitmap_write_new_bitmapwords(rel, lovBuffer, lovOffset, buf, use_wal);
 }
 
 /*
  * _bitmap_write_alltids() -- write all tids in the given buffer into disk.
  */
 void
-_bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids, 
-					  bool use_wal)
+_bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids, bool use_wal)
 {
 	ListCell *cell;
 
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[_bitmap_write_alltids] BEGIN");
+	elog(NOTICE, "[_bitmap_write_alltids] BEGIN");
 #endif
 	foreach(cell, tids->lov_blocks)
 	{
 		int i;
-		BMTIDLOVBuffer *lov_buf = (BMTIDLOVBuffer *)lfirst(cell);
+		BMTIDLOVBuffer *lov_buf = (BMTIDLOVBuffer *) lfirst(cell);
 		BlockNumber lov_block = lov_buf->lov_block;
 
 		for(i = 0; i < BM_MAX_LOVITEMS_PER_PAGE; i++)
 		{
-			BMTIDBuffer *buf = (BMTIDBuffer *)lov_buf->bufs[i];
+			BMTIDBuffer *buf = (BMTIDBuffer *) lov_buf->bufs[i];
 			OffsetNumber off;
 
-			if(!buf || buf->num_cwords == 0)
+			if (!buf || buf->num_cwords == 0)
 				continue;
 
 			off = i + 1;
@@ -2121,7 +2127,7 @@ _bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids,
 	tids->lov_blocks = NIL;
 	tids->byte_size = 0;
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[_bitmap_write_alltids] END");
+	elog(NOTICE, "[_bitmap_write_alltids] END");
 #endif
 }
 
@@ -2141,141 +2147,153 @@ _bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids,
  */
 static void
 build_inserttuple(Relation index, uint64 tidnum,
-	ItemPointerData ht_ctid,
-	Datum *attdata, bool *nulls, BMBuildState *state)
+				  ItemPointerData ht_ctid,
+				  Datum *attdata, bool *nulls, BMBuildState *state)
 {
+	/* Tuple descriptor alias */
+	TupleDesc tupDesc = state->bm_tupDesc;
+	/* BM TID buffer alias */
+	BMTidBuildBuf *tidLocsBuffer = state->bm_tidLocsBuffer;
 
-	TupleDesc tupDesc = state->bm_tupDesc; /* Tuple descriptor alias */
-	BMTidBuildBuf *tidLocsBuffer = state->bm_tidLocsBuffer; /* BM TID buffer alias */
+	/* metapage buffer */
+	Buffer metabuf = _bitmap_getbuf(index, BM_METAPAGE, BM_WRITE);
 
-	Buffer metabuf = _bitmap_getbuf(index, BM_METAPAGE, BM_WRITE); /* metapage buffer */
-
-	/* Initialise LOV block and offset to point to the special NULL value of the Bitmap vector */
+	/*
+	 * Initialise LOV block and offset to point to the special NULL value of
+	 * the Bitmap vector
+	 */
 	BlockNumber lovBlock = BM_LOV_STARTPAGE;
 	OffsetNumber lovOffset = 1;
 
-	int attno; /* temporary attribute counter */
-	bool allNulls = true; /* all attributes are NULL */
+	/* temporary attribute counter */
+	int attno;
+	/* all attributes are NULL */
+	bool allNulls = true;
 
 #ifdef DEBUG_BMI
-  elog(NOTICE,"[build_inserttuple] BEGIN"
-	   "\n\t- tidnum = %llu"
-	   "\n\t- ht_ctid = %08x:%04x"
-	   "\n\t- attdata = %p"
-	   "\n\t- nulls = %p"
-	   ,tidnum
-	   ,ItemPointerGetBlockNumber(&ht_ctid),ItemPointerGetOffsetNumber(&ht_ctid)
-	   ,attdata
-	   ,nulls
-	   );
+	elog(NOTICE,"[build_inserttuple] BEGIN"
+		 "\n\t- tidnum = %llu"
+		 "\n\t- ht_ctid = %08x:%04x"
+		 "\n\t- attdata = %p"
+		 "\n\t- nulls = %p",
+		 tidnum,
+		 ItemPointerGetBlockNumber(&ht_ctid),
+		 ItemPointerGetOffsetNumber(&ht_ctid),
+		 attdata,
+		 nulls);
 #endif
 
 	/* Check if all attributes have value of NULL. */
 	for (attno = 0; attno < state->bm_tupDesc->natts; ++attno)
 	{
-	if (!nulls[attno])
-	{
-		allNulls = false;
-		break;
-	}
+		if (!nulls[attno])
+		{
+			allNulls = false;
+			break;
+		}
 	}
 	
 	/*
-	 * Not NULL value for the current tuple (at least one of the attribute has a not NULL value)
+	 * Not NULL value for the current tuple (at least one of the attribute has
+	 * a not NULL value)
 	 */
 	if (!allNulls)
 	{
-	bool blockNull;
-	bool offsetNull;
-	bool found;
+		bool blockNull;
+		bool offsetNull;
+		bool found;
 
-	/* See if the attributes allow hashing */
-	if (state->lovitem_hash)
-	{
-		BMBuildLovData *lov;
-
-		/* look up the hash to see if we can find the lov data that way */
-		Datum *entry = (Datum *)hash_search(state->lovitem_hash,
-			(void *)attdata,
-			HASH_ENTER, &found);
-
-		if (!found)
+		/* See if the attributes allow hashing */
+		if (state->lovitem_hash)
 		{
-		/* Copy the key values in case someone modifies them */
-		for(attno = 0; attno < tupDesc->natts; attno++)
-		{
-			Form_pg_attribute at = tupDesc->attrs[attno];
+			BMBuildLovData *lov;
 
-			entry[attno] = datumCopy(entry[attno], at->attbyval,
-			at->attlen);
-		}
+			/* look up the hash to see if we can find the lov data that way */
+			Datum *entry = (Datum *)
+				hash_search(state->lovitem_hash, (void *)attdata, HASH_ENTER,
+							&found);
 
-		/*
-		 * If the inserting tuple has a new value, then we create a new
-		 * LOV item.
-		 */
-		create_lovitem(index, metabuf, tidnum, tupDesc, attdata, 
-			nulls, state->bm_lov_heap, state->bm_lov_index,
-			&lovBlock, &lovOffset, state->use_wal);
+			if (!found)
+			{
+				/* Copy the key values in case someone modifies them */
+				for(attno = 0; attno < tupDesc->natts; attno++)
+				{
+					Form_pg_attribute at = tupDesc->attrs[attno];
 
-		/* Updates the information in the LOV heap entry about the block and the offset */
-		lov = (BMBuildLovData *) &(entry[tupDesc->natts]);
-		lov->lov_block = lovBlock;
-		lov->lov_off = lovOffset;
+					entry[attno] = datumCopy(entry[attno], at->attbyval,
+											 at->attlen);
+				}
 
-		}
-		else
-		{
-		/* Get the block and the offset of the LOV heap item */
-		lov = (BMBuildLovData *) &(entry[tupDesc->natts]);
-		lovBlock = lov->lov_block;
-		lovOffset = lov->lov_off;
-		}
-	}
-	else
-	{
-		/*
-		 * Search the btree to find the right bitmap vector to append
-		 * this bit. Here, we reset the scan key and call index_rescan.
-		 */
-		for (attno = 0; attno<tupDesc->natts; attno++)
-		{
-		ScanKey theScanKey = (ScanKey)(((char*)state->bm_lov_scanKeys) +
-			attno * sizeof(ScanKeyData));
-		if (nulls[attno])
-		{
-			theScanKey->sk_flags = SK_ISNULL;
-			theScanKey->sk_argument = attdata[attno];
+				/*
+				 * If the inserting tuple has a new value, then we create a new
+				 * LOV item.
+				 */
+				create_lovitem(index, metabuf, tidnum, tupDesc, attdata,
+							   nulls, state->bm_lov_heap, state->bm_lov_index,
+							   &lovBlock, &lovOffset, state->use_wal);
+
+				/*
+				 * Updates the information in the LOV heap entry about the block
+				 * and the offset
+				 */
+				lov = (BMBuildLovData *) &(entry[tupDesc->natts]);
+				lov->lov_block = lovBlock;
+				lov->lov_off = lovOffset;
+			}
+			else
+			{
+				/* Get the block and the offset of the LOV heap item */
+				lov = (BMBuildLovData *) &(entry[tupDesc->natts]);
+				lovBlock = lov->lov_block;
+				lovOffset = lov->lov_off;
+			}
 		}
 		else
 		{
-			theScanKey->sk_flags = 0;
-			theScanKey->sk_argument = attdata[attno];
-		}
-		}
+			/*
+			 * Search the btree to find the right bitmap vector to append
+			 * this bit. Here, we reset the scan key and call index_rescan.
+			 */
+			for (attno = 0; attno<tupDesc->natts; attno++)
+			{
+				ScanKey theScanKey = (ScanKey)
+					(((char*)state->bm_lov_scanKeys) +
+					 attno * sizeof(ScanKeyData));
+				if (nulls[attno])
+				{
+					theScanKey->sk_flags = SK_ISNULL;
+					theScanKey->sk_argument = attdata[attno];
+				}
+				else
+				{
+					theScanKey->sk_flags = 0;
+					theScanKey->sk_argument = attdata[attno];
+				}
+			}
 
-		index_rescan(state->bm_lov_scanDesc, state->bm_lov_scanKeys,
-					 tupDesc->natts, NULL, 0);
+			index_rescan(state->bm_lov_scanDesc, state->bm_lov_scanKeys,
+						 tupDesc->natts, NULL, 0);
 
-		found = _bitmap_findvalue(state->bm_lov_heap, state->bm_lov_index,
-		state->bm_lov_scanKeys, state->bm_lov_scanDesc,
-		&lovBlock, &blockNull, &lovOffset, &offsetNull);
+			found = _bitmap_findvalue(state->bm_lov_heap, state->bm_lov_index,
+									  state->bm_lov_scanKeys,
+									  state->bm_lov_scanDesc,
+									  &lovBlock, &blockNull,
+									  &lovOffset, &offsetNull);
 
-		if (!found)
-		{
-		/*
-		 * If the inserting tuple has a new value, then we create a new
-		 * LOV item.
-		 */
-		create_lovitem(index, metabuf, tidnum, tupDesc, attdata, 
-			nulls, state->bm_lov_heap, state->bm_lov_index,
-			&lovBlock, &lovOffset, state->use_wal);
+			if (!found)
+			{
+				/*
+				 * If the inserting tuple has a new value, then we create a new
+				 * LOV item.
+				 */
+				create_lovitem(index, metabuf, tidnum, tupDesc, attdata,
+							   nulls, state->bm_lov_heap, state->bm_lov_index,
+							   &lovBlock, &lovOffset, state->use_wal);
+			}
 		}
 	}
-	}
 
-	buf_add_tid
-	  (index, tidLocsBuffer, tidnum, state, lovBlock, lovOffset);
+	buf_add_tid(index, tidLocsBuffer, tidnum, state, lovBlock, lovOffset);
 	_bitmap_wrtbuf(metabuf);
 #ifdef DEBUG_BMI
 	elog(NOTICE,"[build_inserttuple] END");
@@ -2404,8 +2422,7 @@ _bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, Datum *attdata,
 	tidOffset = BM_IPTR_TO_INT(&ht_ctid); 
 
 	/* insert a new bit into the corresponding bitmap */
-	build_inserttuple
-	  (index, tidOffset, ht_ctid, attdata, nulls, state);
+	build_inserttuple(index, tidOffset, ht_ctid, attdata, nulls, state);
 
 #ifdef DEBUG_BMI
 	elog(NOTICE,"[_bitmap_buildinsert] END");
@@ -2449,13 +2466,15 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 	{
 		RegProcedure	opfuncid;
 		ScanKey			scanKey;
-		Oid eq_opr; /* equality operator */
+		Oid				eq_opr; /* equality operator */
 
 		/* Get the equality operator OID */
 		get_sort_group_operators(tupDesc->attrs[attno]->atttypid, false, true,
 								 false, NULL, &eq_opr, NULL, NULL);
 		opfuncid = get_opcode(eq_opr);
 		scanKey = (ScanKey) (((char *)scanKeys) + attno * sizeof(ScanKeyData));
+		/* XXX (Daniel Bausch, 2012-09-05): isn't the previous line equivalent
+		 * to 'scanKey = &scanKeys[attno];' ? */
 
 		ScanKeyEntryInitialize(scanKey, SK_ISNULL, attno + 1, 
 							   BTEqualStrategyNumber, InvalidOid,
@@ -2493,69 +2512,66 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 
 void _debug_view_1(BMTidBuildBuf *x, const char *msg) 
 {
-  ListCell* c;
-  int i=0;
-  elog(NOTICE,"[_debug_view_BMTidBuildBuf] %s"
-	   "\n\tbyte_size = %u"
-	   "\n\tmax_lov_block = %u"
-	   "\n\t\tlov_blocks:length = %d"
-	   ,msg
-	   ,x->byte_size
-	   ,x->max_lov_block
-	   ,list_length(x->lov_blocks)
-	   );
-  foreach(c,x->lov_blocks) {
-	i++;
-  elog(NOTICE,"cell %d = %p"
-	   ,i,lfirst(c));
-  }
+	ListCell* c;
+	int i=0;
+	elog(NOTICE,"[_debug_view_BMTidBuildBuf] %s"
+		 "\n\tbyte_size = %u"
+		 "\n\tmax_lov_block = %u"
+		 "\n\t\tlov_blocks:length = %d",
+		 msg,
+		 x->byte_size,
+		 x->max_lov_block,
+		 list_length(x->lov_blocks));
+	foreach(c,x->lov_blocks) {
+		i++;
+		elog(NOTICE, "cell %d = %p", i, lfirst(c));
+	}
 }
 
 void _debug_view_2(BMTIDBuffer *x, const char *msg) 
 {
-  int i;
-  elog(NOTICE,"[_debug_view_BMTIDBuffer] %s"
-	   "\n\tlast_compword = %04x"
-	   "\n\tlast_word = %04x"
-	   "\n\tis_last_compword_fill = %d"
-	   "\n\tstart_tid = %08x:%04x"
-	   "\n\tlast_tid = %08x:%04x"
-	   "\n\tcurword = %d"
-	   "\n\tnum_cwords = %d"
-	   "\n\tstart_wordno = %d"
-	   "\n\thwords = [ %04x %04x %04x %04x ... ]"
-	   "\n\tcwords = [ %04x %04x %04x %04x ... ]"
-	   "\n\thot_buffer_block = %08lx"
-	   "\n\thot_buffer_count = %d"
-	   "\n\thot_buffer_last_offset = %d"
-	   ,msg
-	   ,x->last_compword
-	   ,x->last_word
-	   ,x->is_last_compword_fill
-	   ,BM_INT_GET_BLOCKNO(x->start_tid),BM_INT_GET_OFFSET(x->start_tid)
-	   ,BM_INT_GET_BLOCKNO(x->last_tid),BM_INT_GET_OFFSET(x->last_tid)
-	   ,x->curword
-	   ,x->num_cwords
-	   ,x->start_wordno
-	   ,x->hwords[0],x->hwords[1],x->hwords[2],x->hwords[3]
-	   ,x->cwords[0],x->cwords[1],x->cwords[2],x->cwords[3]
-	   ,(unsigned long)x->hot_buffer_block
-	   ,x->hot_buffer_count
-	   ,x->hot_buffer_last_offset
-	   );
-  Assert(BUF_INIT_WORDS==8);
-  for (i=0; i < x->num_cwords; i+=8) {
-	elog(NOTICE,"last_tids[%03x-%03x] = %08x:%04x %08x:%04x %08x:%04x "
-		 "%08x:%04x %08x:%04x %08x:%04x %08x:%04x %08x:%04x",
-	 ,i,i+7
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i]),BM_INT_GET_OFFSET((x->last_tids)[i]),
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+1]),BM_INT_GET_OFFSET((x->last_tids)[i+1]),
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+2]),BM_INT_GET_OFFSET((x->last_tids)[i+2]),
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+3]),BM_INT_GET_OFFSET((x->last_tids)[i+3]),
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+4]),BM_INT_GET_OFFSET((x->last_tids)[i+4]),
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+5]),BM_INT_GET_OFFSET((x->last_tids)[i+5]),
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+6]),BM_INT_GET_OFFSET((x->last_tids)[i+6]),
-	 ,BM_INT_GET_BLOCKNO((x->last_tids)[i+7]),BM_INT_GET_OFFSET((x->last_tids)[i+7])
-	 );
-  }
+	int i;
+	elog(NOTICE,"[_debug_view_BMTIDBuffer] %s"
+		 "\n\tlast_compword = %04x"
+		 "\n\tlast_word = %04x"
+		 "\n\tis_last_compword_fill = %d"
+		 "\n\tstart_tid = %08x:%04x"
+		 "\n\tlast_tid = %08x:%04x"
+		 "\n\tcurword = %d"
+		 "\n\tnum_cwords = %d"
+		 "\n\tstart_wordno = %d"
+		 "\n\thwords = [ %04x %04x %04x %04x ... ]"
+		 "\n\tcwords = [ %04x %04x %04x %04x ... ]"
+		 "\n\thot_buffer_block = %08lx"
+		 "\n\thot_buffer_count = %d"
+		 "\n\thot_buffer_last_offset = %d",
+		 msg,
+		 x->last_compword,
+		 x->last_word,
+		 x->is_last_compword_fill,
+		 BM_INT_GET_BLOCKNO(x->start_tid), BM_INT_GET_OFFSET(x->start_tid),
+		 BM_INT_GET_BLOCKNO(x->last_tid), BM_INT_GET_OFFSET(x->last_tid),
+		 x->curword,
+		 x->num_cwords,
+		 x->start_wordno,
+		 x->hwords[0],x->hwords[1],x->hwords[2],x->hwords[3],
+		 x->cwords[0],x->cwords[1],x->cwords[2],x->cwords[3],
+		 (unsigned long)x->hot_buffer_block,
+		 x->hot_buffer_count,
+		 x->hot_buffer_last_offset);
+	Assert(BUF_INIT_WORDS==8);
+	for (i = 0; i < x->num_cwords; i += 8)
+	{
+		elog(NOTICE, "last_tids[%03x-%03x] = %08x:%04x %08x:%04x %08x:%04x "
+			 "%08x:%04x %08x:%04x %08x:%04x %08x:%04x %08x:%04x",
+			 i, i+7,
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i]), BM_INT_GET_OFFSET((x->last_tids)[i]),
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i+1]), BM_INT_GET_OFFSET((x->last_tids)[i+1]),
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i+2]), BM_INT_GET_OFFSET((x->last_tids)[i+2]),
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i+3]), BM_INT_GET_OFFSET((x->last_tids)[i+3]),
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i+4]), BM_INT_GET_OFFSET((x->last_tids)[i+4]),
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i+5]), BM_INT_GET_OFFSET((x->last_tids)[i+5]),
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i+6]), BM_INT_GET_OFFSET((x->last_tids)[i+6]),
+			 BM_INT_GET_BLOCKNO((x->last_tids)[i+7]), BM_INT_GET_OFFSET((x->last_tids)[i+7]));
+	}
 }

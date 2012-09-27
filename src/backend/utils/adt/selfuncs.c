@@ -7349,7 +7349,6 @@ gincostestimate(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-
 Datum
 bmcostestimate(PG_FUNCTION_ARGS)
 {

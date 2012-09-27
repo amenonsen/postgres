@@ -376,7 +376,7 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 	}
 
 	metabuf = _bitmap_getbuf(scan->indexRelation, BM_METAPAGE, BM_READ);
-	metapage = (BMMetaPage)PageGetContents(BufferGetPage(metabuf));
+	metapage = (BMMetaPage) PageGetContents(BufferGetPage(metabuf));
 
 	/*
 	 * If the values for these keys are all NULL, the bitmap vector
@@ -387,7 +387,7 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		lovBlock = BM_LOV_STARTPAGE;
 		lovOffset = 1;
 
-		scanPos->posvecs = (BMVector)palloc0(sizeof(BMVectorData));
+		scanPos->posvecs = (BMVector) palloc0(sizeof(BMVectorData));
 
 		_bitmap_initscanpos(scan, scanPos->posvecs, lovBlock, lovOffset);
 		scanPos->nvec = 1;
@@ -415,8 +415,13 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		scanKeys = palloc0(scan->numberOfKeys * sizeof(ScanKeyData));
 		for (keyNo = 0; keyNo < scan->numberOfKeys; keyNo++)
 		{
-			ScanKey	scanKey = (ScanKey)(((char *)scanKeys) + 
+			ScanKey	scanKey = (ScanKey) (((char *)scanKeys) +
 										 keyNo * sizeof(ScanKeyData));
+			/* XXX (Daniel Bausch, 2012-09-05): isn't the previous line
+			 * equivalent to 'scanKey = &scanKeys[keyNo];' ? */
+
+			elog(NOTICE, "initialize scanKey for attno %d",
+				 scan->keyData[keyNo].sk_attno);
 
 			ScanKeyEntryInitialize(scanKey,
 								   scan->keyData[keyNo].sk_flags,
@@ -448,10 +453,9 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 				break;
 
 			/*
-			 * We find the position for one LOV item. Append it into
-			 * the list.
+			 * We find the position for one LOV item. Append it into the list.
 			 */
-			itemPos = (ItemPos *)palloc0(sizeof(ItemPos));
+			itemPos = (ItemPos *) palloc0(sizeof(ItemPos));
 			itemPos->blockNo = lovBlock;
 			itemPos->offset = lovOffset;
 			lovItemPoss = lappend(lovItemPoss, itemPos);
@@ -464,9 +468,9 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		vectorNo = 0;
 		foreach(cell, lovItemPoss)
 		{
-			ItemPos		*itemPos = (ItemPos*)lfirst(cell);
+			ItemPos		*itemPos   = (ItemPos*) lfirst(cell);
+			BMVector	 bmScanPos = &(scanPos->posvecs[vectorNo]);
 
-			BMVector bmScanPos = &(scanPos->posvecs[vectorNo]);
 			_bitmap_initscanpos(scan, bmScanPos, itemPos->blockNo, itemPos->offset);
 			vectorNo++;
 		}

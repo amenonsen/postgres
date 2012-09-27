@@ -141,177 +141,176 @@ _bitmap_init_bitmappage(Buffer buf)
 void
 _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 {
-    /* BitMap Index Meta Page (first page of the index) */
-    BMMetaPage mp;
+	/* BitMap Index Meta Page (first page of the index) */
+	BMMetaPage	mp;
 
-    /*
-     * Buffer and page management
-     */
+	/* Buffer and page management */
+	Page		page;			/* temporary page variable */
+	Buffer		metabuf;		/* META information buffer */
 
-    Page page; /* temporary page variable */
-    Buffer metabuf; /* META information buffer */
+	int attno;
 
-    int attno; /* attributes counter */
-
-    /*
-     * Initialise the BMBuildState structure which will hold information
-     * about the state for the index build process
-     */
-
-    bmstate->bm_tupDesc = RelationGetDescr(index); /* index tuples description */
-    bmstate->ituples = 0;
-    bmstate->bm_tidLocsBuffer = (BMTidBuildBuf *)
-	palloc(sizeof(BMTidBuildBuf)); /* allocate the index build buffer and ... */
-    bmstate->bm_tidLocsBuffer->byte_size = 0; /* ... initialises it */
-    bmstate->bm_tidLocsBuffer->lov_blocks = NIL;
-    bmstate->bm_tidLocsBuffer->max_lov_block = InvalidBlockNumber;
-
-    /* Get the meta page */
-    metabuf = _bitmap_getbuf(index, BM_METAPAGE, BM_READ);
-    page = BufferGetPage(metabuf);
-    mp = (BMMetaPage) PageGetContents(page);
-
-    /* Open the heap and the index in row exclusive mode */
-    _bitmap_open_lov_heapandindex(mp, &(bmstate->bm_lov_heap),
-	&(bmstate->bm_lov_index), 
-	RowExclusiveLock);
-
-    _bitmap_relbuf(metabuf); /* release the buffer */
-
-    /*
-     * Initialise the static variable cur_bmbuild with the helper functions for hashing
-     * and matching build data. One per index attribute.
-     */
-    cur_bmbuild = (BMBuildHashData *)palloc(sizeof(BMBuildHashData));
-    cur_bmbuild->hash_funcs = (FmgrInfo *)
-	    palloc(sizeof(FmgrInfo) * bmstate->bm_tupDesc->natts);
-    cur_bmbuild->eq_funcs = (FmgrInfo *)
-	    palloc(sizeof(FmgrInfo) * bmstate->bm_tupDesc->natts);
-
-    /* Iterate through the index attributes and initialise the helper functions */
-    for (attno = 0; attno < bmstate->bm_tupDesc->natts; ++attno)
-    {
-	Oid typid = bmstate->bm_tupDesc->attrs[attno]->atttypid;
-	Oid eq_opr; /* equality operator */
-	Oid eq_function; /* equality operator function */
-	Oid left_hash_function; /* left hash function */
-	Oid right_hash_function; /* right hash function */
-
-	/* Get the equality operator OID */
-	get_sort_group_operators(typid, false, true, false, NULL, &eq_opr, NULL, NULL);
-
-	/* Get the eq and hash operator functions */
-	eq_function = get_opcode(eq_opr);
-	if (!get_op_hash_functions(eq_opr, 
-		&left_hash_function, 
-		&right_hash_function))
-	{
-	    pfree(cur_bmbuild);
-	    cur_bmbuild = NULL;
-	    break;
-	}
-
-	fmgr_info(eq_function, &cur_bmbuild->eq_funcs[attno]);
-	fmgr_info(right_hash_function, &cur_bmbuild->hash_funcs[attno]);
-    }
-
-    /* We found the hash functions for every attribute of the index */
-    if (cur_bmbuild)
-    {
 	/*
-	 * Hash management
+	 * Initialise the BMBuildState structure which will hold information
+	 * about the state for the index build process
 	 */
+	bmstate->bm_tupDesc = RelationGetDescr(index); /* index tuples description */
+	bmstate->ituples = 0;
+	/* allocate the index build buffer and ... */
+	bmstate->bm_tidLocsBuffer = (BMTidBuildBuf *)
+		palloc(sizeof(BMTidBuildBuf));
+	bmstate->bm_tidLocsBuffer->byte_size = 0; /* ... initialises it */
+	bmstate->bm_tidLocsBuffer->lov_blocks = NIL;
+	bmstate->bm_tidLocsBuffer->max_lov_block = InvalidBlockNumber;
 
-	HASHCTL hash_ctl;
-	int hash_flags;
+	/* Get the meta page */
+	metabuf = _bitmap_getbuf(index, BM_METAPAGE, BM_READ);
+	page = BufferGetPage(metabuf);
+	mp = (BMMetaPage) PageGetContents(page);
 
-	/* Allocate the temporary memory context */
-	cur_bmbuild->natts = bmstate->bm_tupDesc->natts;
-	cur_bmbuild->tmpcxt = AllocSetContextCreate(CurrentMemoryContext,
-		"Bitmap build temp space",
-		ALLOCSET_DEFAULT_MINSIZE,
-		ALLOCSET_DEFAULT_INITSIZE,
-		ALLOCSET_DEFAULT_MAXSIZE);
+	/* Open the heap and the index in row exclusive mode */
+	_bitmap_open_lov_heapandindex(mp, &(bmstate->bm_lov_heap),
+								  &(bmstate->bm_lov_index),
+								  RowExclusiveLock);
 
-	/* Setup the hash table and map it into the build state variable */
-	MemSet(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize = sizeof(Datum) * cur_bmbuild->natts;
-	hash_ctl.entrysize = hash_ctl.keysize + sizeof(BMBuildLovData) + 200; 
-	hash_ctl.hash = build_hash_key;
-	hash_ctl.match = build_match_key;
-	hash_ctl.hcxt = AllocSetContextCreate(CurrentMemoryContext,
-	    "Bitmap build hash table",
-	    ALLOCSET_DEFAULT_MINSIZE,
-	    ALLOCSET_DEFAULT_INITSIZE,
-	    ALLOCSET_DEFAULT_MAXSIZE);
-	cur_bmbuild->hash_cxt = hash_ctl.hcxt;
+	/* release the buffer */
+	_bitmap_relbuf(metabuf);
 
-	hash_flags = HASH_ELEM | HASH_FUNCTION | HASH_COMPARE | HASH_CONTEXT;
+	/*
+	 * Initialise the static variable cur_bmbuild with the helper functions for hashing
+	 * and matching build data. One per index attribute.
+	 */
+	cur_bmbuild = (BMBuildHashData *) palloc(sizeof(BMBuildHashData));
+	cur_bmbuild->hash_funcs = (FmgrInfo *)
+		palloc(sizeof(FmgrInfo) * bmstate->bm_tupDesc->natts);
+	cur_bmbuild->eq_funcs = (FmgrInfo *)
+		palloc(sizeof(FmgrInfo) * bmstate->bm_tupDesc->natts);
 
-	/* Create the hash table */
-	bmstate->lovitem_hash = hash_create("Bitmap index build lov item hash",
-	    100, &hash_ctl, hash_flags);
-    }
-    else
-    {
-	/* Contingency plan: no hash functions can be used and we have to search through the btree */
-	bmstate->lovitem_hash = NULL;
-	bmstate->bm_lov_scanKeys =
-	    (ScanKey)palloc0(bmstate->bm_tupDesc->natts * sizeof(ScanKeyData));
-
+	/* Iterate through the index attributes and initialise the helper functions */
 	for (attno = 0; attno < bmstate->bm_tupDesc->natts; ++attno)
 	{
-	    RegProcedure opfuncid;
-	    Oid eq_opr; /* equality operator */
-	    Oid atttypid = bmstate->bm_tupDesc->attrs[attno]->atttypid; /* Get the equality operator's function */
+		Oid		typid = bmstate->bm_tupDesc->attrs[attno]->atttypid;
+		Oid		eq_opr;					/* equality operator */
+		Oid		eq_function;			/* equality operator function */
+		Oid		left_hash_function;		/* left hash function */
+		Oid		right_hash_function;	/* right hash function */
 
-	    get_sort_group_operators(atttypid, false, true, false, NULL, &eq_opr, NULL);
-	    opfuncid = get_opcode(eq_opr);
+		/* Get the equality operator OID */
+		get_sort_group_operators(typid, false, true, false,
+								 NULL, &eq_opr, NULL, NULL);
 
-	    /* Initialise the scan key using a btree */
-	    ScanKeyEntryInitialize(&(bmstate->bm_lov_scanKeys[attno]), SK_ISNULL, 
-		attno + 1, BTEqualStrategyNumber, InvalidOid, DEFAULT_COLLATION_OID, 
-		opfuncid, 0);
+		/* Get the eq and hash operator functions */
+		eq_function = get_opcode(eq_opr);
+		if (!get_op_hash_functions(eq_opr, &left_hash_function,
+								   &right_hash_function))
+		{
+			pfree(cur_bmbuild);
+			cur_bmbuild = NULL;
+			break;
+		}
+
+		fmgr_info(eq_function, &cur_bmbuild->eq_funcs[attno]);
+		fmgr_info(right_hash_function, &cur_bmbuild->hash_funcs[attno]);
 	}
 
-	bmstate->bm_lov_scanDesc = index_beginscan(bmstate->bm_lov_heap,
-	    bmstate->bm_lov_index, SnapshotAny, 
-	    bmstate->bm_tupDesc->natts,
-	    0);
-    }
+	/* We found the hash functions for every attribute of the index */
+	if (cur_bmbuild)
+	{
+		/* Hash management */
+		HASHCTL hash_ctl;
+		int		hash_flags;
 
-    /*
-     * We need to log index creation in WAL iff WAL archiving is enabled
-     * AND it's not a temp index. Currently, since building an index
-     * writes page to the shared buffer, we can't disable WAL archiving.
-     * We will add this shortly.
-     */	
-    bmstate->use_wal = XLogArchivingActive() && RelationNeedsWAL(index);
+		/* Allocate the temporary memory context */
+		cur_bmbuild->natts = bmstate->bm_tupDesc->natts;
+		cur_bmbuild->tmpcxt = AllocSetContextCreate(CurrentMemoryContext,
+													"Bitmap build temp space",
+													ALLOCSET_DEFAULT_MINSIZE,
+													ALLOCSET_DEFAULT_INITSIZE,
+													ALLOCSET_DEFAULT_MAXSIZE);
 
-    /*
-     * initialize HOT prebuffer data
-     */
+		/* Setup the hash table and map it into the build state variable */
+		MemSet(&hash_ctl, 0, sizeof(hash_ctl));
+		hash_ctl.keysize = sizeof(Datum) * cur_bmbuild->natts;
+		hash_ctl.entrysize = hash_ctl.keysize + sizeof(BMBuildLovData) + 200; 
+		hash_ctl.hash = build_hash_key;
+		hash_ctl.match = build_match_key;
+		hash_ctl.hcxt = AllocSetContextCreate(CurrentMemoryContext,
+											  "Bitmap build hash table",
+											  ALLOCSET_DEFAULT_MINSIZE,
+											  ALLOCSET_DEFAULT_INITSIZE,
+											  ALLOCSET_DEFAULT_MAXSIZE);
+		cur_bmbuild->hash_cxt = hash_ctl.hcxt;
 
+		hash_flags = HASH_ELEM | HASH_FUNCTION | HASH_COMPARE | HASH_CONTEXT;
+
+		/* Create the hash table */
+		bmstate->lovitem_hash = hash_create("Bitmap index build lov item hash",
+											100, &hash_ctl, hash_flags);
+	}
+	else
+	{
+		/*
+		 * Contingency plan: no hash functions can be used and we have to
+		 * search through the btree
+		 */
+		bmstate->lovitem_hash = NULL;
+		bmstate->bm_lov_scanKeys =
+			(ScanKey) palloc0(bmstate->bm_tupDesc->natts * sizeof(ScanKeyData));
+
+		for (attno = 0; attno < bmstate->bm_tupDesc->natts; ++attno)
+		{
+			RegProcedure		opfuncid;
+			Oid					eq_opr;	/* equality operator */
+			/* Get the equality operator's function */
+			Oid					atttypid =
+				bmstate->bm_tupDesc->attrs[attno]->atttypid;
+
+			get_sort_group_operators(atttypid, false, true, false,
+									 NULL, &eq_opr, NULL, NULL);
+			opfuncid = get_opcode(eq_opr);
+
+			/* Initialise the scan key using a btree */
+			ScanKeyEntryInitialize(&(bmstate->bm_lov_scanKeys[attno]), SK_ISNULL,
+								   attno + 1, BTEqualStrategyNumber, InvalidOid,
+								   DEFAULT_COLLATION_OID, opfuncid, 0);
+		}
+
+		bmstate->bm_lov_scanDesc = index_beginscan(bmstate->bm_lov_heap,
+												   bmstate->bm_lov_index,
+												   SnapshotAny,
+												   bmstate->bm_tupDesc->natts,
+												   0);
+	}
+
+	/*
+	 * We need to log index creation in WAL iff WAL archiving is enabled
+	 * AND it's not a temp index. Currently, since building an index
+	 * writes page to the shared buffer, we can't disable WAL archiving.
+	 * We will add this shortly.
+	 */
+	bmstate->use_wal = XLogArchivingActive() && RelationNeedsWAL(index);
+
+	/* initialize HOT prebuffer data */
 #ifdef DEBUG_BMI
-    elog(NOTICE,"-[_bitmap_init_buildstate]--------- CP 0");
+	elog(NOTICE,"-[_bitmap_init_buildstate]--------- CP 0");
 #endif
-    bmstate->hot_prebuffer_block = InvalidBlockNumber;
+	bmstate->hot_prebuffer_block = InvalidBlockNumber;
 #if 0
-    MemSet(bmstate->hot_prebuffer_tdn, 0, BM_MAX_HTUP_PER_PAGE * sizeof(uint64));
+	MemSet(bmstate->hot_prebuffer_tdn, 0, BM_MAX_HTUP_PER_PAGE * sizeof(uint64));
 #else
-    { /* misteriously, MemSet segfaults... :( */
-      int i;
-      for(i=0;i<BM_MAX_HTUP_PER_PAGE;i++) {
-	bmstate->hot_prebuffer_tdn[i]=(uint64)0;
+	{ /* misteriously, MemSet segfaults... :( */
+		int i;
+		for(i = 0; i < BM_MAX_HTUP_PER_PAGE; i++) {
+			bmstate->hot_prebuffer_tdn[i] = (uint64) 0;
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[_bitmap_init_buildstate]: i == %d",i);
+			elog(NOTICE,"[_bitmap_init_buildstate]: i == %d",i);
 #endif
-      }
+		}
     }
 #endif
-    bmstate->hot_prebuffer_count=0;
+	bmstate->hot_prebuffer_count = 0;
 #ifdef DEBUG_BMI
-    elog(NOTICE,"-[_bitmap_init_buildstate]--------- CP 99");
+	elog(NOTICE,"-[_bitmap_init_buildstate]--------- CP 99");
 #endif
 }
 
@@ -322,45 +321,45 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 void
 _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate)
 {
-    /* write out remaining tids in bmstate->bm_tidLocsBuffer */
-    BMTidBuildBuf *tidLocsBuffer = bmstate->bm_tidLocsBuffer;
+	/* write out remaining tids in bmstate->bm_tidLocsBuffer */
+	BMTidBuildBuf *tidLocsBuffer = bmstate->bm_tidLocsBuffer;
 
 #ifdef DEBUG_BMI
-    elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- BEGIN");
+	elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- BEGIN");
 #endif
 #ifdef FIX_GC_3
-    build_inserttuple_flush(index,bmstate);
+	build_inserttuple_flush(index,bmstate);
 #endif
 #ifdef DEBUG_BMI
-    elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- CP1");
+	elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- CP1");
 #endif
 
-    _bitmap_write_alltids(index, tidLocsBuffer, bmstate->use_wal);
+	_bitmap_write_alltids(index, tidLocsBuffer, bmstate->use_wal);
 
-    pfree(bmstate->bm_tidLocsBuffer);
+	pfree(bmstate->bm_tidLocsBuffer);
 
-    if (cur_bmbuild)
-    {
-	MemoryContextDelete(cur_bmbuild->tmpcxt);
-	MemoryContextDelete(cur_bmbuild->hash_cxt);
-	pfree(cur_bmbuild->hash_funcs);
-	pfree(cur_bmbuild->eq_funcs);
-	pfree(cur_bmbuild);
-	cur_bmbuild = NULL;
-    }
-    else
-    {
-	/* 
-	* We might have build an index on a non-hashable data type, in
-	* which case we will have searched the btree manually. Free associated
-	* memory.
-	*/
-	index_endscan(bmstate->bm_lov_scanDesc);
-	pfree(bmstate->bm_lov_scanKeys);
-    }
+	if (cur_bmbuild)
+	{
+		MemoryContextDelete(cur_bmbuild->tmpcxt);
+		MemoryContextDelete(cur_bmbuild->hash_cxt);
+		pfree(cur_bmbuild->hash_funcs);
+		pfree(cur_bmbuild->eq_funcs);
+		pfree(cur_bmbuild);
+		cur_bmbuild = NULL;
+	}
+	else
+	{
+		/*
+		 * We might have build an index on a non-hashable data type, in which
+		 * case we will have searched the btree manually. Free associated
+		 * memory.
+		 */
+		index_endscan(bmstate->bm_lov_scanDesc);
+		pfree(bmstate->bm_lov_scanKeys);
+	}
 
-    _bitmap_close_lov_heapandindex(bmstate->bm_lov_heap,bmstate->bm_lov_index,
-	RowExclusiveLock);
+	_bitmap_close_lov_heapandindex(bmstate->bm_lov_heap,bmstate->bm_lov_index,
+								   RowExclusiveLock);
 #ifdef DEBUG_BMI
 	elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- END");
 #endif
@@ -376,101 +375,111 @@ _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate)
 void
 _bitmap_init(Relation index, bool use_wal)
 {
-    /*
-     * BitMap Index Meta Page (first page of the index) and first LOV item
-     */
+	/*
+	 * BitMap Index Meta Page (first page of the index) and first LOV item
+	 */
 
-    BMMetaPage metapage; /* BitMap Index Meta Page (first page of the index) */
-    BMLOVItem lovItem; /* First item in the LOV (set to be NULL) */
+	/* BitMap Index Meta Page (first page of the index) */
+	BMMetaPage metapage;
+	/* First item in the LOV (set to be NULL) */
+	BMLOVItem lovItem;
 
-    /*
-     * Buffer and page management
-     */
+	/*
+	 * Buffer and page management
+	 */
 
-    Page page; /* temporary page variable */
-    Buffer metabuf; /* META information buffer */
-    Buffer lovbuf; /* LOV buffer */
-    OffsetNumber lovOffset; /* First LOV page offset */
-    OffsetNumber o; /* temporary offset */
+	Page page; /* temporary page variable */
+	Buffer metabuf; /* META information buffer */
+	Buffer lovbuf; /* LOV buffer */
+	OffsetNumber lovOffset; /* First LOV page offset */
+	OffsetNumber o; /* temporary offset */
 
-    /* Sanity check (the index MUST be empty) */
-    if (RelationGetNumberOfBlocks(index) != 0)
-	ereport(ERROR,
-			(errcode(ERRCODE_INDEX_CORRUPTED),
-			 errmsg("cannot initialize non-empty bitmap index \"%s\"",
-					RelationGetRelationName(index))));
+	/* Sanity check (the index MUST be empty) */
+	if (RelationGetNumberOfBlocks(index) != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("cannot initialize non-empty bitmap index \"%s\"",
+						RelationGetRelationName(index))));
 
-    /*
-     * The first step is to create the META page for the BitMap index, which contains some meta-data
-     * information about the BM index. The META page MUST ALWAYS be the first page (or page 0)
-     * and it is identified by the macro BM_METAPAGE
-     */
-    metabuf = _bitmap_getbuf(index, P_NEW, BM_WRITE); /* get a new buffer for the index (META buffer)*/
-    page = BufferGetPage(metabuf); /* sets the page associated with the META buffer */
-    Assert(PageIsNew(page)); /* check that the page is new */
+	/*
+	 * The first step is to create the META page for the BitMap index, which
+	 * contains some meta-data information about the BM index. The META page
+	 * MUST ALWAYS be the first page (or page 0) and it is identified by the
+	 * macro BM_METAPAGE
+	 */
 
-    START_CRIT_SECTION();
+	/* get a new buffer for the index (META buffer) */
+	metabuf = _bitmap_getbuf(index, P_NEW, BM_WRITE);
+	/* set the page associated with the META buffer */
+	page = BufferGetPage(metabuf);
+	/* check that the page is new */
+	Assert(PageIsNew(page));
 
-    MarkBufferDirty(metabuf); /* marks the META buffer contents as dirty (uninitialised) */
+	START_CRIT_SECTION();
 
-    /* Initialise the page by setting its opaque fields (access method duty) */
-    _bitmap_init_bitmappage(metabuf);
+	/* marks the META buffer contents as dirty (uninitialised) */
+	MarkBufferDirty(metabuf);
 
-    /* Get the content of the page (first ItemPointer - see bufpage.h) */
-    metapage = (BMMetaPage) PageGetContents(page);
+	/* Initialise the page by setting its opaque fields (am duty) */
+	_bitmap_init_bitmappage(metabuf);
 
-    /* Initialise the META page elements (heap and index) */
-    _bitmap_create_lov_heapandindex(index, &(metapage->bm_lov_heapId),
+	/* Get the content of the page (first ItemPointer - see bufpage.h) */
+	metapage = (BMMetaPage) PageGetContents(page);
+
+	/* Initialise the META page elements (heap and index) */
+	_bitmap_create_lov_heapandindex(index, &(metapage->bm_lov_heapId),
 									&(metapage->bm_lov_indexId));
 
-    /* Log the metapage in case of archiving */
-    if (use_wal)
-	_bitmap_log_metapage(index, page);
+	/* Log the metapage in case of archiving */
+	if (use_wal)
+		_bitmap_log_metapage(index, page);
 
-    /*
-     * The second step is to create the first LOV item. The very first value of LOV
-     * is the NULL value.
-     */
+	/*
+	 * The second step is to create the first LOV item.  The very first value
+	 * of LOV is the NULL value.
+	 */
 
-    lovbuf = _bitmap_getbuf(index, P_NEW, BM_WRITE); /* get a new buffer for the LOV item */
-    _bitmap_init_lovpage(lovbuf);
+	/* get a new buffer for the LOV item */
+	lovbuf = _bitmap_getbuf(index, P_NEW, BM_WRITE);
+	_bitmap_init_lovpage(lovbuf);
 
-    MarkBufferDirty(lovbuf); /* marks the LOV buffer contents as dirty (uninitialised) */
+	/* mark the LOV buffer contents as dirty (uninitialised) */
+	MarkBufferDirty(lovbuf);
 
-    /* Get the page for the first LOV item */
-    page = BufferGetPage(lovbuf);
+	/* Get the page for the first LOV item */
+	page = BufferGetPage(lovbuf);
 
-    /* Set the first item to support NULL value */
-    lovItem = _bitmap_formitem(0);
-    lovOffset = OffsetNumberNext(PageGetMaxOffsetNumber(page));
+	/* Set the first item to support NULL value */
+	lovItem = _bitmap_formitem(0);
+	lovOffset = OffsetNumberNext(PageGetMaxOffsetNumber(page));
 
-    /*
-     * XXX: perhaps this could be a special page, with more efficient storage
-     * after all, we have fixed size data
-     */
-    o = PageAddItem(page, (Item)lovItem, sizeof(BMLOVItemData),
+	/*
+	 * XXX: perhaps this could be a special page, with more efficient storage
+	 * after all, we have fixed size data
+	 */
+	o = PageAddItem(page, (Item)lovItem, sizeof(BMLOVItemData),
 					lovOffset, false, false);
 
-    if (o == InvalidOffsetNumber)
-	ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("failed to add LOV item to \"%s\"",
-					RelationGetRelationName(index))));
+	if (o == InvalidOffsetNumber)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("failed to add LOV item to \"%s\"",
+						RelationGetRelationName(index))));
 
-    /* Set the last page for the LOV */
-    metapage->bm_lov_lastpage = BufferGetBlockNumber(lovbuf);
+	/* Set the last page for the LOV */
+	metapage->bm_lov_lastpage = BufferGetBlockNumber(lovbuf);
 
-    /* Log that a new LOV item has been added to a LOV page */
-    if(use_wal)
-			_bitmap_log_lovitem(index, lovbuf, lovOffset, lovItem, metabuf, true);
+	/* Log that a new LOV item has been added to a LOV page */
+	if(use_wal)
+		_bitmap_log_lovitem(index, lovbuf, lovOffset, lovItem, metabuf, true);
 
-    END_CRIT_SECTION();
+	END_CRIT_SECTION();
 
-    /* Write the two buffers to disk */
-    _bitmap_wrtbuf(lovbuf);
-    _bitmap_wrtbuf(metabuf);
+	/* Write the two buffers to disk */
+	_bitmap_wrtbuf(lovbuf);
+	_bitmap_wrtbuf(metabuf);
 
-    pfree(lovItem); /* free the item from memory */
+	pfree(lovItem); /* free the item from memory */
 }
 
 /*
@@ -480,9 +489,9 @@ _bitmap_init(Relation index, bool use_wal)
 static uint32
 build_hash_key(const void *key, Size keysize)
 {
-	Datum *k = (Datum *)key;
-	int i;
-	uint32 hashkey = 0;
+	Datum		*k		 = (Datum *) key;
+	int			 i;
+	uint32		 hashkey = 0;
 
 	for(i = 0; i < cur_bmbuild->natts; i++)
 	{

@@ -38,20 +38,20 @@ static void cleanup_pos(BMScanPosition pos);
 Datum
 bmbuild(PG_FUNCTION_ARGS)
 {
-    Relation    heap = (Relation) PG_GETARG_POINTER(0);
-    Relation    index = (Relation) PG_GETARG_POINTER(1);
-    IndexInfo  *indexInfo = (IndexInfo *) PG_GETARG_POINTER(2);
-    double      reltuples;
-    BMBuildState bmstate;
-    IndexBuildResult *result;
-    TupleDesc	tupDesc;
+    Relation			 heap	   = (Relation) PG_GETARG_POINTER(0);
+    Relation			 index	   = (Relation) PG_GETARG_POINTER(1);
+    IndexInfo			*indexInfo = (IndexInfo *) PG_GETARG_POINTER(2);
+    double				 reltuples;
+    BMBuildState		 bmstate;
+    IndexBuildResult	*result;
+    TupleDesc			 tupDesc;
 
     /* We expect this to be called exactly once. */
     if (RelationGetNumberOfBlocks(index) != 0)
-	ereport (ERROR,
-	    (errcode(ERRCODE_INDEX_CORRUPTED),
-	    errmsg("index \"%s\" already contains data",
-	    RelationGetRelationName(index))));
+		ereport (ERROR,
+				 (errcode(ERRCODE_INDEX_CORRUPTED),
+				  errmsg("index \"%s\" already contains data",
+						 RelationGetRelationName(index))));
 
     /* Get the index tuple descriptor */
     tupDesc = RelationGetDescr(index);
@@ -124,10 +124,10 @@ bmbuildempty(PG_FUNCTION_ARGS)
 Datum
 bminsert(PG_FUNCTION_ARGS)
 {
-	Relation	rel = (Relation) PG_GETARG_POINTER(0);
-	Datum		*datum = (Datum *) PG_GETARG_POINTER(1);
-	bool		*nulls = (bool *) PG_GETARG_POINTER(2);
-	ItemPointer	ht_ctid = (ItemPointer) PG_GETARG_POINTER(3);
+	Relation	 rel	 = (Relation) PG_GETARG_POINTER(0);
+	Datum		*datum	 = (Datum *) PG_GETARG_POINTER(1);
+	bool		*nulls	 = (bool *) PG_GETARG_POINTER(2);
+	ItemPointer	 ht_ctid = (ItemPointer) PG_GETARG_POINTER(3);
 
 	_bitmap_doinsert(rel, *ht_ctid, datum, nulls);
 

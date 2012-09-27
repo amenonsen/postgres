@@ -1339,7 +1339,6 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 			state.itr_blk = state.curbmo->bm_bitmap_next;
 			_bitmap_wrtbuf(state.curbuf);
 			state.curbuf = nbuf;
-
 		}
 		else
 		{
