@@ -276,7 +276,7 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 	bmstate->bm_lov_scanDesc = index_beginscan(bmstate->bm_lov_heap,
 	    bmstate->bm_lov_index, SnapshotAny, 
 	    bmstate->bm_tupDesc->natts,
-	    bmstate->bm_lov_scanKeys);
+	    0);
     }
 
     /*

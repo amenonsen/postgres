@@ -429,7 +429,7 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 
 		/* XXX: is SnapshotAny really the right choice? */
 		scanDesc = index_beginscan(lovHeap, lovIndex, SnapshotAny,
-								   scan->numberOfKeys, scanKeys);
+								   scan->numberOfKeys, 0);
 
 		/*
 		 * finds all lov items for this scan through lovHeap and lovIndex.
