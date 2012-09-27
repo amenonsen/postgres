@@ -1331,7 +1331,7 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 			 * page first so that no one can miss the data held privately
 			 * by us.
 			 */
-			Buffer nbuf;
+			Buffer nbuf = InvalidBuffer;
 			elog(NOTICE, "---------");
 			elog(NOTICE, "overflows!");
 			elog(NOTICE, "---------");
