@@ -4232,30 +4232,32 @@ DATA(insert OID = 3239 (  pg_lsn_send	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 1
 DESCR("I/O");
 
 /* the bitmap index access method routines */
-DATA(insert OID = 3546 (  bmgettuple	   PGNSP PGUID 12 1 0 0 f f t f v 2 16 "2281 2281" _null_ _null_ _null_  bmgettuple _null_ _null_ _null_ ));
+DATA(insert OID = 5050 (  bmgettuple	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 2 0 16 "2281 2281" _null_ _null_ _null_ _null_ bmgettuple _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3547 (  bmgetbitmap	   PGNSP PGUID 12 1 0 0 f f t f v 2 2281 "2281 2281" _null_ _null_ _null_  bmgetbitmap _null_ _null_ _null_ ));
+DATA(insert OID = 5051 (  bmgetbitmap	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ bmgetbitmap _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3548 (  bminsert		   PGNSP PGUID 12 1 0 0 f f t f v 6 16 "2281 2281 2281 2281 2281 2281" _null_ _null_ _null_   bminsert _null_ _null_ _null_ ));
+DATA(insert OID = 5001 (  bminsert		   PGNSP PGUID 12 1 0 0 0 f f f f t f v 6 0 16 "2281 2281 2281 2281 2281 2281" _null_ _null_ _null_ _null_ bminsert _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3549 (  bmbeginscan	   PGNSP PGUID 12 1 0 0 f f t f v 3 2281 "2281 2281 2281" _null_ _null_ _null_	bmbeginscan _null_ _null_ _null_ )); 
+DATA(insert OID = 5002 (  bmbeginscan	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ bmbeginscan _null_ _null_ _null_ )); 
 DESCR("bitmap(internal)");
-DATA(insert OID = 3550 (  bmrescan		   PGNSP PGUID 12 1 0 0 f f t f v 2 2278 "2281 2281" _null_ _null_ _null_ bmrescan _null_ _null_ _null_ ));
+DATA(insert OID = 5003 (  bmrescan		   PGNSP PGUID 12 1 0 0 0 f f f f t f v 2 0 2278 "2281 2281" _null_ _null_ _null_ _null_ bmrescan _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3551 (  bmendscan		   PGNSP PGUID 12 1 0 0 f f t f v 1 2278 "2281" _null_ _null_ _null_  bmendscan _null_ _null_ _null_ ));
+DATA(insert OID = 5004 (  bmendscan		   PGNSP PGUID 12 1 0 0 0 f f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ bmendscan _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3552 (  bmmarkpos		   PGNSP PGUID 12 1 0 0 f f t f v 1 2278 "2281" _null_ _null_ _null_  bmmarkpos _null_ _null_ _null_ ));
+DATA(insert OID = 5005 (  bmmarkpos		   PGNSP PGUID 12 1 0 0 0 f f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ bmmarkpos _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3553 (  bmrestrpos	   PGNSP PGUID 12 1 0 0 f f t f v 1 2278 "2281" _null_ _null_ _null_  bmrestrpos _null_ _null_ _null_ ));
+DATA(insert OID = 5006 (  bmrestrpos	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ bmrestrpos _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3554 (  bmbuild		   PGNSP PGUID 12 1 0 0 f f t f v 3 2281 "2281 2281 2281" _null_ _null_ _null_ bmbuild _null_ _null_ _null_ ));
+DATA(insert OID = 5007 (  bmbuild		   PGNSP PGUID 12 1 0 0 0 f f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ bmbuild _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3555 (  bmbulkdelete	   PGNSP PGUID 12 1 0 0 f f t f v 4 2281 "2281 2281 2281 2281" _null_ _null_ _null_ bmbulkdelete _null_ _null_ _null_ ));
+DATA(insert OID = 5052 (  bmbuildempty	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ bmbuildempty _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3556 (  bmvacuumcleanup  PGNSP PGUID 12 1 0 0 f f t f v 2 2281 "2281 2281" _null_ _null_ _null_ bmvacuumcleanup _null_ _null_ _null_ ));
-DATA(insert OID = 3557 (  bmcostestimate   PGNSP PGUID 12 1 0 0 f f t f v 8 2278 "2281 2281 2281 2281 2281 2281 2281 2281" _null_ _null_ _null_  bmcostestimate _null_ _null_ _null_ ));
+DATA(insert OID = 5008 (  bmbulkdelete	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 4 0 2281 "2281 2281 2281 2281" _null_ _null_ _null_ _null_ bmbulkdelete _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 3558 (  bmoptions		   PGNSP PGUID 12 1 0 0 f f t f s 2 17 "1009 16" _null_ _null_ _null_  bmoptions _null_ _null_ _null_ ));
+DATA(insert OID = 5009 (  bmvacuumcleanup  PGNSP PGUID 12 1 0 0 0 f f f f t f v 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ bmvacuumcleanup _null_ _null_ _null_ ));
+DATA(insert OID = 5010 (  bmcostestimate   PGNSP PGUID 12 1 0 0 0 f f f f t f v 7 0 2278 "2281 2281 2281 2281 2281 2281 2281" _null_ _null_ _null_ _null_ bmcostestimate _null_ _null_ _null_ ));
+DESCR("bitmap(internal)");
+DATA(insert OID = 5011 (  bmoptions		   PGNSP PGUID 12 1 0 0 0 f f f f t f s 2 0 17 "1009 16" _null_ _null_ _null_ _null_ bmoptions _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
 
 /* enum related procs */

@@ -103,6 +103,20 @@ bmbuild(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(result);
 }
 
+/*
+ *	bmbuildempty() -- build an empty bitmap index in the initialization fork
+ */
+Datum
+bmbuildempty(PG_FUNCTION_ARGS)
+{
+	/* Relation	index = (Relation) PG_GETARG_POINTER(0); */
+
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("unlogged bitmap indexes are not supported")));
+
+	PG_RETURN_VOID();
+}
 
 /*
  * bminsert() -- insert an index tuple into a bitmap index.
@@ -193,11 +207,11 @@ bmbeginscan(PG_FUNCTION_ARGS)
 {
 	Relation	rel = (Relation) PG_GETARG_POINTER(0);
 	int			nkeys = PG_GETARG_INT32(1);
-	ScanKey		scankey = (ScanKey) PG_GETARG_POINTER(2);
+	int			norderbys = PG_GETARG_INT32(2);
 	IndexScanDesc scan;
 
 	/* get the scan */
-	scan = RelationGetIndexScan(rel, nkeys, scankey);
+	scan = RelationGetIndexScan(rel, nkeys, norderbys);
 
 	PG_RETURN_POINTER(scan);
 }
