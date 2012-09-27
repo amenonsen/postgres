@@ -1364,8 +1364,13 @@ fill_matched(bmvacstate *state, uint64 start, uint64 end)
 		{
 			/* set the new fill length */
 
-			elog(NOTICE, "shrinking fill word. old len = "
-				 "new len = %lli", len / BM_WORD_SIZE);
+			elog(NOTICE, "shrinking fill word. old len = new len = "
+#ifdef HAVE_LONG_INT_64
+				 "%li",
+#elif defined(HAVE_LONG_LONG_INT_64)
+				 "%lli",
+#endif
+				 len / BM_WORD_SIZE);
 			
 			newword = BM_MAKE_FILL_WORD(1, len / BM_WORD_SIZE);
 			state->curbm->cwords[state->writewordno] = newword;
