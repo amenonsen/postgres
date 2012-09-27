@@ -422,7 +422,8 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 								   scan->keyData[keyNo].sk_flags,
 								   scan->keyData[keyNo].sk_attno,
 								   scan->keyData[keyNo].sk_strategy,
-								   scan->keyData[keyNo].sk_subtype, 
+								   scan->keyData[keyNo].sk_subtype,
+								   scan->keyData[keyNo].sk_collation,
 								   scan->keyData[keyNo].sk_func.fn_oid,
 								   scan->keyData[keyNo].sk_argument);
 		}

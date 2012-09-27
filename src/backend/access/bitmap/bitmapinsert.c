@@ -26,6 +26,7 @@
 #include "utils/tqual.h" /* for SnapshotAny */
 #include "utils/rel.h" /* for RelationGetDescr */
 #include "utils/lsyscache.h" /* for get_opcode */
+#include "catalog/pg_collation.h"
 
 /*
  * The following structure along with BMTIDBuffer are used to buffer
@@ -2457,7 +2458,8 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 		scanKey = (ScanKey) (((char *)scanKeys) + attno * sizeof(ScanKeyData));
 
 		ScanKeyEntryInitialize(scanKey, SK_ISNULL, attno + 1, 
-							   BTEqualStrategyNumber, InvalidOid, opfuncid, 0);
+							   BTEqualStrategyNumber, InvalidOid,
+							   DEFAULT_COLLATION_OID, opfuncid, 0);
 
 		if (nulls[attno])
 		{

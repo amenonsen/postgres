@@ -24,6 +24,7 @@
 #include "utils/syscache.h"
 #include "storage/bufmgr.h" /* for buffer manager functions */
 #include "utils/tqual.h" /* for SnapshotAny */
+#include "catalog/pg_collation.h"
 
 /* 
  * Helper functions for hashing and matching build data. At this stage, the
@@ -269,7 +270,7 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 
 	    /* Initialise the scan key using a btree */
 	    ScanKeyEntryInitialize(&(bmstate->bm_lov_scanKeys[attno]), SK_ISNULL, 
-		attno + 1, BTEqualStrategyNumber, InvalidOid, 
+		attno + 1, BTEqualStrategyNumber, InvalidOid, DEFAULT_COLLATION_OID, 
 		opfuncid, 0);
 	}
 
