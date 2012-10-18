@@ -447,6 +447,12 @@ typedef struct BMBuildState
   int16 hot_prebuffer_count;
 } BMBuildState;
 
+typedef struct BMItemPos
+{
+	BlockNumber		blockNo;
+	OffsetNumber	offset;
+} BMItemPos;
+
 /*
  * Define an iteration result while scanning an BMBatchWords.
  *
@@ -826,9 +832,8 @@ extern void _bitmap_insert_lov(Relation lovHeap, Relation lovIndex,
 extern void _bitmap_close_lov_heapandindex(Relation lovHeap, 
 										Relation lovIndex, LOCKMODE lockMode);
 extern bool _bitmap_findvalue(Relation lovHeap, Relation lovIndex,
-							 ScanKey scanKey, IndexScanDesc scanDesc,
-							 BlockNumber *lovBlock, bool *blockNull,
-							 OffsetNumber *lovOffset, bool *offsetNull);
+							  ScanKey scanKey, IndexScanDesc scanDesc,
+							  BMItemPos *lovItemPos);
 extern void _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			               IndexBulkDeleteCallback callback, 
 						   void *callback_state);

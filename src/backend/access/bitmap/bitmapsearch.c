@@ -23,12 +23,6 @@
 #include "storage/bufmgr.h" /* for buffer manager functions */
 #include "utils/tqual.h" /* for SnapshotAny */
 
-typedef struct ItemPos
-{
-	BlockNumber		blockNo;
-	OffsetNumber	offset;
-} ItemPos;
-
 static void next_batch_words(IndexScanDesc scan);
 static void read_words(Relation rel, Buffer lovBuffer, 
 					   OffsetNumber lovOffset, BlockNumber *nextBlockNoP,
@@ -398,8 +392,9 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		TupleDesc		indexTupDesc;
 		ScanKey			scanKeys;
 		IndexScanDesc	scanDesc;
-		List*			lovItemPoss = NIL;
-		ListCell		*cell;
+		BMItemPos		lovItemPos;
+		List		   *lovItemPoss = NIL;
+		ListCell	   *cell;
 
 		/*
 		 * We haven't locked the metapage but that's okay... if these
@@ -442,17 +437,15 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		 * finds all lov items for this scan through lovHeap and lovIndex.
 		 */
 		while (_bitmap_findvalue(lovHeap, lovIndex, scanKeys, scanDesc,
-								 &lovBlock, &blockNull, &lovOffset,
-								 &offsetNull))
+								 &lovItemPos))
 		{
 			/*
 			 * We find the position for one LOV item. Append it into the list.
 			 */
-			ItemPos	*itemPos = (ItemPos *) palloc0(sizeof(ItemPos));
+			BMItemPos	*posCopy = (BMItemPos *) palloc0(sizeof(BMItemPos));
 
-			itemPos->blockNo = lovBlock;
-			itemPos->offset = lovOffset;
-			lovItemPoss = lappend(lovItemPoss, itemPos);
+			*posCopy = lovItemPos;
+			lovItemPoss = lappend(lovItemPoss, posCopy);
 
 			scanPos->nvec++;
 		}
@@ -462,10 +455,12 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		vectorNo = 0;
 		foreach(cell, lovItemPoss)
 		{
-			ItemPos		*itemPos   = (ItemPos*) lfirst(cell);
-			BMVector	 bmScanPos = &(scanPos->posvecs[vectorNo]);
+			BMItemPos  *_lovItemPos = (BMItemPos *) lfirst(cell);
+			BMVector	bmScanPos = &(scanPos->posvecs[vectorNo]);
 
-			_bitmap_initscanpos(scan, bmScanPos, itemPos->blockNo, itemPos->offset);
+			_bitmap_initscanpos(scan, bmScanPos, _lovItemPos->blockNo,
+								_lovItemPos->offset);
+
 			vectorNo++;
 		}
 

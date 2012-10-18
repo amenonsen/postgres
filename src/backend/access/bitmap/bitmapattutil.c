@@ -321,12 +321,12 @@ _bitmap_close_lov_heapandindex(Relation lovHeap, Relation lovIndex,
 bool
 _bitmap_findvalue(Relation lovHeap, Relation lovIndex,
 				  ScanKey scanKey, IndexScanDesc scanDesc,
-				  BlockNumber *lovBlock, bool *blockNull,
-				  OffsetNumber *lovOffset, bool *offsetNull)
+				  BMItemPos *lovItemPos)
 {
 	TupleDesc		tupDesc;
 	HeapTuple		tuple;
 	bool			found = false;
+	bool			isNull;
 
 	tupDesc = RelationGetDescr(lovIndex);
 
@@ -340,10 +340,12 @@ _bitmap_findvalue(Relation lovHeap, Relation lovIndex,
 		found = true;
 		heapTupDesc = RelationGetDescr(lovHeap);
 
-		d = heap_getattr(tuple, tupDesc->natts + 1, heapTupDesc, blockNull);
-		*lovBlock =	DatumGetInt32(d);
-		d = heap_getattr(tuple, tupDesc->natts + 2, heapTupDesc, offsetNull);
-		*lovOffset = DatumGetInt16(d);
+		d = heap_getattr(tuple, tupDesc->natts + 1, heapTupDesc, &isNull);
+		Assert(!isNull);
+		lovItemPos->blockNo = DatumGetInt32(d);
+		d = heap_getattr(tuple, tupDesc->natts + 2, heapTupDesc, &isNull);
+		Assert(!isNull);
+		lovItemPos->offset = DatumGetInt16(d);
 	}
 	return found;
 }
