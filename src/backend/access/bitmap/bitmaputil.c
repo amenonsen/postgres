@@ -27,8 +27,8 @@
  */
 typedef struct bmvacinfo
 {
-	IndexVacuumInfo *info;
-	BMLOVItem lovitem;
+	IndexVacuumInfo	*info;
+	BMVectorMetaItem vmi;
 } bmvacinfo;
 
 /*
@@ -47,7 +47,7 @@ typedef enum bmVacType
  */
 typedef struct bmvacstate
 {
-	BMLOVItem curlov; /* LOV item for the current vector */ 
+	BMVectorMetaItem curvmi; /* VMI for the current vector */
 	/* variables marking interesting positions in the vector */
 	uint64 cur_bitpos; /* the hypothetical location we're at */
 	uint64 last_setbit; /* last bit set set as a match */
@@ -92,61 +92,60 @@ static void put_vacuumed_literal_word(bmvacstate *state, bmVacType type,
 static void vacuum_append_ovrflw_words(bmvacstate *state);
 
 /*
- * _bitmap_formitem() -- construct a LOV entry.
+ * _bitmap_formitem() -- construct a VMI.
  *
  * If the given tid number is greater than BM_WORD_SIZE, we
  * construct the first fill word for this bitmap vector.
  */
-BMLOVItem
+BMVectorMetaItem
 _bitmap_formitem(uint64 currTidNumber)
 {
-    /* Allocate a new LOV item */
-    BMLOVItem bmitem = (BMLOVItem)palloc(BM_LOV_ITEM_SIZE);
+    /* Allocate a new vector meta item */
+    BMVectorMetaItem vmi = (BMVectorMetaItem) palloc(BM_VECTOR_META_ITEM_SIZE);
 
 #ifdef DEBUG_BMI
-	  elog(NOTICE,"[_bitmap_formitem] BEGIN"
-	       "\n\tcurrTidNumber = %llu"
-	       ,currTidNumber
-	       );
+	elog(NOTICE,"[_bitmap_formitem] BEGIN"
+		 "\n\tcurrTidNumber = %llu",
+		 currTidNumber
+		);
 #endif
 
     /* Initialise the LOV structure */
-    bmitem->bm_lov_head = bmitem->bm_lov_tail = InvalidBlockNumber;
-    bmitem->bm_last_setbit = 0;
-    bmitem->bm_last_compword = LITERAL_ALL_ONE;
-    bmitem->bm_last_word = LITERAL_ALL_ZERO;
-    bmitem->lov_words_header = BM_LOV_WORDS_NO_FILL;
-    bmitem->bm_last_tid_location = 0;
+    vmi->bm_bitmap_head = vmi->bm_bitmap_tail = InvalidBlockNumber;
+    vmi->bm_last_setbit = 0;
+    vmi->bm_last_compword = LITERAL_ALL_ONE;
+    vmi->bm_last_word = LITERAL_ALL_ZERO;
+    vmi->vmi_words_header = BM_VMI_WORDS_NO_FILL;
+    vmi->bm_last_tid_location = 0;
 
     /* fill up all existing bits with 0. */
     if (currTidNumber > BM_WORD_SIZE)
     {
-	uint32		numOfTotalFillWords;
-	BM_WORD	numOfFillWords;
+		uint32	numOfTotalFillWords;
+		BM_WORD	numOfFillWords;
 
-	numOfTotalFillWords = (currTidNumber-1)/BM_WORD_SIZE;
+		numOfTotalFillWords = (currTidNumber - 1) / BM_WORD_SIZE;
 
-	numOfFillWords = (numOfTotalFillWords >= MAX_FILL_LENGTH) ? 
-	MAX_FILL_LENGTH : numOfTotalFillWords;
+		numOfFillWords = (numOfTotalFillWords >= MAX_FILL_LENGTH) ?
+			MAX_FILL_LENGTH : numOfTotalFillWords;
 
-	bmitem->bm_last_compword = BM_MAKE_FILL_WORD(0, numOfFillWords);
-	bmitem->bm_last_word = LITERAL_ALL_ZERO;
-	bmitem->lov_words_header = BM_LAST_COMPWORD_BIT;
-	bmitem->bm_last_tid_location = numOfFillWords * BM_WORD_SIZE;
+		vmi->bm_last_compword = BM_MAKE_FILL_WORD(0, numOfFillWords);
+		vmi->bm_last_word = LITERAL_ALL_ZERO;
+		vmi->vmi_words_header = BM_LAST_COMPWORD_BIT;
+		vmi->bm_last_tid_location = numOfFillWords * BM_WORD_SIZE;
 
-	/*
-	* If all zeros are too many to fit in one word, then
-	* we set bm_last_setbit so that the remaining zeros can
-	* be handled outside.
-	*/
-	if (numOfTotalFillWords > numOfFillWords)
-	    bmitem->bm_last_setbit = numOfFillWords*BM_WORD_SIZE;
+		/*
+		 * If all zeros are too many to fit in one word, then we set
+		 * bm_last_setbit so that the remaining zeros can be handled outside.
+		 */
+		if (numOfTotalFillWords > numOfFillWords)
+			vmi->bm_last_setbit = numOfFillWords * BM_WORD_SIZE;
     }
 
 #ifdef DEBUG_BMI
     elog(NOTICE,"[_bitmap_formitem] END");
 #endif
-    return bmitem;
+    return vmi;
 }
 
 /*
@@ -245,9 +244,9 @@ _bitmap_cleanup_scanpos(BMVector bmScanPos, uint32 numBitmapVectors)
 		
 	for (keyNo=0; keyNo<numBitmapVectors; keyNo++)
 	{
-		if (BufferIsValid((bmScanPos[keyNo]).bm_lovBuffer))
+		if (BufferIsValid((bmScanPos[keyNo]).bm_vmiBuffer))
 		{
-			ReleaseBuffer((bmScanPos[keyNo]).bm_lovBuffer);
+			ReleaseBuffer((bmScanPos[keyNo]).bm_vmiBuffer);
 		}
 			
 
@@ -836,7 +835,7 @@ _bitmap_log_metapage(Relation rel, Page page)
 	xlMeta->bm_node = rel->rd_node;
 	xlMeta->bm_lov_heapId = metapage->bm_lov_heapId;
 	xlMeta->bm_lov_indexId = metapage->bm_lov_indexId;
-	xlMeta->bm_lov_lastpage = metapage->bm_lov_lastpage;
+	xlMeta->bm_last_vmi_page = metapage->bm_last_vmi_page;
 
 	rdata[0].buffer = InvalidBuffer;
 	rdata[0].data = (char*)xlMeta;
@@ -854,19 +853,19 @@ _bitmap_log_metapage(Relation rel, Page page)
  * _bitmap_log_bitmap_lastwords() -- log the last two words in a bitmap.
  */
 void
-_bitmap_log_bitmap_lastwords(Relation rel, Buffer lovBuffer, 
-							 OffsetNumber lovOffset, BMLOVItem lovItem)
+_bitmap_log_bitmap_lastwords(Relation rel, Buffer vmiBuffer,
+							 OffsetNumber vmiOffset, BMVectorMetaItem vmi)
 {
 	xl_bm_bitmap_lastwords	xlLastwords;
 	XLogRecPtr				recptr;
 	XLogRecData				rdata[1];
 
 	xlLastwords.bm_node = rel->rd_node;
-	xlLastwords.bm_last_compword = lovItem->bm_last_compword;
-	xlLastwords.bm_last_word = lovItem->bm_last_word;
-	xlLastwords.lov_words_header = lovItem->lov_words_header;
-	xlLastwords.bm_lov_blkno = BufferGetBlockNumber(lovBuffer);
-	xlLastwords.bm_lov_offset = lovOffset;
+	xlLastwords.bm_last_compword = vmi->bm_last_compword;
+	xlLastwords.bm_last_word = vmi->bm_last_word;
+	xlLastwords.vmi_words_header = vmi->vmi_words_header;
+	xlLastwords.bm_vmi_blkno = BufferGetBlockNumber(vmiBuffer);
+	xlLastwords.bm_vmi_offset = vmiOffset;
 
 	rdata[0].buffer = InvalidBuffer;
 	rdata[0].data = (char*)&xlLastwords;
@@ -876,38 +875,38 @@ _bitmap_log_bitmap_lastwords(Relation rel, Buffer lovBuffer,
 	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_INSERT_BITMAP_LASTWORDS, 
 						rdata);
 
-	PageSetLSN(BufferGetPage(lovBuffer), recptr);
-	PageSetTLI(BufferGetPage(lovBuffer), ThisTimeLineID);
+	PageSetLSN(BufferGetPage(vmiBuffer), recptr);
+	PageSetTLI(BufferGetPage(vmiBuffer), ThisTimeLineID);
 }
 
 /*
- * _bitmap_log_lovitem() -- log adding a new lov item to a lov page.
+ * _bitmap_log_vmi() -- log adding a new VMI to a VMI page.
  */
 void
-_bitmap_log_lovitem(Relation rel, Buffer lovBuffer, OffsetNumber offset,
-					BMLOVItem lovItem, Buffer metabuf, bool is_new_lov_blkno)
+_bitmap_log_vmi(Relation rel, Buffer vmiBuffer, OffsetNumber offset,
+				BMVectorMetaItem vmi, Buffer metabuf, bool is_new_vmi_blkno)
 {
-	Page lovPage = BufferGetPage(lovBuffer);
+	Page vmiPage = BufferGetPage(vmiBuffer);
 
-	xl_bm_lovitem	xlLovItem;
+	xl_bm_vmi		xlVmi;
 	XLogRecPtr		recptr;
 	XLogRecData		rdata[1];
 
-	xlLovItem.bm_node = rel->rd_node;
-	xlLovItem.bm_lov_blkno = BufferGetBlockNumber(lovBuffer);
-	xlLovItem.bm_lov_offset = offset;
-	memcpy(&(xlLovItem.bm_lovItem), lovItem, sizeof(BMLOVItemData));
-	xlLovItem.bm_is_new_lov_blkno = is_new_lov_blkno;
+	xlVmi.bm_node = rel->rd_node;
+	xlVmi.bm_vmi_blkno = BufferGetBlockNumber(vmiBuffer);
+	xlVmi.bm_vmi_offset = offset;
+	memcpy(&(xlVmi.bm_vmi), vmi, sizeof(BMVectorMetaItemData));
+	xlVmi.bm_is_new_vmi_blkno = is_new_vmi_blkno;
 
 	rdata[0].buffer = InvalidBuffer;
-	rdata[0].data = (char*)&xlLovItem;
-	rdata[0].len = sizeof(xl_bm_lovitem);
+	rdata[0].data = (char *) &xlVmi;
+	rdata[0].len = sizeof(xl_bm_vmi);
 	rdata[0].next = NULL;
 
 	recptr = XLogInsert(RM_BITMAP_ID, 
-						XLOG_BITMAP_INSERT_LOVITEM, rdata);
+						XLOG_BITMAP_INSERT_VMI, rdata);
 
-	if (is_new_lov_blkno)
+	if (is_new_vmi_blkno)
 	{
 		Page metapage = BufferGetPage(metabuf);
 
@@ -915,16 +914,16 @@ _bitmap_log_lovitem(Relation rel, Buffer lovBuffer, OffsetNumber offset,
 		PageSetTLI(metapage, ThisTimeLineID);
 	}
 
-	PageSetLSN(lovPage, recptr);
-	PageSetTLI(lovPage, ThisTimeLineID);
+	PageSetLSN(vmiPage, recptr);
+	PageSetTLI(vmiPage, ThisTimeLineID);
 }
 
 /*
  * _bitmap_log_bitmapwords() -- log new bitmap words to be inserted.
  */
 void
-_bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer lovBuffer,
-						OffsetNumber lovOffset, BMTIDBuffer* buf,
+_bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer vmiBuffer,
+						OffsetNumber vmiOffset, BMTIDBuffer* buf,
 						uint64 words_written, uint64 tidnum,
 						BlockNumber nextBlkno,
 						bool isLast, bool isFirst)
@@ -934,13 +933,13 @@ _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer lovBuffer,
 	xl_bm_bitmapwords  *xlBitmapWords;
 	XLogRecPtr			recptr;
 	XLogRecData			rdata[1];
-	uint64*				lastTids;
-	BM_WORD*		cwords;
-	BM_WORD*		hwords;
+	uint64			   *lastTids;
+	BM_WORD			   *cwords;
+	BM_WORD			   *hwords;
 	int					lastTids_size;
 	int					cwords_size;
 	int					hwords_size;
-	Page lovPage = BufferGetPage(lovBuffer);
+	Page				vmiPage = BufferGetPage(vmiBuffer);
 
 	lastTids_size = buf->curword * sizeof(uint64);
 	cwords_size = buf->curword * sizeof(BM_WORD);
@@ -959,13 +958,13 @@ _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer lovBuffer,
 	xlBitmapWords->bm_blkno = BufferGetBlockNumber(bitmapBuffer);
 	xlBitmapWords->bm_next_blkno = nextBlkno;
 	xlBitmapWords->bm_last_tid = bitmapPageOpaque->bm_last_tid_location;
-	xlBitmapWords->bm_lov_blkno = BufferGetBlockNumber(lovBuffer);
-	xlBitmapWords->bm_lov_offset = lovOffset;
+	xlBitmapWords->bm_vmi_blkno = BufferGetBlockNumber(vmiBuffer);
+	xlBitmapWords->bm_vmi_offset = vmiOffset;
 	xlBitmapWords->bm_last_compword = buf->last_compword;
 	xlBitmapWords->bm_last_word = buf->last_word;
-	xlBitmapWords->lov_words_header = 
+	xlBitmapWords->vmi_words_header =
 		(buf->is_last_compword_fill) ? 
-		BM_LAST_COMPWORD_BIT : BM_LOV_WORDS_NO_FILL;
+		BM_LAST_COMPWORD_BIT : BM_VMI_WORDS_NO_FILL;
 	xlBitmapWords->bm_last_setbit = tidnum;
 	xlBitmapWords->bm_is_last = isLast;
 	xlBitmapWords->bm_is_first = isFirst;
@@ -997,8 +996,8 @@ _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer lovBuffer,
 	PageSetLSN(bitmapPage, recptr);
 	PageSetTLI(bitmapPage, ThisTimeLineID);
 
-	PageSetLSN(lovPage, recptr);
-	PageSetTLI(lovPage, ThisTimeLineID);
+	PageSetLSN(vmiPage, recptr);
+	PageSetTLI(vmiPage, ThisTimeLineID);
 
 	pfree(xlBitmapWords);
 }
@@ -1045,15 +1044,14 @@ _bitmap_log_updateword(Relation rel, Buffer bitmapBuffer, int word_no)
  *
  */
 void
-_bitmap_log_updatewords(Relation rel,
-						Buffer lovBuffer, OffsetNumber lovOffset,
+_bitmap_log_updatewords(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 						Buffer firstBuffer, Buffer secondBuffer,
 						bool new_lastpage)
 {
 	Page				firstPage = NULL;
 	Page				secondPage = NULL;
-	BMBitmapVectorPage			firstBitmap;
-	BMBitmapVectorPage			secondBitmap;
+	BMBitmapVectorPage	firstBitmap;
+	BMBitmapVectorPage	secondBitmap;
 	BMPageOpaque		firstOpaque;
 	BMPageOpaque		secondOpaque;
 
@@ -1119,10 +1117,10 @@ _bitmap_log_updatewords(Relation rel,
 
 	if (new_lastpage)
 	{
-		Page lovPage = BufferGetPage(lovBuffer);
+		Page vmiPage = BufferGetPage(vmiBuffer);
 
-		PageSetLSN(lovPage, recptr);
-		PageSetTLI(lovPage, ThisTimeLineID);
+		PageSetLSN(vmiPage, recptr);
+		PageSetTLI(vmiPage, ThisTimeLineID);
 	}
 }
 
@@ -1147,13 +1145,13 @@ void
 _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			   IndexBulkDeleteCallback callback, void *callback_state)
 {
-	Buffer metabuf;
-	BMMetaPage metapage;
-	Relation index = info->index;
-	bmvacinfo vacinfo;
-	HeapScanDesc scan;
-	Relation lovheap;
-	HeapTuple tuple;
+	Buffer			metabuf;
+	BMMetaPage		metapage;
+	Relation		index = info->index;
+	bmvacinfo		vacinfo;
+	HeapScanDesc	scan;
+	Relation		lovheap;
+	HeapTuple		tuple;
 
 	vacinfo.info = info;
 
@@ -1165,37 +1163,37 @@ _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)))
 	{
-		BMLOVItem 		lovitem;
-		BlockNumber 	lov_block;
-		OffsetNumber 	lov_off;
+		BMVectorMetaItem vmi;
+		BlockNumber 	vmi_block;
+		OffsetNumber 	vmi_off;
 		TupleDesc   	desc;
         Datum       	d;
 		bool			isnull;
-		Buffer			lov_buf;
+		Buffer			vmi_buf;
 		Page			page;
 
         desc = RelationGetDescr(lovheap);
 
         d = heap_getattr(tuple, desc->natts - 1, desc, &isnull);
 		Assert(!isnull);
-        lov_block = DatumGetInt32(d);
+        vmi_block = DatumGetInt32(d);
 		
         d = heap_getattr(tuple, desc->natts - 0, desc, &isnull);
 		Assert(!isnull);
-        lov_off = DatumGetInt16(d);
+        vmi_off = DatumGetInt16(d);
 
-		lov_buf = _bitmap_getbuf(index, lov_block, BM_READ);
-		page = BufferGetPage(lov_buf);
-		lovitem = (BMLOVItem)PageGetItem(page,
-										 PageGetItemId(page,lov_off));
-		vacinfo.lovitem = lovitem;
+		vmi_buf = _bitmap_getbuf(index, vmi_block, BM_READ);
+		page = BufferGetPage(vmi_buf);
+		vmi = (BMVectorMetaItem)
+			PageGetItem(page, PageGetItemId(page, vmi_off));
+		vacinfo.vmi = vmi;
 
 #ifdef DEBUG_BMI
 		elog(NOTICE, "---- start vac");
 		elog(NOTICE, "value = %i", (int)heap_getattr(tuple, 1, desc, &isnull));
 #endif
 		vacuum_vector(vacinfo, callback, callback_state);
-		_bitmap_relbuf(lov_buf);
+		_bitmap_relbuf(vmi_buf);
 	}
 	
 	/* XXX: be careful to vacuum NULL vector */
@@ -1272,17 +1270,17 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 	state.callback = callback;
 	state.callback_state = callback_state;
 	
-	state.itr_blk = vacinfo.lovitem->bm_lov_head;
+	state.itr_blk = vacinfo.vmi->bm_bitmap_head;
 	state.curbuf = InvalidBuffer;
 
 	state.ovrflwwordno = 0;
 
-	state.curlov = vacinfo.lovitem;
+	state.curvmi = vacinfo.vmi;
 
 	if (!BlockNumberIsValid(state.itr_blk))
 	{
 		elog(NOTICE, "invalid head, compword: %i, lastword: %i",
-			 vacinfo.lovitem->bm_last_compword, vacinfo.lovitem->bm_last_word);
+			 vacinfo.vmi->bm_last_compword, vacinfo.vmi->bm_last_word);
 		return;
 	}
 		
@@ -1301,7 +1299,7 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 #ifdef DEBUG_BMI
 		elog(NOTICE, "words used: %i, comp %i, last %i", 
 			 state.curbmo->bm_hrl_words_used,
-			 vacinfo.lovitem->bm_last_compword, vacinfo.lovitem->bm_last_word);
+			 vacinfo.vmi->bm_last_compword, vacinfo.vmi->bm_last_word);
 #endif
 		while (state.readwordno < state.curbmo->bm_hrl_words_used)
 		{
@@ -1658,13 +1656,13 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 			switch(vactype)
 			{
 				case BM_VAC_LAST_COMPWORD:
-					state->curlov->bm_last_compword = newword;
-					state->curlov->lov_words_header &=
+					state->curvmi->bm_last_compword = newword;
+					state->curvmi->vmi_words_header &=
 						BM_LAST_COMPWORD_BIT;
 					break;
 				case BM_VAC_LAST_WORD:
-					state->curlov->bm_last_word = newword;
-					state->curlov->lov_words_header &=
+					state->curvmi->bm_last_word = newword;
+					state->curvmi->vmi_words_header &=
 						BM_LAST_WORD_BIT;
 					break;
 				default:
@@ -1879,7 +1877,7 @@ progress_write_pos(bmvacstate *state)
 }
 
 /*
- * We must vacuum the last_word and last_compword in the LOV item.
+ * We must vacuum the last_word and last_compword in the VMI.
  */
 static void
 vacuum_last_words(bmvacstate *state)
@@ -1891,18 +1889,18 @@ vacuum_last_words(bmvacstate *state)
 	 */
 #ifdef DEBUG_BMI
 	elog(NOTICE, "vacuuming last words");
-	elog(NOTICE, "comp %i, last %i", state->curlov->bm_last_compword,
-		 state->curlov->bm_last_word);
+	elog(NOTICE, "comp %i, last %i", state->curvmi->bm_last_compword,
+		 state->curvmi->bm_last_word);
 #endif
-	if (state->curlov->bm_last_compword != LITERAL_ALL_ONE)
+	if (state->curvmi->bm_last_compword != LITERAL_ALL_ONE)
 	{
 		/* Is the word fill */
-		if (BM_LAST_COMPWORD_IS_FILL(state->curlov))
+		if (BM_LAST_COMPWORD_IS_FILL(state->curvmi))
 		{
-			if (GET_FILL_BIT(state->curlov->bm_last_compword) == 1)
+			if (GET_FILL_BIT(state->curvmi->bm_last_compword) == 1)
 			{
 				elog(NOTICE, "match fill %i",
-					 state->curlov->bm_last_compword);
+					 state->curvmi->bm_last_compword);
 			}
 			/* If non-match fill, there's nothing to do */
 		}
@@ -1917,9 +1915,9 @@ vacuum_last_words(bmvacstate *state)
 	 * examine it.
 	 */
 	
-	if (state->curlov->bm_last_word != 0)
+	if (state->curvmi->bm_last_word != 0)
 	{
-		if (BM_LASTWORD_IS_FILL(state->curlov))
+		if (BM_LASTWORD_IS_FILL(state->curvmi))
 			vacuum_fill_word(state, BM_VAC_LAST_WORD);
 		else
 			vacuum_literal_word(state, BM_VAC_LAST_WORD);
@@ -1941,10 +1939,10 @@ vactype_get_word(bmvacstate *state, bmVacType type)
 			return state->curbm->cwords[state->readwordno];
 			break;
 		case BM_VAC_LAST_COMPWORD:
-			return state->curlov->bm_last_compword;
+			return state->curvmi->bm_last_compword;
 			break;
 		case BM_VAC_LAST_WORD:
-			return state->curlov->bm_last_word;
+			return state->curvmi->bm_last_word;
 			break;
 		default:
 			elog(ERROR, "invalid bitmap vacuum state");
@@ -1965,12 +1963,12 @@ put_vacuumed_literal_word(bmvacstate *state, bmVacType type, BM_WORD word)
 			try_shrink_bitmap(state);
 			break;
 		case BM_VAC_LAST_COMPWORD:
-			state->curlov->bm_last_compword = word;
-			state->curlov->lov_words_header &= ~BM_LAST_COMPWORD_BIT;
+			state->curvmi->bm_last_compword = word;
+			state->curvmi->vmi_words_header &= ~BM_LAST_COMPWORD_BIT;
 			break;
 		case BM_VAC_LAST_WORD:
-			state->curlov->bm_last_word = word;
-			state->curlov->lov_words_header &= ~BM_LAST_WORD_BIT;
+			state->curvmi->bm_last_word = word;
+			state->curvmi->vmi_words_header &= ~BM_LAST_WORD_BIT;
 			break;
 		default:
 			elog(ERROR, "invalid bitmap vacuum state");
@@ -2013,7 +2011,7 @@ merge_ovrflw(bmvacstate *state, bool append)
 				/* Argh, we actually need a new page! */
 				nbuf = _bitmap_getbuf(vacinfo.info->index, P_NEW, BM_WRITE);
 		        _bitmap_init_bitmappage(nbuf);
-				state->curlov->bm_lov_tail = state->curbmo->bm_bitmap_next = 
+				state->curvmi->bm_bitmap_tail = state->curbmo->bm_bitmap_next =
 					BufferGetBlockNumber(nbuf);
 				elog(NOTICE, "adding overflow to new block %u",
 					 state->curbmo->bm_bitmap_next);

@@ -56,15 +56,17 @@ bmbuild(PG_FUNCTION_ARGS)
     /* Get the index tuple descriptor */
     tupDesc = RelationGetDescr(index);
 
-    /* Initialize the bitmap index by preparing the meta page and inserting the first LOV item */
+    /* Initialize the bitmap index by preparing the meta page and inserting the
+	 * first VMI */
     _bitmap_init(index, XLogArchivingActive() && RelationNeedsWAL(index));
 
     /* Initialize the build state. */
     _bitmap_init_buildstate(index, &bmstate);
 
     /*
-     * Do the initial heap scan for the relation and calls the bmbuildCallback callback function
-     * for every tuple in the heap, by passing the 'bmstate' structure
+     * Do the initial heap scan for the relation and calls the bmbuildCallback
+     * callback function for every tuple in the heap, by passing the 'bmstate'
+     * structure
      */
 #ifdef DEBUG_BMI
     elog(NOTICE,"[bmbuild] IndexBuildHeapScan PRE");
@@ -318,10 +320,10 @@ bmmarkpos(PG_FUNCTION_ARGS)
 
 		for (vectorNo=0; vectorNo < so->bm_markPos->nvec; vectorNo++)
 		{
-			if (BufferIsValid((bmScanPos[vectorNo]).bm_lovBuffer))
+			if (BufferIsValid((bmScanPos[vectorNo]).bm_vmiBuffer))
 			{
-				ReleaseBuffer((bmScanPos[vectorNo]).bm_lovBuffer);
-				(bmScanPos[vectorNo]).bm_lovBuffer = InvalidBuffer;
+				ReleaseBuffer((bmScanPos[vectorNo]).bm_vmiBuffer);
+				(bmScanPos[vectorNo]).bm_vmiBuffer = InvalidBuffer;
 			}
 		}
 		so->mark_pos_valid = false;
@@ -347,8 +349,8 @@ bmmarkpos(PG_FUNCTION_ARGS)
 		{
 			BMVector p = &(so->bm_markPos->posvecs[vectorNo]);
 			
-			if (BufferIsValid((bmScanPos[vectorNo]).bm_lovBuffer))
-				IncrBufferRefCount((bmScanPos[vectorNo]).bm_lovBuffer);
+			if (BufferIsValid((bmScanPos[vectorNo]).bm_vmiBuffer))
+				IncrBufferRefCount((bmScanPos[vectorNo]).bm_vmiBuffer);
 
 			if (need_init)
 			{
@@ -398,10 +400,10 @@ bmrestrpos(PG_FUNCTION_ARGS)
 		for (vectorNo=0; vectorNo<so->bm_markPos->nvec;
 			 vectorNo++)
 		{
-			if (BufferIsValid((bmScanPos[vectorNo]).bm_lovBuffer))
+			if (BufferIsValid((bmScanPos[vectorNo]).bm_vmiBuffer))
 			{
-				ReleaseBuffer((bmScanPos[vectorNo]).bm_lovBuffer);
-				(bmScanPos[vectorNo]).bm_lovBuffer = InvalidBuffer;
+				ReleaseBuffer((bmScanPos[vectorNo]).bm_vmiBuffer);
+				(bmScanPos[vectorNo]).bm_vmiBuffer = InvalidBuffer;
 			}
 		}
 		so->cur_pos_valid = false;
@@ -422,8 +424,8 @@ bmrestrpos(PG_FUNCTION_ARGS)
 		for (vectorNo=0; vectorNo<so->bm_currPos->nvec;
 			 vectorNo++)
 		{
-			if (BufferIsValid((bmScanPos[vectorNo]).bm_lovBuffer))
-				IncrBufferRefCount((bmScanPos[vectorNo]).bm_lovBuffer);
+			if (BufferIsValid((bmScanPos[vectorNo]).bm_vmiBuffer))
+				IncrBufferRefCount((bmScanPos[vectorNo]).bm_vmiBuffer);
 		}		
 
 		memcpy(so->bm_currPos->posvecs, bmScanPos,

@@ -34,25 +34,23 @@
  */
 
 /*
- * BMTIDLOVBuffer represents those bitmap vectors whose LOV item would be
- * stored on the specified lov_block. The array bufs stores the TIDs for
+ * BMTIDVMIBuffer represents those bitmap vectors whose VMI would be
+ * stored on the specified vmi_block. The array bufs stores the TIDs for
  * a distinct vector (see above). The index of the array we're upto tell
- * us the offset number of the LOV item on the lov_block.
+ * us the offset number of the VMI on the vmi_block.
  */
 
-typedef struct BMTIDLOVBuffer
+typedef struct BMTIDVMIBuffer
 {
-	BlockNumber lov_block;
-	BMTIDBuffer *bufs[BM_MAX_LOVITEMS_PER_PAGE];
-} BMTIDLOVBuffer;
+	BlockNumber vmi_block;
+	BMTIDBuffer *bufs[BM_MAX_VMI_PER_PAGE];
+} BMTIDVMIBuffer;
 
-static Buffer get_lastbitmappagebuf(Relation rel, BMLOVItem lovItem);
-static void create_lovitem(Relation rel, Buffer metabuf, uint64 tidnum, 
-						   TupleDesc tupDesc, 
-						   Datum *attdata, bool *nulls,
-						   Relation lovHeap, Relation lovIndex,
-						   BlockNumber *lovBlockP, 
-						   OffsetNumber *lovOffsetP, bool use_wal);
+static Buffer get_lastbitmappagebuf(Relation rel, BMVectorMetaItem vmi);
+static void create_loventry(Relation rel, Buffer metabuf, uint64 tidnum,
+							TupleDesc tupDesc, Datum *attdata, bool *nulls,
+							Relation lovHeap, Relation lovIndex,
+							BMVMIID *vmiid, bool use_wal);
 static void build_inserttuple(Relation index, uint64 tidnum,
     ItemPointerData ht_ctid,
     Datum *attdata, bool *nulls, BMBuildState *state);
@@ -72,13 +70,12 @@ static void updatesetbit_inpage(Relation rel, uint64 tidnum,
 								Buffer lovBuffer, OffsetNumber lovOffset,
 								Buffer bitmapBuffer, uint64 firstTidNumber,
 								bool use_wal);
-static void insertsetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
-			 			 uint64 tidnum, BMTIDBuffer *buf, bool use_wal);
+static void insertsetbit(Relation rel, BlockNumber vmiBlock,
+						 OffsetNumber vmiOffset, uint64 tidnum, bool use_wal);
 static uint64 getnumbits(BM_WORD *contentWords, 
 					     BM_WORD *headerWords, uint32 nwords);
-static void findbitmappage(Relation rel, BMLOVItem lovitem,
-					   uint64 tidnum,
-					   Buffer *bitmapBufferP, uint64 *firstTidNumberP);
+static void findbitmappage(Relation rel, BMVectorMetaItem vmi, uint64 tidnum,
+						   Buffer *bitmapBufferP, uint64 *firstTidNumberP);
 static void shift_header_bits(BM_WORD *words, uint32 numOfBits,
 						  uint32 maxNumOfWords, uint32 startLoc,
 						  uint32 numOfShiftingBits);
@@ -119,12 +116,12 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg) ;
  * The returned buffer will hold an exclusive lock.
  */
 Buffer
-get_lastbitmappagebuf(Relation rel, BMLOVItem lovitem)
+get_lastbitmappagebuf(Relation rel, BMVectorMetaItem vmi)
 {
 	Buffer lastBuffer = InvalidBuffer;
 
-	if (lovitem->bm_lov_head != InvalidBlockNumber)
-		lastBuffer = _bitmap_getbuf(rel, lovitem->bm_lov_tail, BM_WRITE);
+	if (vmi->bm_bitmap_head != InvalidBlockNumber)
+		lastBuffer = _bitmap_getbuf(rel, vmi->bm_bitmap_tail, BM_WRITE);
 
 	return lastBuffer;
 }
@@ -174,26 +171,26 @@ getnumbits(BM_WORD *contentWords, BM_WORD *headerWords, uint32 nwords)
  * these extra words.
  */
 void
-updatesetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
+updatesetbit(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 			 uint64 tidnum, bool use_wal)
 {
-	Page		lovPage;
-	BMLOVItem	lovItem;
+	Page		vmiPage;
+	BMVectorMetaItem vmi;
 		
-	uint64	tidLocation;
-	uint16	insertingPos;
+	uint64		tidLocation;
+	uint16		insertingPos;
 
-	uint64	firstTidNumber = 1;
-	Buffer	bitmapBuffer = InvalidBuffer;
+	uint64		firstTidNumber = 1;
+	Buffer		bitmapBuffer = InvalidBuffer;
 
-	lovPage = BufferGetPage(lovBuffer);
-	lovItem = (BMLOVItem) PageGetItem(lovPage, 
-		PageGetItemId(lovPage, lovOffset));
+	vmiPage = BufferGetPage(vmiBuffer);
+	vmi = (BMVectorMetaItem)
+		PageGetItem(vmiPage, PageGetItemId(vmiPage, vmiOffset));
 
 	/* Calculate the tid location in the last bitmap page. */
-	tidLocation = lovItem->bm_last_tid_location;
-	if (BM_LAST_COMPWORD_IS_FILL(lovItem))
-		tidLocation -= (FILL_LENGTH(lovItem->bm_last_compword) *
+	tidLocation = vmi->bm_last_tid_location;
+	if (BM_LAST_COMPWORD_IS_FILL(vmi))
+		tidLocation -= (FILL_LENGTH(vmi->bm_last_compword) *
 					    BM_WORD_SIZE);
 	else
 		tidLocation -= BM_WORD_SIZE;
@@ -203,32 +200,32 @@ updatesetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 	 * and this does not generate any new words, we simply
 	 * need to update the lov item.
 	 */
-	if ((tidnum > lovItem->bm_last_tid_location) ||
+	if ((tidnum > vmi->bm_last_tid_location) ||
 		((tidnum > tidLocation) &&
-		 ((lovItem->lov_words_header == BM_LOV_WORDS_NO_FILL) ||
-		  (FILL_LENGTH(lovItem->bm_last_compword) == 1))))
+		 ((vmi->vmi_words_header == BM_VMI_WORDS_NO_FILL) ||
+		  (FILL_LENGTH(vmi->bm_last_compword) == 1))))
 	{
 		START_CRIT_SECTION();
 
-		MarkBufferDirty(lovBuffer);
+		MarkBufferDirty(vmiBuffer);
 
-		if (tidnum > lovItem->bm_last_tid_location)   /* bm_last_word */
+		if (tidnum > vmi->bm_last_tid_location)   /* bm_last_word */
 		{
-			insertingPos = (tidnum-1)%BM_WORD_SIZE;
-			lovItem->bm_last_word |= (((BM_WORD)1)<<insertingPos);
+			insertingPos = (tidnum - 1) % BM_WORD_SIZE;
+			vmi->bm_last_word |= (((BM_WORD) 1) << insertingPos);
 		}
 		else
 		{
-			if (FILL_LENGTH(lovItem->bm_last_compword) == 1)
-				lovItem->bm_last_compword = 0;
+			if (FILL_LENGTH(vmi->bm_last_compword) == 1)
+				vmi->bm_last_compword = 0;
 
 			insertingPos = (tidnum - 1) % BM_WORD_SIZE;
-			lovItem->bm_last_compword |= (((BM_WORD)1) << insertingPos);
-			lovItem->lov_words_header = BM_LOV_WORDS_NO_FILL;
+			vmi->bm_last_compword |= (((BM_WORD) 1) << insertingPos);
+			vmi->vmi_words_header = BM_VMI_WORDS_NO_FILL;
 		}
 
 		if (use_wal)
-			_bitmap_log_bitmap_lastwords(rel, lovBuffer, lovOffset, lovItem);
+			_bitmap_log_bitmap_lastwords(rel, vmiBuffer, vmiOffset, vmi);
 
 		END_CRIT_SECTION();
 
@@ -241,7 +238,7 @@ updatesetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 	 * than 1. This update will generate new words, we insert new words
 	 * into the last bitmap page and update the lov item.
 	 */
-	if ((tidnum > tidLocation) && BM_LASTWORD_IS_FILL(lovItem))
+	if ((tidnum > tidLocation) && BM_LASTWORD_IS_FILL(vmi))
 	{
 		/*
 		 * We know that bm_last_compwords will be split into two
@@ -252,10 +249,10 @@ updatesetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 		MemSet(&buf, 0, sizeof(buf));
 		buf_extend(&buf);
 
-		updatesetbit_inword(lovItem->bm_last_compword,
+		updatesetbit_inword(vmi->bm_last_compword,
 							tidnum - tidLocation - 1,
 							tidLocation + 1, &buf);
-		_bitmap_write_new_bitmapwords(rel, lovBuffer, lovOffset,
+		_bitmap_write_new_bitmapwords(rel, vmiBuffer, vmiOffset,
 									  &buf, use_wal);
 
 		_bitmap_free_tidbuf(&buf);
@@ -269,14 +266,13 @@ updatesetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 	 * and update the bit.
 	 */
 	/* find the page that contains this bit. */
-	findbitmappage(rel, lovItem, tidnum,
-				   &bitmapBuffer, &firstTidNumber);
+	findbitmappage(rel, vmi, tidnum, &bitmapBuffer, &firstTidNumber);
 
 	/* trade in the read lock for a write lock */
 	LockBuffer(bitmapBuffer, BUFFER_LOCK_UNLOCK);
 	LockBuffer(bitmapBuffer, BM_WRITE);
 
-	updatesetbit_inpage(rel, tidnum, lovBuffer, lovOffset,
+	updatesetbit_inpage(rel, tidnum, vmiBuffer, vmiOffset,
 						bitmapBuffer, firstTidNumber, use_wal);
 
 	_bitmap_relbuf(bitmapBuffer);
@@ -608,7 +604,7 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
  */
 static void
 updatesetbit_inpage(Relation rel, uint64 tidnum,
-					Buffer lovBuffer, OffsetNumber lovOffset,
+					Buffer vmiBuffer, OffsetNumber vmiOffset,
 					Buffer bitmapBuffer, uint64 firstTidNumber,
 					bool use_wal)
 {
@@ -635,7 +631,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 	int         word_no;
 
 	bitmapPage = BufferGetPage(bitmapBuffer);
-	bitmapOpaque = (BMPageOpaque)PageGetSpecialPointer(bitmapPage);
+	bitmapOpaque = (BMPageOpaque) PageGetSpecialPointer(bitmapPage);
 
 	bitmap = (BMBitmapVectorPage) PageGetContents(bitmapPage);
 	bitNo = 0;
@@ -768,15 +764,15 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 
 	if (new_lastpage)
 	{
-		Page 		lovPage;
-		BMLOVItem	lovItem;
+		Page 		vmiPage;
+		BMVectorMetaItem vmi;
 
-		MarkBufferDirty(lovBuffer);
+		MarkBufferDirty(vmiBuffer);
 
-		lovPage = BufferGetPage(lovBuffer);
-		lovItem = (BMLOVItem) PageGetItem(lovPage, 
-			PageGetItemId(lovPage, lovOffset));
-		lovItem->bm_lov_tail = BufferGetBlockNumber(nextBuffer);
+		vmiPage = BufferGetPage(vmiBuffer);
+		vmi = (BMVectorMetaItem) PageGetItem(vmiPage,
+			PageGetItemId(vmiPage, vmiOffset));
+		vmi->bm_bitmap_tail = BufferGetBlockNumber(nextBuffer);
 	}
 
 	bitmap->cwords[wordNo] = new_words.cwords[0];
@@ -860,7 +856,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 	}
 
 	if (use_wal)
-		_bitmap_log_updatewords(rel, lovBuffer, lovOffset,
+		_bitmap_log_updatewords(rel, vmiBuffer, vmiOffset,
 								bitmapBuffer, nextBuffer, new_lastpage);
 
 	END_CRIT_SECTION();
@@ -878,15 +874,15 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
  * 	in this page.
  *
  * We assume that this tid location is not in bm_last_compword or
- * bm_last_word of its LOVItem.
+ * bm_last_word of its VMI.
  *
  * We will have read lock on the bitmap page we find.
  */
 void
-findbitmappage(Relation rel, BMLOVItem lovitem, uint64 tidnum,
+findbitmappage(Relation rel, BMVectorMetaItem vmi, uint64 tidnum,
 			   Buffer *bitmapBufferP, uint64 *firstTidNumberP)
 {
-	BlockNumber nextBlockNo = lovitem->bm_lov_head;
+	BlockNumber nextBlockNo = vmi->bm_bitmap_head;
 
 	*firstTidNumberP = 1;
 
@@ -922,9 +918,9 @@ findbitmappage(Relation rel, BMLOVItem lovitem, uint64 tidnum,
  * 	are valid in all bitmap pages. Only used during debugging.
  */
 static void
-verify_bitmappages(Relation rel, BMLOVItem lovitem)
+verify_bitmappages(Relation rel, BMVectorMetaItem vmi)
 {
-	BlockNumber nextBlockNo = lovitem->bm_lov_head;
+	BlockNumber nextBlockNo = vmi->bm_bitmap_head;
 	uint64		tidnum		= 0;
 
 	while (BlockNumberIsValid(nextBlockNo))
@@ -986,7 +982,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 
 	/* 
 	 * If both words are LITERAL_ALL_ONE, then it is the very
-	 * first invocation for this LOV item, so we skip mergewords.
+	 * first invocation for this VMI, so we skip mergewords.
 	 */
 	if (buf->last_compword == LITERAL_ALL_ONE
 		&& buf->last_word == LITERAL_ALL_ONE) 
@@ -1089,38 +1085,37 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 
 /*
  * _bitmap_write_new_bitmapwords() -- write a given buffer of new bitmap words
- *	into the end of bitmap page(s).
+ * into the end of bitmap page(s).
  *
- * If the last bitmap page does not have enough space for all these new
- * words, new pages will be allocated here.
+ * If the last bitmap page does not have enough space for all these new words,
+ * new pages will be allocated here.
  *
- * We consider a write to one bitmap page as one atomic-action WAL
- * record. The WAL record for the write to the last bitmap page also
- * includes updates on the lov item. Writes to the non-last
- * bitmap page are not self-consistent. We need to do some fix-up
- * during WAL logic replay.
+ * We consider a write to one bitmap page as one atomic-action WAL record. The
+ * WAL record for the write to the last bitmap page also includes updates on
+ * the VMI.  Writes to the non-last bitmap page are not self-consistent. We
+ * need to do some fix-up during WAL logic replay.
  */
 void
-_bitmap_write_new_bitmapwords(Relation rel,
-							  Buffer lovBuffer, OffsetNumber lovOffset,
-							  BMTIDBuffer* buf, bool use_wal)
+_bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
+							  OffsetNumber vmiOffset, BMTIDBuffer *buf,
+							  bool use_wal)
 {
-	Page		lovPage;
-	BMLOVItem	lovItem;
+	Page		vmiPage;
+	BMVectorMetaItem vmi;
 
-	Buffer				bitmapBuffer;
-	Page				bitmapPage;
-	BMPageOpaque		bitmapPageOpaque;
+	Buffer		bitmapBuffer;
+	Page		bitmapPage;
+	BMPageOpaque bitmapPageOpaque;
 		
 	uint64		numFreeWords;
 	uint64		words_written = 0;
 	bool		isFirst		  = false;
 
-	lovPage = BufferGetPage(lovBuffer);
-	lovItem = (BMLOVItem) PageGetItem(lovPage, 
-		PageGetItemId(lovPage, lovOffset));
+	vmiPage = BufferGetPage(vmiBuffer);
+	vmi = (BMVectorMetaItem) PageGetItem(vmiPage,
+		PageGetItemId(vmiPage, vmiOffset));
 
-	bitmapBuffer = get_lastbitmappagebuf(rel, lovItem);
+	bitmapBuffer = get_lastbitmappagebuf(rel, vmi);
 
 	if (BufferIsValid(bitmapBuffer))
 	{
@@ -1162,16 +1157,16 @@ _bitmap_write_new_bitmapwords(Relation rel,
 
 		bitmapPageOpaque->bm_bitmap_next = BufferGetBlockNumber(newBuffer);
 
-		if (lovItem->bm_lov_head == InvalidBlockNumber)
+		if (vmi->bm_bitmap_head == InvalidBlockNumber)
 		{
 			isFirst = true;
-			MarkBufferDirty(lovBuffer);
-			lovItem->bm_lov_head = BufferGetBlockNumber(bitmapBuffer);
-			lovItem->bm_lov_tail = lovItem->bm_lov_head;
+			MarkBufferDirty(vmiBuffer);
+			vmi->bm_bitmap_head = BufferGetBlockNumber(bitmapBuffer);
+			vmi->bm_bitmap_tail = vmi->bm_bitmap_head;
 		}
 
 		if (use_wal)
-			_bitmap_log_bitmapwords(rel, bitmapBuffer, lovBuffer, lovOffset,
+			_bitmap_log_bitmapwords(rel, bitmapBuffer, vmiBuffer, vmiOffset,
 									buf, words_written, buf->last_tid,
 									BufferGetBlockNumber(newBuffer),
 									false, isFirst);
@@ -1194,11 +1189,11 @@ _bitmap_write_new_bitmapwords(Relation rel,
 
 	/*
 	 * Write remaining bitmap words to the last bitmap page and the
-	 * lov page.
+	 * VMI page.
 	 */
 	START_CRIT_SECTION();
 
-	MarkBufferDirty(lovBuffer);
+	MarkBufferDirty(vmiBuffer);
 	MarkBufferDirty(bitmapBuffer);
 
 	if (buf->curword - buf->start_wordno > 0)
@@ -1206,33 +1201,33 @@ _bitmap_write_new_bitmapwords(Relation rel,
 	else
 		words_written = 0;
 
-	lovItem->bm_last_compword = buf->last_compword;
-	lovItem->bm_last_word = buf->last_word;
-	lovItem->lov_words_header = (buf->is_last_compword_fill) ? 
-	   BM_LAST_COMPWORD_BIT	: BM_LOV_WORDS_NO_FILL;
-	lovItem->bm_last_setbit = buf->last_tid;
-	lovItem->bm_last_tid_location = buf->last_tid - buf->last_tid % BM_WORD_SIZE;
-	lovItem->bm_lov_tail = BufferGetBlockNumber(bitmapBuffer);
-	if (lovItem->bm_lov_head == InvalidBlockNumber)
+	vmi->bm_last_compword = buf->last_compword;
+	vmi->bm_last_word = buf->last_word;
+	vmi->vmi_words_header = (buf->is_last_compword_fill) ?
+	   BM_LAST_COMPWORD_BIT	: BM_VMI_WORDS_NO_FILL;
+	vmi->bm_last_setbit = buf->last_tid;
+	vmi->bm_last_tid_location = buf->last_tid - buf->last_tid % BM_WORD_SIZE;
+	vmi->bm_bitmap_tail = BufferGetBlockNumber(bitmapBuffer);
+	if (vmi->bm_bitmap_head == InvalidBlockNumber)
 	{
 		isFirst = true;
-		lovItem->bm_lov_head = lovItem->bm_lov_tail;
+		vmi->bm_bitmap_head = vmi->bm_bitmap_tail;
 	}
 
 	if (use_wal)
 	{
-		_bitmap_log_bitmapwords(rel, bitmapBuffer, lovBuffer,
-								lovOffset, buf, words_written,
+		_bitmap_log_bitmapwords(rel, bitmapBuffer, vmiBuffer,
+								vmiOffset, buf, words_written,
 								buf->last_tid, InvalidBlockNumber, true,
 								isFirst);
 	}
 #ifdef DEBUG_BMI
 		elog(NOTICE,"[_bitmap_write_new_bitmapwords] CP2 (+=) : buf->start_wordno = %d, words_written = %llu"
-			 "\n\tlovItem->bm_last_setbit = %llu"
-			 "\n\tlovItem->bm_last_tid_location = %llu",
+			 "\n\tvmi->bm_last_setbit = %llu"
+			 "\n\tvmi->bm_last_tid_location = %llu",
 			 buf->start_wordno,words_written,
-			 lovItem->bm_last_setbit,
-			 lovItem->bm_last_tid_location);
+			 vmi->bm_last_setbit,
+			 vmi->bm_last_tid_location);
 #endif		
 	buf->start_wordno += words_written;
 
@@ -1347,131 +1342,118 @@ _bitmap_write_bitmapwords(Buffer bitmapBuffer, BMTIDBuffer *buf)
 }
 
 /*
- * create_lovitem() -- create a new LOV item.
+ * create_loventry() -- create a new entry in the list of values.
  *
- * Create a new LOV item and append this item into the last LOV page.
- * Each LOV item is associated with one distinct value for attributes
- * to be indexed. This function also inserts this distinct value along
- * with this new LOV item's block number and offsetnumber into the
- * auxiliary heap and its b-tree of this bitmap index.
+ * Each LOV entry is associated with one distinct value for attributes to be
+ * indexed.  The function creates a new entry in the list of values (embodied
+ * by the lovHeap and the lovIndex).
  *
- * This function returns the block number and offset number of this
- * new LOV item.
+ * This function returns the VMI ID (block number and offset number) of this
+ * new LOV entry.
  *
  * The caller should have an exclusive lock on metabuf.
  */
 static void
-create_lovitem(Relation rel, Buffer metabuf, uint64 tidnum,
-			   TupleDesc tupDesc, Datum *attdata, bool *nulls,
-			   Relation lovHeap, Relation lovIndex, BlockNumber *lovBlockP, 
-			   OffsetNumber *lovOffsetP, bool use_wal)
+create_loventry(Relation rel, Buffer metabuf, uint64 tidnum,
+				TupleDesc tupDesc, Datum *attdata, bool *nulls,
+				Relation lovHeap, Relation lovIndex, BMVMIID *vmiid,
+				bool use_wal)
 {
-	/* number of attributes */
 	const int	numOfAttrs = tupDesc->natts;
-	/* temporary page variable */
-	Page		page	   = BufferGetPage(metabuf);
-	/* Meta page */
+	Page		page;
 	BMMetaPage	metapage;
 
-	/* Current LOV buffer and page */
-	Buffer		currLovBuffer;
-	Page		currLovPage;
+	Buffer		vmiBuffer;
+	Page		vmiPage;
 
-	/* new LOV item */
-	BMLOVItem			lovitem;
-	/* LOV item size */
-	OffsetNumber		itemSize;
-	/* do we have a new page for this item */
-	bool				is_new_lov_blkno = false;
+	BMVectorMetaItem vmi;
+	const OffsetNumber itemSize = sizeof(BMVectorMetaItemData);
+	bool		is_new_vmi_blkno = false;
 
-	/* array of values (per each attribute) */
-	Datum*		lovDatum;
-	/* is NULL flag for each attribute */
-	bool*		lovNulls;
+	Datum	   *lovDatum;
+	bool	   *lovNulls;
 
-	/* Get the last LOV page. Meta page should be locked. */
+	vmi = _bitmap_formitem(tidnum);
+
+	/* Get the last VMI page. Meta page should be locked. */
+	page = BufferGetPage(metabuf);
 	metapage = (BMMetaPage) PageGetContents(page);
-	*lovBlockP = metapage->bm_lov_lastpage;
 
-	/* Get the current LOV buffer and page */
-	currLovBuffer = _bitmap_getbuf(rel, *lovBlockP, BM_WRITE);
-	currLovPage = BufferGetPage(currLovBuffer);
-
-	lovitem = _bitmap_formitem(tidnum);
-	*lovOffsetP = OffsetNumberNext(PageGetMaxOffsetNumber(currLovPage));
-	itemSize = sizeof(BMLOVItemData);
+	/* Get the last VMI buffer and page */
+	vmiBuffer = _bitmap_getbuf(rel, metapage->bm_last_vmi_page, BM_WRITE);
+	vmiPage = BufferGetPage(vmiBuffer);
 
 	/*
-	 * If there is not enough space in the last LOV page for
-	 * a new item, create a new LOV page, and update the metapage.
+	 * If there is not enough space in the last VMI page for a new item,
+	 * create a new VMI page, and update the metapage.
 	 */
-	if (itemSize > PageGetFreeSpace(currLovPage))
+	if (itemSize > PageGetFreeSpace(vmiPage))
 	{
-		Buffer newLovBuffer;
+		Buffer newVmiBuffer;
 
-		/* create a new LOV page */
-		newLovBuffer = _bitmap_getbuf(rel, P_NEW, BM_WRITE);
-		_bitmap_init_lovpage(newLovBuffer);
+		/* create a new VMI page */
+		newVmiBuffer = _bitmap_getbuf(rel, P_NEW, BM_WRITE);
+		_bitmap_init_vmipage(newVmiBuffer);
 
 #if 0
 		START_CRIT_SECTION();
 		if (use_wal)
-			_bitmap_log_newpage(rel, XLOG_BITMAP_INSERT_NEWLOV, 
-								newLovBuffer);
+			_bitmap_log_newpage(rel, XLOG_BITMAP_INSERT_NEWVMIPAGE,
+								newVmiBuffer);
 		END_CRIT_SECTION();
 #endif
 
-		_bitmap_relbuf(currLovBuffer);
+		_bitmap_relbuf(vmiBuffer);
 
-		currLovBuffer = newLovBuffer;
-		currLovPage = BufferGetPage(currLovBuffer);
+		vmiBuffer = newVmiBuffer;
+		vmiPage = BufferGetPage(vmiBuffer);
 
-		is_new_lov_blkno = true;
+		is_new_vmi_blkno = true;
 	}
 
 	START_CRIT_SECTION();
 
-	if (is_new_lov_blkno)
+	if (is_new_vmi_blkno)
 	{
 		MarkBufferDirty(metabuf);
-		metapage->bm_lov_lastpage = BufferGetBlockNumber(currLovBuffer);
+		metapage->bm_last_vmi_page = BufferGetBlockNumber(vmiBuffer);
 	}
 
-	MarkBufferDirty(currLovBuffer);
+	MarkBufferDirty(vmiBuffer);
 
-	*lovOffsetP = OffsetNumberNext(PageGetMaxOffsetNumber(currLovPage));
-	*lovBlockP = BufferGetBlockNumber(currLovBuffer);
+	vmiid->offset = OffsetNumberNext(PageGetMaxOffsetNumber(vmiPage));
+	vmiid->block = metapage->bm_last_vmi_page;
 
 	/* Allocate a new Item */
 	lovDatum = palloc0((numOfAttrs + 2) * sizeof(Datum));
 	lovNulls = palloc0((numOfAttrs + 2) * sizeof(bool));
 	memcpy(lovDatum, attdata, numOfAttrs * sizeof(Datum));
 	memcpy(lovNulls, nulls, numOfAttrs * sizeof(bool));
-	lovDatum[numOfAttrs] = Int32GetDatum(*lovBlockP); /* Block number */
-	lovDatum[numOfAttrs + 1] = Int16GetDatum(*lovOffsetP); /* Offset */
+	lovDatum[numOfAttrs] = Int32GetDatum(vmiid->block);
+	lovDatum[numOfAttrs + 1] = Int16GetDatum(vmiid->offset);
 	lovNulls[numOfAttrs] = false;
 	lovNulls[numOfAttrs + 1] = false;
 
-	/* Insert the LOV in the HEAP and the LOV btree index */
+	/* Insert the in the LOV HEAP and the LOV btree index */
 	_bitmap_insert_lov(lovHeap, lovIndex, lovDatum, lovNulls, use_wal);
 
-	if (PageAddItem(currLovPage, (Item)lovitem, itemSize, *lovOffsetP,
+	if (PageAddItem(vmiPage, (Item) vmi, itemSize, vmiid->offset,
 					false, false) == InvalidOffsetNumber)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("failed to add LOV item to \"%s\"",
+				 errmsg("failed to add vector meta item to \"%s\"",
 						RelationGetRelationName(rel))));
 
 	/* Log the insertion */
-	if(use_wal)
-		_bitmap_log_lovitem(rel, currLovBuffer, *lovOffsetP, lovitem,
-							metabuf, is_new_lov_blkno);
+	if (use_wal)
+		_bitmap_log_vmi(rel, vmiBuffer, vmiid->offset, vmi, metabuf,
+						is_new_vmi_blkno);
 
 	END_CRIT_SECTION();
 
-	_bitmap_relbuf(currLovBuffer);
+	_bitmap_relbuf(vmiBuffer);
 
-	pfree(lovitem);
+	pfree(vmi);
 	pfree(lovDatum);
 	pfree(lovNulls);
 }
@@ -1480,13 +1462,13 @@ create_lovitem(Relation rel, Buffer metabuf, uint64 tidnum,
  * When building an index we try and buffer calls to write tids to disk
  * as it will result in lots of I/Os.
  */
-
 static void
-buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum, 
-			BMBuildState *state, BlockNumber lov_block, OffsetNumber off)
+buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
+			BlockNumber vmi_block, OffsetNumber off)
 {
 	BMTIDBuffer			*buf;
-	BMTIDLOVBuffer		*lov_buf = NULL;
+	BMTIDVMIBuffer		*vmi_buf = NULL;
+	BMTidBuildBuf		*tids = state->bm_tidLocsBuffer;
 
 #ifdef DEBUG_BMI
 	_debug_view_1(tids,"CP1");
@@ -1496,59 +1478,59 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 		buf_make_space(rel, tids, state->use_wal);
 
 	/*
-	 * tids is lazily initialized. If we do not have a current LOV block 
+	 * tids is lazily initialized. If we do not have a current VMI block
 	 * buffer, initialize one.
 	 */
-	if(!BlockNumberIsValid(tids->max_lov_block) || 
-	   tids->max_lov_block < lov_block)
+	if(!BlockNumberIsValid(tids->max_vmi_block) ||
+	   tids->max_vmi_block < vmi_block)
 	{
 		/*
 		 * XXX: We're currently not including the size of this data structure
 		 * in out byte_size count... should we?
 		 */
-		lov_buf = palloc(sizeof(BMTIDLOVBuffer));
-		lov_buf->lov_block = lov_block;
-		MemSet(lov_buf->bufs, 0, BM_MAX_LOVITEMS_PER_PAGE * sizeof(BMTIDBuffer *));
-		tids->max_lov_block = lov_block;
+		vmi_buf = palloc(sizeof(BMTIDVMIBuffer));
+		vmi_buf->vmi_block = vmi_block;
+		MemSet(vmi_buf->bufs, 0, BM_MAX_VMI_PER_PAGE * sizeof(BMTIDBuffer *));
+		tids->max_vmi_block = vmi_block;
 		
 		/*
-		 * Add the new LOV buffer to the list head. It seems reasonable that
-		 * future calls to this function will want this lov_block rather than
-		 * older lov_blocks.
+		 * Add the new VMI buffer to the list head. It seems reasonable that
+		 * future calls to this function will want this vmi_block rather than
+		 * older vmi_blocks.
 		 */
-		tids->lov_blocks = lcons(lov_buf, tids->lov_blocks);
+		tids->vmi_blocks = lcons(vmi_buf, tids->vmi_blocks);
 	}
 	else
 	{
 		ListCell *cell;
 		
-		foreach(cell, tids->lov_blocks)
+		foreach(cell, tids->vmi_blocks)
 		{
-			BMTIDLOVBuffer *tmp = lfirst(cell);
-			if(tmp->lov_block == lov_block)
+			BMTIDVMIBuffer *tmp = lfirst(cell);
+			if(tmp->vmi_block == vmi_block)
 			{
-				lov_buf = tmp;
+				vmi_buf = tmp;
 				break;
 			}
 		}
 	}
 	
-	Assert(lov_buf);
-	Assert(off - 1 < BM_MAX_LOVITEMS_PER_PAGE);
+	Assert(vmi_buf);
+	Assert(off - 1 < BM_MAX_VMI_PER_PAGE);
 
-	if (lov_buf->bufs[off - 1])
+	if (vmi_buf->bufs[off - 1])
 	{
-		buf = lov_buf->bufs[off - 1];
+		buf = vmi_buf->bufs[off - 1];
 
-		buf_add_tid_with_fill(rel, buf, lov_block, off,
+		buf_add_tid_with_fill(rel, buf, vmi_block, off,
 							  tidnum, state->use_wal);
 	}
 	else
 	{
 		/* no pre-existing buffer found, create a new one */
-		Buffer			lovbuf;
+		Buffer			vmibuf;
 		Page			page;
-		BMLOVItem		lovitem;
+		BMVectorMetaItem vmi;
 		uint16			bytes_added;
 		
 		buf = (BMTIDBuffer *) palloc0(sizeof(BMTIDBuffer));
@@ -1563,11 +1545,11 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 			 buf->last_word);
 #endif
 		
-		lovbuf = _bitmap_getbuf(rel, lov_block, BM_READ);
-		page = BufferGetPage(lovbuf);
-		lovitem = (BMLOVItem)PageGetItem(page, PageGetItemId(page, off));
+		vmibuf = _bitmap_getbuf(rel, vmi_block, BM_READ);
+		page = BufferGetPage(vmibuf);
+		vmi = (BMVectorMetaItem) PageGetItem(page, PageGetItemId(page, off));
 
-		buf->last_tid = lovitem->bm_last_setbit;
+		buf->last_tid = vmi->bm_last_setbit;
 #ifdef DEBUG_BMI
 		elog(NOTICE,"[buf_add_tid] create new buf - CP1.1"
 			 "\n\tlast_tid = 0x%llx"
@@ -1577,7 +1559,7 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 			 buf->last_compword,
 			 buf->last_word);
 #endif
-		buf->last_compword = lovitem->bm_last_compword;
+		buf->last_compword = vmi->bm_last_compword;
 #ifdef DEBUG_BMI
 		elog(NOTICE,"[buf_add_tid] create new buf - CP1.2"
 			 "\n\tlast_tid = 0x%llx"
@@ -1587,8 +1569,8 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 			 buf->last_compword,
 			 buf->last_word);
 #endif
-		buf->last_word = lovitem->bm_last_word;
-		buf->is_last_compword_fill = BM_LAST_COMPWORD_IS_FILL(lovitem);
+		buf->last_word = vmi->bm_last_word;
+		buf->is_last_compword_fill = BM_LAST_COMPWORD_IS_FILL(vmi);
 
 #ifdef DEBUG_BMI
 		elog(NOTICE,"[buf_add_tid] create new buf - CP2"
@@ -1600,7 +1582,7 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 			 buf->last_word);
 #endif
 
-		_bitmap_relbuf(lovbuf); /* we don't care about locking */
+		_bitmap_relbuf(vmibuf); /* we don't care about locking */
 
 		MemSet(buf->hwords, 0, BM_NUM_OF_HEADER_WORDS * sizeof(BM_WORD));
 
@@ -1615,10 +1597,10 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
 		buf->curword = 0;
 		buf->start_wordno = 0;
 
-		buf_add_tid_with_fill(rel, buf, lov_block, off, tidnum,
+		buf_add_tid_with_fill(rel, buf, vmi_block, off, tidnum,
 							  state->use_wal);
 
-		lov_buf->bufs[off - 1] = buf;
+		vmi_buf->bufs[off - 1] = buf;
 		tids->byte_size += bytes_added;
 	}
 }
@@ -1628,7 +1610,7 @@ buf_add_tid(Relation rel, BMTidBuildBuf *tids, uint64 tidnum,
  */
 static int16
 hot_buffer_flush(Relation rel, BMTIDBuffer *buf,
-				 BlockNumber lov_block, OffsetNumber off,
+				 BlockNumber vmi_block, OffsetNumber off,
 				 bool use_wal, bool merge_words)
 {
 	int			i;
@@ -1709,7 +1691,7 @@ hot_buffer_flush(Relation rel, BMTIDBuffer *buf,
 				 buf->hot_buffer_last_offset, i);
 #endif
 			bytes_used -=
-				buf_ensure_head_space(rel, buf, lov_block, off, use_wal);
+				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
 			switch (buf->hot_buffer[i])
 			{
 				case LITERAL_ALL_ONE:
@@ -1766,7 +1748,7 @@ hot_buffer_flush(Relation rel, BMTIDBuffer *buf,
  */
 static int16
 buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf,
-			  BlockNumber lov_block, OffsetNumber off,
+			  BlockNumber vmi_block, OffsetNumber off,
 			  uint64 tidnum, bool use_wal)
 {
 	int16			bytes_used = 0;
@@ -1797,7 +1779,7 @@ buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf,
 		if (buf->hot_buffer_block != InvalidBlockNumber)
 		{
 			buf->hot_buffer_last_offset = BM_MAX_HTUP_PER_PAGE;
-			hot_buffer_flush(rel, buf, lov_block, off, use_wal, true);
+			hot_buffer_flush(rel, buf, vmi_block, off, use_wal, true);
 		}
 #ifdef DEBUG_BMI
 		elog(NOTICE, "[buf_add_tid_with_fill] updating hot_buffer_block"
@@ -1833,7 +1815,7 @@ buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf,
  */
 static uint16
 buf_ensure_head_space(Relation rel, BMTIDBuffer *buf, 
-					  BlockNumber lov_block, OffsetNumber off, bool use_wal)
+					  BlockNumber vmi_block, OffsetNumber off, bool use_wal)
 {
 	uint16 bytes_freed = 0;
 
@@ -1842,7 +1824,7 @@ buf_ensure_head_space(Relation rel, BMTIDBuffer *buf,
 #ifdef DEBUG_BMI
 		_debug_view_2(buf, "[buf_ensure_head_space] freeing bytes");
 #endif
-		bytes_freed = buf_free_mem(rel, buf, lov_block, off, use_wal, false);
+		bytes_freed = buf_free_mem(rel, buf, vmi_block, off, use_wal, false);
 		bytes_freed -= buf_extend(buf);
 	}
 
@@ -1897,11 +1879,11 @@ buf_extend(BMTIDBuffer *buf)
  */
 
 static uint16
-buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber lov_block, 
-		 OffsetNumber off, bool use_wal,
-		 bool flush_hot_buffer)
+buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
+			 OffsetNumber off, bool use_wal,
+			 bool flush_hot_buffer)
 {
-	Buffer lovbuf;
+	Buffer vmibuf;
 	uint16 bytes_freed=0;
 
 #ifdef DEBUG_BMI
@@ -1910,7 +1892,7 @@ buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber lov_block,
 
 	/* flush hot_buffer to BMTIDBuffer */
 	if (flush_hot_buffer)
-		bytes_freed += hot_buffer_flush(rel, buf, lov_block, off, use_wal,
+		bytes_freed += hot_buffer_flush(rel, buf, vmi_block, off, use_wal,
 										true);
 
 	/* already done */
@@ -1921,11 +1903,11 @@ buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber lov_block,
 	elog(NOTICE,"[buf_free_mem] buf->num_cwords != 0");
 #endif
 
-	lovbuf = _bitmap_getbuf(rel, lov_block, BM_WRITE);
+	vmibuf = _bitmap_getbuf(rel, vmi_block, BM_WRITE);
 
-	_bitmap_write_new_bitmapwords(rel, lovbuf, off, buf, use_wal);
+	_bitmap_write_new_bitmapwords(rel, vmibuf, off, buf, use_wal);
 
-	_bitmap_relbuf(lovbuf);
+	_bitmap_relbuf(vmibuf);
 
 #ifdef DEBUG_BMI
 	_debug_view_2(buf,"[buf_free_mem] END");
@@ -1948,18 +1930,18 @@ buf_make_space(Relation rel, BMTidBuildBuf *locbuf, bool use_wal)
 	elog(NOTICE, "making space");
 
 	/*
-	 * Now, we could just pull the head of lov_blocks but there'd be no
+	 * Now, we could just pull the head of VMI_blocks but there'd be no
 	 * guarantee that we'd free up enough space.
 	 */
-	foreach(cell, locbuf->lov_blocks)
+	foreach(cell, locbuf->vmi_blocks)
 	{
 		int i;
-		BMTIDLOVBuffer *lov_buf = (BMTIDLOVBuffer *) lfirst(cell);
-		BlockNumber lov_block = lov_buf->lov_block;
+		BMTIDVMIBuffer *vmi_buf = (BMTIDVMIBuffer *) lfirst(cell);
+		BlockNumber vmi_block = vmi_buf->vmi_block;
 
-		for(i = 0; i < BM_MAX_LOVITEMS_PER_PAGE; i++)
+		for(i = 0; i < BM_MAX_VMI_PER_PAGE; i++)
 		{
-			BMTIDBuffer *buf = (BMTIDBuffer *) lov_buf->bufs[i];
+			BMTIDBuffer *buf = (BMTIDBuffer *) vmi_buf->bufs[i];
 			OffsetNumber off;
 
 			/* return if we've freed enough space */
@@ -1972,7 +1954,7 @@ buf_make_space(Relation rel, BMTidBuildBuf *locbuf, bool use_wal)
 #ifdef DEBUG_BMI
 			elog(NOTICE, "invoking buf_free_mem from buf_make_space");
 #endif
-			locbuf->byte_size -= buf_free_mem(rel, buf, lov_block, off, 
+			locbuf->byte_size -= buf_free_mem(rel, buf, vmi_block, off,
 											  use_wal, false);
 		}
 		if (locbuf->byte_size < (maintenance_work_mem * 1024L))
@@ -2007,87 +1989,96 @@ _bitmap_free_tidbuf(BMTIDBuffer* buf)
 
 /*
  * insertsetbit() -- insert a given set bit into a bitmap
- *	specified by lovBuffer.
+ *	specified by vmiBuffer.
  *
- * lovBuffer is pinned and locked.
+ * vmiBuffer is pinned and locked.
  */
 static void
-insertsetbit(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
-			 uint64 tidnum, BMTIDBuffer *buf, bool use_wal)
+insertsetbit(Relation rel, BlockNumber vmiBlock, OffsetNumber vmiOffset,
+			 uint64 tidnum, bool use_wal)
 {
-	Page		lovPage = BufferGetPage(lovBuffer);
-	BMLOVItem	lovItem = (BMLOVItem) PageGetItem(lovPage, 
-								PageGetItemId(lovPage, lovOffset));
+	Buffer		vmiBuffer = _bitmap_getbuf(rel, vmiBlock, BM_WRITE);
+	Page		vmiPage = BufferGetPage(vmiBuffer);
+	BMVectorMetaItem vmi = (BMVectorMetaItem) PageGetItem(vmiPage,
+								PageGetItemId(vmiPage, vmiOffset));
+	BMTIDBuffer	buf;
 
-	buf->last_compword = lovItem->bm_last_compword;
-	buf->last_word = lovItem->bm_last_word;
-	buf->is_last_compword_fill = BM_LAST_COMPWORD_IS_FILL(lovItem); 
-	buf->start_wordno = 0;
-	buf->last_tid = lovItem->bm_last_setbit;
-	if (buf->cwords)
+	MemSet(&buf, 0, sizeof(buf));
+	buf_extend(&buf);
+	buf.last_compword = vmi->bm_last_compword;
+	buf.last_word = vmi->bm_last_word;
+	buf.is_last_compword_fill = BM_LAST_COMPWORD_IS_FILL(vmi);
+	buf.start_wordno = 0;
+	buf.last_tid = vmi->bm_last_setbit;
+	if (buf.cwords)
 	{
-		MemSet(buf->cwords, 0,
-			   buf->num_cwords * sizeof(BM_WORD));
+		MemSet(buf.cwords, 0,
+			   buf.num_cwords * sizeof(BM_WORD));
 	}
-	MemSet(buf->hwords, 0,
-		   BM_CALC_H_WORDS(buf->num_cwords) * sizeof(BM_WORD));
-	if (buf->last_tids)
-		MemSet(buf->last_tids, 0,
-			   buf->num_cwords * sizeof(uint64));
-	buf->curword = 0;
+	MemSet(buf.hwords, 0,
+		   BM_CALC_H_WORDS(buf.num_cwords) * sizeof(BM_WORD));
+	if (buf.last_tids)
+		MemSet(buf.last_tids, 0,
+			   buf.num_cwords * sizeof(uint64));
+	buf.curword = 0;
 
 	/*
-	 * Usually, tidnum is greater than lovItem->bm_last_setbit.
-	 * However, if this is not the case, this should be called while
-	 * doing 'vacuum full' or doing insertion after 'vacuum'. In this
-	 * case, we try to update this bit in the corresponding bitmap
-	 * vector.
+	 * Usually, tidnum is greater than vmi->bm_last_setbit.  However, if
+	 * this is not the case, this should be called while doing 'vacuum full' or
+	 * doing insertion after 'vacuum'. In this case, we try to update this bit
+	 * in the corresponding bitmap vector.
 	 */
-	if (tidnum <= lovItem->bm_last_setbit)
+	if (tidnum <= vmi->bm_last_setbit)
 	{
 		/*
-		 * Scan through the bitmap vector, and update the bit in
-		 * tidnum.
+		 * Scan through the bitmap vector, and update the bit in tidnum.
 		 */
-		updatesetbit(rel, lovBuffer, lovOffset, tidnum, use_wal);
-
-		return;
+		updatesetbit(rel, vmiBuffer, vmiOffset, tidnum, use_wal);
 	}
-
-	/*
-	 * To insert this new set bit, we also need to add all zeros between
-	 * this set bit and last set bit. We construct all new words here.
-	 */
-	buf_add_tid_with_fill(rel, buf, lovBuffer, lovOffset, tidnum, use_wal);
-	
-	/*
-	 * If there are only updates to the last bitmap complete word and
-	 * last bitmap word, we simply needs to update the lov buffer.
-	 */
-	if (buf->num_cwords == 0)
+	else
 	{
-		START_CRIT_SECTION();
+		/*
+		 * To insert this new set bit, we also need to add all zeros between
+		 * this set bit and last set bit. We construct all new words here.
+		 */
+		buf_add_tid_with_fill(rel, &buf, vmiBuffer, vmiOffset, tidnum,
+							  use_wal);
 
-		MarkBufferDirty(lovBuffer);
+		/*
+		 * If there are only updates to the last bitmap complete word and last
+		 * bitmap word, we simply needs to update the VMI buffer.
+		 */
+		if (buf.num_cwords == 0)
+		{
+			START_CRIT_SECTION();
 
-		lovItem->bm_last_compword = buf->last_compword;
-		lovItem->bm_last_word = buf->last_word;
-		lovItem->lov_words_header = BM_LAST_COMPWORD_IS_FILL(lovItem);
-		lovItem->bm_last_setbit = tidnum;
-		lovItem->bm_last_tid_location = tidnum - tidnum % BM_WORD_SIZE;
+			MarkBufferDirty(vmiBuffer);
 
-		if (use_wal)
-			_bitmap_log_bitmap_lastwords(rel, lovBuffer, lovOffset, lovItem);
-		
-		END_CRIT_SECTION();
-		return;
+			vmi->bm_last_compword = buf.last_compword;
+			vmi->bm_last_word = buf.last_word;
+			vmi->vmi_words_header = BM_LAST_COMPWORD_IS_FILL(vmi);
+			vmi->bm_last_setbit = tidnum;
+			vmi->bm_last_tid_location = tidnum - tidnum % BM_WORD_SIZE;
+
+			if (use_wal)
+				_bitmap_log_bitmap_lastwords(rel, vmiBuffer, vmiOffset,
+											 vmi);
+
+			END_CRIT_SECTION();
+		}
+		else
+		{
+			/*
+			 * Write bitmap words to bitmap pages. When there are no enough
+			 * space for all these bitmap words, new bitmap pages are created.
+			 */
+			_bitmap_write_new_bitmapwords(rel, vmiBuffer, vmiOffset, &buf,
+										  use_wal);
+		}
 	}
 
-	/*
-	 * Write bitmap words to bitmap pages. When there are no enough
-	 * space for all these bitmap words, new bitmap pages are created.
-	 */
-	_bitmap_write_new_bitmapwords(rel, lovBuffer, lovOffset, buf, use_wal);
+	_bitmap_relbuf(vmiBuffer);
+	_bitmap_free_tidbuf(&buf);
 }
 
 /*
@@ -2101,15 +2092,15 @@ _bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids, bool use_wal)
 #ifdef DEBUG_BMI
 	elog(NOTICE, "[_bitmap_write_alltids] BEGIN");
 #endif
-	foreach(cell, tids->lov_blocks)
+	foreach(cell, tids->vmi_blocks)
 	{
 		int i;
-		BMTIDLOVBuffer *lov_buf = (BMTIDLOVBuffer *) lfirst(cell);
-		BlockNumber lov_block = lov_buf->lov_block;
+		BMTIDVMIBuffer *vmi_buf = (BMTIDVMIBuffer *) lfirst(cell);
+		BlockNumber vmi_block = vmi_buf->vmi_block;
 
-		for(i = 0; i < BM_MAX_LOVITEMS_PER_PAGE; i++)
+		for(i = 0; i < BM_MAX_VMI_PER_PAGE; i++)
 		{
-			BMTIDBuffer *buf = (BMTIDBuffer *) lov_buf->bufs[i];
+			BMTIDBuffer *buf = (BMTIDBuffer *) vmi_buf->bufs[i];
 			OffsetNumber off;
 
 			if (!buf || buf->num_cwords == 0)
@@ -2117,14 +2108,14 @@ _bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids, bool use_wal)
 
 			off = i + 1;
 
-			buf_free_mem(rel, buf, lov_block, off, use_wal, true);
+			buf_free_mem(rel, buf, vmi_block, off, use_wal, true);
 			pfree(buf);
 
-			lov_buf->bufs[i] = NULL;
+			vmi_buf->bufs[i] = NULL;
 		}
 	}
-	list_free_deep(tids->lov_blocks);
-	tids->lov_blocks = NIL;
+	list_free_deep(tids->vmi_blocks);
+	tids->vmi_blocks = NIL;
 	tids->byte_size = 0;
 #ifdef DEBUG_BMI
 	elog(NOTICE, "[_bitmap_write_alltids] END");
@@ -2152,18 +2143,11 @@ build_inserttuple(Relation index, uint64 tidnum,
 {
 	/* Tuple descriptor alias */
 	TupleDesc tupDesc = state->bm_tupDesc;
-	/* BM TID buffer alias */
-	BMTidBuildBuf *tidLocsBuffer = state->bm_tidLocsBuffer;
 
 	/* metapage buffer */
 	Buffer metabuf = _bitmap_getbuf(index, BM_METAPAGE, BM_WRITE);
 
-	/*
-	 * Initialise LOV block and offset to point to the special NULL value of
-	 * the Bitmap vector
-	 */
-	BlockNumber lovBlock = BM_LOV_STARTPAGE;
-	OffsetNumber lovOffset = 1;
+	BMVMIID vmiid;
 
 	/* temporary attribute counter */
 	int attno;
@@ -2193,30 +2177,34 @@ build_inserttuple(Relation index, uint64 tidnum,
 		}
 	}
 	
-	/*
-	 * Not NULL value for the current tuple (at least one of the attribute has
-	 * a not NULL value)
-	 */
-	if (!allNulls)
+	if (allNulls)
 	{
-		bool blockNull;
-		bool offsetNull;
+		/*
+		 * Initialise VMI block and offset to point to the special NULL value
+		 * of the Bitmap vector
+		 */
+		_bitmap_get_null_vmiid(index, &vmiid);
+	}
+	else
+	{
+		/*
+		 * Not NULL value for the current tuple (at least one of the attribute
+		 * has a not NULL value)
+		 */
 		bool found;
 
 		/* See if the attributes allow hashing */
-		if (state->lovitem_hash)
+		if (state->vmi_hash)
 		{
-			BMBuildLovData *lov;
-
-			/* look up the hash to see if we can find the lov data that way */
+			/* look up the hash to see if we can find the VMI ID that way */
 			Datum *entry = (Datum *)
-				hash_search(state->lovitem_hash, (void *)attdata, HASH_ENTER,
+				hash_search(state->vmi_hash, (void *) attdata, HASH_ENTER,
 							&found);
 
 			if (!found)
 			{
 				/* Copy the key values in case someone modifies them */
-				for(attno = 0; attno < tupDesc->natts; attno++)
+				for (attno = 0; attno < tupDesc->natts; attno++)
 				{
 					Form_pg_attribute at = tupDesc->attrs[attno];
 
@@ -2226,26 +2214,22 @@ build_inserttuple(Relation index, uint64 tidnum,
 
 				/*
 				 * If the inserting tuple has a new value, then we create a new
-				 * LOV item.
+				 * LOV entry.
 				 */
-				create_lovitem(index, metabuf, tidnum, tupDesc, attdata,
-							   nulls, state->bm_lov_heap, state->bm_lov_index,
-							   &lovBlock, &lovOffset, state->use_wal);
+				create_loventry(index, metabuf, tidnum, tupDesc, attdata,
+								nulls, state->bm_lov_heap, state->bm_lov_index,
+								&vmiid, state->use_wal);
 
 				/*
 				 * Updates the information in the LOV heap entry about the block
 				 * and the offset
 				 */
-				lov = (BMBuildLovData *) &(entry[tupDesc->natts]);
-				lov->lov_block = lovBlock;
-				lov->lov_off = lovOffset;
+				*((BMVMIID *) &(entry[tupDesc->natts])) = vmiid;
 			}
 			else
 			{
-				/* Get the block and the offset of the LOV heap item */
-				lov = (BMBuildLovData *) &(entry[tupDesc->natts]);
-				lovBlock = lov->lov_block;
-				lovOffset = lov->lov_off;
+				/* Get block and offset or the encoding of the LOV item */
+				vmiid = *((BMVMIID *) &(entry[tupDesc->natts]));
 			}
 		}
 		else
@@ -2254,10 +2238,10 @@ build_inserttuple(Relation index, uint64 tidnum,
 			 * Search the btree to find the right bitmap vector to append
 			 * this bit. Here, we reset the scan key and call index_rescan.
 			 */
-			for (attno = 0; attno<tupDesc->natts; attno++)
+			for (attno = 0; attno < tupDesc->natts; attno++)
 			{
 				ScanKey theScanKey = (ScanKey)
-					(((char*)state->bm_lov_scanKeys) +
+					(((char *) state->bm_lov_scanKeys) +
 					 attno * sizeof(ScanKeyData));
 				if (nulls[attno])
 				{
@@ -2277,23 +2261,22 @@ build_inserttuple(Relation index, uint64 tidnum,
 			found = _bitmap_findvalue(state->bm_lov_heap, state->bm_lov_index,
 									  state->bm_lov_scanKeys,
 									  state->bm_lov_scanDesc,
-									  &lovBlock, &blockNull,
-									  &lovOffset, &offsetNull);
+									  &vmiid);
 
 			if (!found)
 			{
 				/*
 				 * If the inserting tuple has a new value, then we create a new
-				 * LOV item.
+				 * LOV entry.
 				 */
-				create_lovitem(index, metabuf, tidnum, tupDesc, attdata,
-							   nulls, state->bm_lov_heap, state->bm_lov_index,
-							   &lovBlock, &lovOffset, state->use_wal);
+				create_loventry(index, metabuf, tidnum, tupDesc, attdata,
+								nulls, state->bm_lov_heap, state->bm_lov_index,
+								&vmiid, state->use_wal);
 			}
 		}
 	}
 
-	buf_add_tid(index, tidLocsBuffer, tidnum, state, lovBlock, lovOffset);
+	buf_add_tid(index, tidnum, state, vmiid.block, vmiid.offset);
 	_bitmap_wrtbuf(metabuf);
 #ifdef DEBUG_BMI
 	elog(NOTICE,"[build_inserttuple] END");
@@ -2303,22 +2286,21 @@ build_inserttuple(Relation index, uint64 tidnum,
 /*
  * inserttuple() -- insert a new tuple into the bitmap index.
  *
- * This function finds the corresponding bitmap vector associated with
- * the given attribute value, and inserts a set bit into this bitmap
- * vector. Each distinct attribute value is stored as a LOV item, which
- * is stored in a list of LOV pages.
+ * This function finds the corresponding bitmap vector(s) associated with the
+ * given attribute value, and inserts a set bit into this bitmap vector(s).
+ * Each distinct attribute value is stored as a VMI, which is stored in a list
+ * of VMI pages.
  *
- * If there is no LOV item associated with the given attribute value,
- * a new LOV item is created and appended into the last LOV page.
+ * If there is no VMI associated with the given attribute value, a new VMI is
+ * created and appended into the last VMI page.
  *
- * For support the high-cardinality case for attributes to be indexed,
- * we also maintain an auxiliary heap and a btree structure for all
- * the distinct attribute values so that the search for the
- * corresponding bitmap vector can be done faster. The heap
- * contains all attributes to be indexed and 2 more attributes --
- * the block number of the offset number of the block that stores
- * the corresponding LOV item. The b-tree index is on this new heap
- * and the key contains all attributes to be indexed.
+ * For support the high-cardinality case for attributes to be indexed, we also
+ * maintain an auxiliary heap and a btree structure for all the distinct
+ * attribute values so that the search for the corresponding bitmap vector can
+ * be done faster.  The heap contains all attributes to be indexed and 2 more
+ * attributes -- the block number of the offset number of the block that stores
+ * the corresponding VMI.  The b-tree index is on this new heap and the key
+ * contains all attributes to be indexed.
  */
 static void
 inserttuple(Relation rel, Buffer metabuf, uint64 tidnum, 
@@ -2326,16 +2308,9 @@ inserttuple(Relation rel, Buffer metabuf, uint64 tidnum,
 			bool *nulls, Relation lovHeap, Relation lovIndex, ScanKey scanKey,
 			IndexScanDesc scanDesc, bool use_wal)
 {
-	BlockNumber		lovBlock;
-	OffsetNumber	lovOffset;
-	bool			blockNull, offsetNull;
-	bool			allNulls = true;
-	int				attno;
-	Buffer			lovBuffer;
-
-	BMTIDBuffer		buf;
-	MemSet(&buf, 0, sizeof(buf));
-	buf_extend(&buf);
+	BMVMIID		vmiid;
+	bool		allNulls = true;
+	int			attno;
 
 	/* Check if the values of given attributes are all NULL. */
 	for (attno = 0; attno < tupDesc->natts; attno++)
@@ -2347,25 +2322,20 @@ inserttuple(Relation rel, Buffer metabuf, uint64 tidnum,
 		}
 	}
 
-
-	/*
-	 * if the inserting tuple has the value NULL, then the LOV item is
-	 * the first item in the lovBuffer.
-	 */
 	if (allNulls)
 	{
-		lovBlock = BM_LOV_STARTPAGE;
-		lovOffset = 1;
+		/*
+		 * NULL values have a fixed position/encoding
+		 */
+		_bitmap_get_null_vmiid(rel, &vmiid);
 	}
 	else
 	{
-		bool res;
-	   
 		/*
 		 * XXX: We lock the meta page to guard against a race condition where
 		 * by a concurrent writer is inserting the same key as us and they
-		 * create_lovitem() between us calling _bitmap_findvalue() and
-		 * create_lovitem().
+		 * create_vmi() between us calling _bitmap_findvalue() and
+		 * create_vmi().
 		 *
 		 * The problem is, locking the metapage is pretty heavy handed 
 		 * because the read routines need a read lock on it. There are a
@@ -2374,34 +2344,26 @@ inserttuple(Relation rel, Buffer metabuf, uint64 tidnum,
 		 * constraint violation from the btree code.
 		 */
 		LockBuffer(metabuf, BM_WRITE);
-		res = _bitmap_findvalue(lovHeap, lovIndex, scanKey, scanDesc, &lovBlock,
-								&blockNull, &lovOffset, &offsetNull);
 
-		if(!res)
+		if (!_bitmap_findvalue(lovHeap, lovIndex, scanKey, scanDesc, &vmiid))
 		{
 			/*
-			 * Search through the lov heap and index to find the LOV item which
-			 * has the same value as the inserting tuple. If such an item is
-			 * not found, then we create a new LOV item, and insert it into the
+			 * Search through the LOV heap and index to find the entry which
+			 * has the same value as the inserting tuple. If such an entry is
+			 * not found, then we create a new entry, and insert it into the
 			 * lov heap and index.
 			 */
-			create_lovitem(rel, metabuf, tidnum, tupDesc,
-						   attdata, nulls, lovHeap, lovIndex,
-						   &lovBlock, &lovOffset, use_wal);
+			create_loventry(rel, metabuf, tidnum, tupDesc, attdata, nulls,
+							lovHeap, lovIndex, &vmiid, use_wal);
 		}
 		LockBuffer(metabuf, BUFFER_LOCK_UNLOCK);
 	}
 
 	/*
-	 * Here, we have found the block number and offset number of the
-	 * LOV item that points to the bitmap page, to which we will
-	 * append the set bit.
+	 * Here, we have found the ID of the VMI.  Append a set bit to the
+	 * respective vector.
 	 */
-	lovBuffer = _bitmap_getbuf(rel, lovBlock, BM_WRITE);
-	insertsetbit(rel, lovBuffer, lovOffset, tidnum, &buf, use_wal);
-	_bitmap_relbuf(lovBuffer);
-
-	_bitmap_free_tidbuf(&buf);
+	insertsetbit(rel, vmiid.block, vmiid.offset, tidnum, use_wal);
 }
 
 /*
@@ -2516,13 +2478,13 @@ void _debug_view_1(BMTidBuildBuf *x, const char *msg)
 	int i=0;
 	elog(NOTICE,"[_debug_view_BMTidBuildBuf] %s"
 		 "\n\tbyte_size = %u"
-		 "\n\tmax_lov_block = %u"
-		 "\n\t\tlov_blocks:length = %d",
+		 "\n\tmax_vmi_block = %u"
+		 "\n\t\tvmi_blocks:length = %d",
 		 msg,
 		 x->byte_size,
-		 x->max_lov_block,
-		 list_length(x->lov_blocks));
-	foreach(c,x->lov_blocks) {
+		 x->max_vmi_block,
+		 list_length(x->vmi_blocks));
+	foreach(c,x->vmi_blocks) {
 		i++;
 		elog(NOTICE, "cell %d = %p", i, lfirst(c));
 	}

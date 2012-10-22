@@ -93,17 +93,17 @@ _bitmap_relbuf(Buffer buf)
 }
 
 /*
- * _bitmap_init_lovpage -- initialize a new LOV page.
+ * _bitmap_init_vmipage -- initialize a new VMI page.
  */
 void
-_bitmap_init_lovpage(Buffer buf)
+_bitmap_init_vmipage(Buffer buf)
 {
-    Page page;
+	Page page;
 
-    page = (Page) BufferGetPage(buf);
+	page = (Page) BufferGetPage(buf);
 
-    if(PageIsNew(page))
-	PageInit(page, BufferGetPageSize(buf), 0);
+	if (PageIsNew(page))
+		PageInit(page, BufferGetPageSize(buf), 0);
 }
 
 /*
@@ -160,8 +160,8 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 	bmstate->bm_tidLocsBuffer = (BMTidBuildBuf *)
 		palloc(sizeof(BMTidBuildBuf));
 	bmstate->bm_tidLocsBuffer->byte_size = 0; /* ... initialises it */
-	bmstate->bm_tidLocsBuffer->lov_blocks = NIL;
-	bmstate->bm_tidLocsBuffer->max_lov_block = InvalidBlockNumber;
+	bmstate->bm_tidLocsBuffer->vmi_blocks = NIL;
+	bmstate->bm_tidLocsBuffer->max_vmi_block = InvalidBlockNumber;
 
 	/* Get the meta page */
 	metabuf = _bitmap_getbuf(index, BM_METAPAGE, BM_READ);
@@ -231,7 +231,7 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 		/* Setup the hash table and map it into the build state variable */
 		MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 		hash_ctl.keysize = sizeof(Datum) * cur_bmbuild->natts;
-		hash_ctl.entrysize = hash_ctl.keysize + sizeof(BMBuildLovData) + 200; 
+		hash_ctl.entrysize = hash_ctl.keysize + sizeof(BMVMIID) + 200;
 		hash_ctl.hash = build_hash_key;
 		hash_ctl.match = build_match_key;
 		hash_ctl.hcxt = AllocSetContextCreate(CurrentMemoryContext,
@@ -244,8 +244,8 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 		hash_flags = HASH_ELEM | HASH_FUNCTION | HASH_COMPARE | HASH_CONTEXT;
 
 		/* Create the hash table */
-		bmstate->lovitem_hash = hash_create("Bitmap index build lov item hash",
-											100, &hash_ctl, hash_flags);
+		bmstate->vmi_hash = hash_create("Bitmap index build lov item hash",
+										100, &hash_ctl, hash_flags);
 	}
 	else
 	{
@@ -253,7 +253,7 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 		 * Contingency plan: no hash functions can be used and we have to
 		 * search through the btree
 		 */
-		bmstate->lovitem_hash = NULL;
+		bmstate->vmi_hash = NULL;
 		bmstate->bm_lov_scanKeys =
 			(ScanKey) palloc0(bmstate->bm_tupDesc->natts * sizeof(ScanKeyData));
 
@@ -370,19 +370,19 @@ _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate)
  *
  * Create the meta page, a new heap which stores the distinct values for
  * the attributes to be indexed, a btree index on this new heap for searching
- * those distinct values, and the first LOV page.
+ * those distinct values, and the first VMI page.
  */
 void
 _bitmap_init(Relation index, bool use_wal)
 {
 	/*
-	 * BitMap Index Meta Page (first page of the index) and first LOV item
+	 * BitMap Index Meta Page (first page of the index) and first VMI
 	 */
 
 	/* BitMap Index Meta Page (first page of the index) */
 	BMMetaPage metapage;
-	/* First item in the LOV (set to be NULL) */
-	BMLOVItem lovItem;
+	/* First item in the VMI page (set to be NULL) */
+	BMVectorMetaItem vmi;
 
 	/*
 	 * Buffer and page management
@@ -390,8 +390,8 @@ _bitmap_init(Relation index, bool use_wal)
 
 	Page page; /* temporary page variable */
 	Buffer metabuf; /* META information buffer */
-	Buffer lovbuf; /* LOV buffer */
-	OffsetNumber lovOffset; /* First LOV page offset */
+	Buffer vmibuf; /* VMI buffer */
+	OffsetNumber vmiOffset; /* First VMI page offset */
 	OffsetNumber o; /* temporary offset */
 
 	/* Sanity check (the index MUST be empty) */
@@ -435,51 +435,51 @@ _bitmap_init(Relation index, bool use_wal)
 		_bitmap_log_metapage(index, page);
 
 	/*
-	 * The second step is to create the first LOV item.  The very first value
-	 * of LOV is the NULL value.
+	 * The second step is to create the first VMI.  The very first value is the
+	 * NULL value.
 	 */
 
-	/* get a new buffer for the LOV item */
-	lovbuf = _bitmap_getbuf(index, P_NEW, BM_WRITE);
-	_bitmap_init_lovpage(lovbuf);
+	/* get a new buffer for the VMI */
+	vmibuf = _bitmap_getbuf(index, P_NEW, BM_WRITE);
+	_bitmap_init_vmipage(vmibuf);
 
-	/* mark the LOV buffer contents as dirty (uninitialised) */
-	MarkBufferDirty(lovbuf);
+	/* mark the VMI buffer contents as dirty (uninitialised) */
+	MarkBufferDirty(vmibuf);
 
-	/* Get the page for the first LOV item */
-	page = BufferGetPage(lovbuf);
+	/* Get the page for the first VMI item */
+	page = BufferGetPage(vmibuf);
 
 	/* Set the first item to support NULL value */
-	lovItem = _bitmap_formitem(0);
-	lovOffset = OffsetNumberNext(PageGetMaxOffsetNumber(page));
+	vmi = _bitmap_formitem(0);
+	vmiOffset = OffsetNumberNext(PageGetMaxOffsetNumber(page));
 
 	/*
 	 * XXX: perhaps this could be a special page, with more efficient storage
 	 * after all, we have fixed size data
 	 */
-	o = PageAddItem(page, (Item)lovItem, sizeof(BMLOVItemData),
-					lovOffset, false, false);
+	o = PageAddItem(page, (Item) vmi, sizeof(BMVectorMetaItemData),
+					vmiOffset, false, false);
 
 	if (o == InvalidOffsetNumber)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("failed to add LOV item to \"%s\"",
+				 errmsg("failed to add vector meta item to \"%s\"",
 						RelationGetRelationName(index))));
 
-	/* Set the last page for the LOV */
-	metapage->bm_lov_lastpage = BufferGetBlockNumber(lovbuf);
+	/* Set the last page for the VMI */
+	metapage->bm_last_vmi_page = BufferGetBlockNumber(vmibuf);
 
-	/* Log that a new LOV item has been added to a LOV page */
-	if(use_wal)
-		_bitmap_log_lovitem(index, lovbuf, lovOffset, lovItem, metabuf, true);
+	/* Log that a new VMI has been added to a VMI page */
+	if (use_wal)
+		_bitmap_log_vmi(index, vmibuf, vmiOffset, vmi, metabuf, true);
 
 	END_CRIT_SECTION();
 
 	/* Write the two buffers to disk */
-	_bitmap_wrtbuf(lovbuf);
+	_bitmap_wrtbuf(vmibuf);
 	_bitmap_wrtbuf(metabuf);
 
-	pfree(lovItem); /* free the item from memory */
+	pfree(vmi); /* free the item from memory */
 }
 
 /*

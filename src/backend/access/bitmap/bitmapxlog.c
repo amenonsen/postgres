@@ -76,8 +76,8 @@ forget_incomplete_insert_bitmapwords(RelFileNode node,
 		bm_incomplete_action *action = (bm_incomplete_action *) lfirst(l);
 
 		if (RelFileNodeEquals(node, action->bm_node) &&
-			(action->bm_lov_blkno == newWords->bm_lov_blkno &&
-			 action->bm_lov_offset == newWords->bm_lov_offset &&
+			(action->bm_vmi_blkno == newWords->bm_vmi_blkno &&
+			 action->bm_vmi_offset == newWords->bm_vmi_offset &&
 			 action->bm_last_setbit == newWords->bm_last_setbit) &&
 			!action->bm_is_last)
 		{
@@ -116,8 +116,8 @@ _bitmap_xlog_newpage(XLogRecPtr lsn, XLogRecord *record)
 	{
 		switch (info)
 		{
-			case XLOG_BITMAP_INSERT_NEWLOV:
-				_bitmap_init_lovpage(buffer);
+			case XLOG_BITMAP_INSERT_NEWVMIPAGE:
+				_bitmap_init_vmipage(buffer);
 				break;
 			default:
 				elog(PANIC, "_bitmap_xlog_newpage: unknown newpage op code %u",
@@ -133,73 +133,73 @@ _bitmap_xlog_newpage(XLogRecPtr lsn, XLogRecord *record)
 }
 
 /*
- * _bitmap_xlog_insert_lovitem() -- insert a new lov item.
+ * _bitmap_xlog_insert_vmi() -- insert a new vector meta item.
  */
 static void
-_bitmap_xlog_insert_lovitem(XLogRecPtr lsn, XLogRecord *record)
+_bitmap_xlog_insert_vmi(XLogRecPtr lsn, XLogRecord *record)
 {
-	xl_bm_lovitem	*xlrec = (xl_bm_lovitem *) XLogRecGetData(record);
-	Buffer			lovBuffer;
-	Page			lovPage;
+	xl_bm_vmi	   *xlrec = (xl_bm_vmi *) XLogRecGetData(record);
+	Buffer			vmiBuffer;
+	Page			vmiPage;
 
-	lovBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_lov_blkno, true);
-	if (!BufferIsValid(lovBuffer))
-		elog(PANIC, "_bitmap_xlog_insert_lovitem: block unfound: %d", 
-			 xlrec->bm_lov_blkno);
+	vmiBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_vmi_blkno, true);
+	if (!BufferIsValid(vmiBuffer))
+		elog(PANIC, "_bitmap_xlog_insert_vmi: block unfound: %d",
+			 xlrec->bm_vmi_blkno);
 
-	lovPage = BufferGetPage(lovBuffer);
+	vmiPage = BufferGetPage(vmiBuffer);
 
-	if (PageIsNew(lovPage))
+	if (PageIsNew(vmiPage))
 	{
-		Assert(xlrec->bm_is_new_lov_blkno);
-		_bitmap_init_lovpage(lovBuffer);
+		Assert(xlrec->bm_is_new_vmi_blkno);
+		_bitmap_init_vmipage(vmiBuffer);
 	}
 
-	if (XLByteLT(PageGetLSN(lovPage), lsn))
+	if (XLByteLT(PageGetLSN(vmiPage), lsn))
 	{
 		OffsetNumber	newOffset, itemSize;
 
-		newOffset = OffsetNumberNext(PageGetMaxOffsetNumber(lovPage));
-		if (newOffset != xlrec->bm_lov_offset)
-			elog(PANIC, "_bitmap_xlog_insert_lovitem: LOV item is not inserted "
+		newOffset = OffsetNumberNext(PageGetMaxOffsetNumber(vmiPage));
+		if (newOffset != xlrec->bm_vmi_offset)
+			elog(PANIC, "_bitmap_xlog_insert_vmi: VMI is not inserted "
 						"in pos %d(requested %d)",
-				 newOffset, xlrec->bm_lov_offset);
+				 newOffset, xlrec->bm_vmi_offset);
 
-		itemSize = sizeof(BMLOVItemData);
-		if (itemSize > PageGetFreeSpace(lovPage))
+		itemSize = sizeof(BMVectorMetaItemData);
+		if (itemSize > PageGetFreeSpace(vmiPage))
 			elog(PANIC, 
-				 "_bitmap_xlog_insert_lovitem: not enough space in LOV page %d",
-				 xlrec->bm_lov_blkno);
+				 "_bitmap_xlog_insert_vmi: not enough space in VMI page %d",
+				 xlrec->bm_vmi_blkno);
 		
-		if (PageAddItem(lovPage, (Item)&(xlrec->bm_lovItem), itemSize, 
+		if (PageAddItem(vmiPage, (Item) &(xlrec->bm_vmi), itemSize,
 						newOffset, false, false) == InvalidOffsetNumber)
 		{
 			char *rel_name = get_rel_name(xlrec->bm_node.relNode);
 			if (rel_name)
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("_bitmap_xlog_insert_lovitem: failed to add "
-								"LOV item to \"%s\"",
+						 errmsg("_bitmap_xlog_insert_vmi: failed to add "
+								"VMI to \"%s\"",
 								rel_name)));
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("_bitmap_xlog_insert_lovitem: failed to add "
-								"LOV item")));
+						 errmsg("_bitmap_xlog_insert_vmi: failed to add "
+								"VMI")));
 		}
 
-		if (xlrec->bm_is_new_lov_blkno)
+		if (xlrec->bm_is_new_vmi_blkno)
 		{
 			Buffer metabuf = XLogReadBuffer(xlrec->bm_node, BM_METAPAGE, false);
 			BMMetaPage metapage;
 			if (!BufferIsValid(metabuf))
-				elog(PANIC, "_bitmap_xlog_insert_lovitem: block unfound: %d", 
+				elog(PANIC, "_bitmap_xlog_insert_vmi: block unfound: %d",
 					 BM_METAPAGE);
 
 			metapage = (BMMetaPage)
 				PageGetContents(BufferGetPage(metabuf));
 
-			metapage->bm_lov_lastpage = xlrec->bm_lov_blkno;
+			metapage->bm_last_vmi_page = xlrec->bm_vmi_blkno;
 
 			PageSetLSN(BufferGetPage(metabuf), lsn);
 			PageSetTLI(BufferGetPage(metabuf), ThisTimeLineID);
@@ -207,13 +207,13 @@ _bitmap_xlog_insert_lovitem(XLogRecPtr lsn, XLogRecord *record)
 			_bitmap_wrtbuf(metabuf);
 		}
 
-		PageSetLSN(lovPage, lsn);
-		PageSetTLI(lovPage, ThisTimeLineID);
+		PageSetLSN(vmiPage, lsn);
+		PageSetTLI(vmiPage, ThisTimeLineID);
 
-		_bitmap_wrtbuf(lovBuffer);
+		_bitmap_wrtbuf(vmiBuffer);
 	}
 	else
-		_bitmap_relbuf(lovBuffer);
+		_bitmap_relbuf(vmiBuffer);
 }
 
 /*
@@ -239,7 +239,7 @@ _bitmap_xlog_insert_meta(XLogRecPtr lsn, XLogRecord *record)
 
 		metapage->bm_lov_heapId = xlrec->bm_lov_heapId;
 		metapage->bm_lov_indexId = xlrec->bm_lov_indexId;
-		metapage->bm_lov_lastpage = xlrec->bm_lov_lastpage;
+		metapage->bm_last_vmi_page = xlrec->bm_last_vmi_page;
 
 		PageSetLSN(mp, lsn);
 		PageSetTLI(mp, ThisTimeLineID);
@@ -259,41 +259,41 @@ _bitmap_xlog_insert_bitmap_lastwords(XLogRecPtr lsn,
 {
 	xl_bm_bitmap_lastwords *xlrec;
 
-	Buffer		lovBuffer;
-	Page		lovPage;
-	BMLOVItem	lovItem;
+	Buffer					vmiBuffer;
+	Page					vmiPage;
+	BMVectorMetaItem		vmi;
 
 	xlrec = (xl_bm_bitmap_lastwords *) XLogRecGetData(record);
 
-	lovBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_lov_blkno, false);
-	if (!BufferIsValid(lovBuffer))
+	vmiBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_vmi_blkno, false);
+	if (!BufferIsValid(vmiBuffer))
 		elog(PANIC, "_bitmap_xlog_insert_bitmap_lastwords: "
 					" block not found: %d",
-			 xlrec->bm_lov_blkno);
+			 xlrec->bm_vmi_blkno);
 
-	lovPage = BufferGetPage(lovBuffer);
+	vmiPage = BufferGetPage(vmiBuffer);
 
-	if (XLByteLT(PageGetLSN(lovPage), lsn))
+	if (XLByteLT(PageGetLSN(vmiPage), lsn))
 	{
-		ItemId item = PageGetItemId(lovPage, xlrec->bm_lov_offset);
+		ItemId item = PageGetItemId(vmiPage, xlrec->bm_vmi_offset);
 
 		if (!ItemIdIsUsed(item))
 			elog(PANIC, "_bitmap_xlog_insert_bitmap_lastwords: "
 						"offset not found: %d",
-				 xlrec->bm_lov_offset);
+				 xlrec->bm_vmi_offset);
 
-		lovItem = (BMLOVItem)PageGetItem(lovPage, item);
+		vmi = (BMVectorMetaItem) PageGetItem(vmiPage, item);
 
-		lovItem->bm_last_compword = xlrec->bm_last_compword;
-		lovItem->bm_last_word = xlrec->bm_last_word;
-		lovItem->lov_words_header = xlrec->lov_words_header;
+		vmi->bm_last_compword = xlrec->bm_last_compword;
+		vmi->bm_last_word = xlrec->bm_last_word;
+		vmi->vmi_words_header = xlrec->vmi_words_header;
 
-		PageSetLSN(lovPage, lsn);
-		PageSetTLI(lovPage, ThisTimeLineID);
-		_bitmap_wrtbuf(lovBuffer);
+		PageSetLSN(vmiPage, lsn);
+		PageSetTLI(vmiPage, ThisTimeLineID);
+		_bitmap_wrtbuf(vmiBuffer);
 	}
 	else
-		_bitmap_relbuf(lovBuffer);
+		_bitmap_relbuf(vmiBuffer);
 }
 
 static void
@@ -324,12 +324,12 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 
 	if (XLByteLT(PageGetLSN(bitmapPage), lsn))
 	{
-		Buffer		lovBuffer;
-		Page		lovPage;
-		BMLOVItem	lovItem;
-		uint64      *last_tids;
-		BM_WORD *cwords;
-		BM_WORD *hwords;
+		Buffer				vmiBuffer;
+		Page				vmiPage;
+		BMVectorMetaItem	vmi;
+		uint64			   *last_tids;
+		BM_WORD			   *cwords;
+		BM_WORD			   *hwords;
 
 		newWords.curword = xlrec->bm_num_cwords;
 		newWords.start_wordno = xlrec->bm_start_wordno;
@@ -374,32 +374,32 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 		bitmapPageOpaque->bm_bitmap_next = xlrec->bm_next_blkno;
 		Assert(bitmapPageOpaque->bm_last_tid_location == xlrec->bm_last_tid);
 
-		lovBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_lov_blkno, false);
-		if (!BufferIsValid(lovBuffer))
+		vmiBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_vmi_blkno, false);
+		if (!BufferIsValid(vmiBuffer))
 			elog(PANIC,
-				 "_bitmap_xlog_insert_last_bitmapwords: lov block not found: %d",
-				 xlrec->bm_lov_blkno);
-		lovPage = BufferGetPage(lovBuffer);
+				 "_bitmap_xlog_insert_last_bitmapwords: VMI block not found: %d",
+				 xlrec->bm_vmi_blkno);
+		vmiPage = BufferGetPage(vmiBuffer);
 
-		lovItem = (BMLOVItem) PageGetItem(lovPage, 
-			PageGetItemId(lovPage, xlrec->bm_lov_offset));
+		vmi = (BMVectorMetaItem)
+			PageGetItem(vmiPage, PageGetItemId(vmiPage, xlrec->bm_vmi_offset));
 
 		if (xlrec->bm_is_last)
 		{
-			lovItem->bm_last_compword = xlrec->bm_last_compword;
-			lovItem->bm_last_word = xlrec->bm_last_word;
-			lovItem->lov_words_header = xlrec->lov_words_header;
-			lovItem->bm_last_setbit = xlrec->bm_last_setbit;
-			lovItem->bm_last_tid_location = xlrec->bm_last_setbit -
+			vmi->bm_last_compword = xlrec->bm_last_compword;
+			vmi->bm_last_word = xlrec->bm_last_word;
+			vmi->vmi_words_header = xlrec->vmi_words_header;
+			vmi->bm_last_setbit = xlrec->bm_last_setbit;
+			vmi->bm_last_tid_location = xlrec->bm_last_setbit -
 				xlrec->bm_last_setbit % BM_WORD_SIZE;
-			lovItem->bm_lov_tail = BufferGetBlockNumber(bitmapBuffer);
-			if (lovItem->bm_lov_head == InvalidBlockNumber)
-				lovItem->bm_lov_head = lovItem->bm_lov_tail;
+			vmi->bm_bitmap_tail = BufferGetBlockNumber(bitmapBuffer);
+			if (vmi->bm_bitmap_head == InvalidBlockNumber)
+				vmi->bm_bitmap_head = vmi->bm_bitmap_tail;
 
-			PageSetLSN(lovPage, lsn);
-			PageSetTLI(lovPage, ThisTimeLineID);
+			PageSetLSN(vmiPage, lsn);
+			PageSetTLI(vmiPage, ThisTimeLineID);
 
-			_bitmap_wrtbuf(lovBuffer);
+			_bitmap_wrtbuf(vmiBuffer);
 
 			forget_incomplete_insert_bitmapwords(xlrec->bm_node, xlrec);
 		}
@@ -419,16 +419,16 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 
 			if (xlrec->bm_is_first)
 			{
-				lovItem->bm_lov_head = BufferGetBlockNumber(bitmapBuffer);
-				lovItem->bm_lov_tail = lovItem->bm_lov_head;
+				vmi->bm_bitmap_head = BufferGetBlockNumber(bitmapBuffer);
+				vmi->bm_bitmap_tail = vmi->bm_bitmap_head;
 
-				PageSetLSN(lovPage, lsn);
-				PageSetTLI(lovPage, ThisTimeLineID);
+				PageSetLSN(vmiPage, lsn);
+				PageSetTLI(vmiPage, ThisTimeLineID);
 
-				_bitmap_wrtbuf(lovBuffer);
+				_bitmap_wrtbuf(vmiBuffer);
 			}
 			else
-				_bitmap_relbuf(lovBuffer);
+				_bitmap_relbuf(vmiBuffer);
 
 			PageSetLSN(nextPage, lsn);
 			PageSetTLI(nextPage, ThisTimeLineID);
@@ -511,7 +511,7 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 
 	firstPage = BufferGetPage(firstBuffer);
 	firstOpaque =
-		(BMPageOpaque)PageGetSpecialPointer(firstPage);
+		(BMPageOpaque) PageGetSpecialPointer(firstPage);
 	firstBitmap = (BMBitmapVectorPage) PageGetContents(firstPage);
 
 	if (XLByteLT(PageGetLSN(firstPage), lsn))
@@ -524,7 +524,7 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 				_bitmap_init_bitmappage(secondBuffer);
 
 			secondOpaque =
-				(BMPageOpaque)PageGetSpecialPointer(secondPage);
+				(BMPageOpaque) PageGetSpecialPointer(secondPage);
 			secondBitmap = (BMBitmapVectorPage) PageGetContents(secondPage);
 			Assert(XLByteLT(PageGetLSN(secondPage), lsn));
 		}
@@ -554,23 +554,25 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 
 		if (xlrec->bm_new_lastpage)
 		{
-			Buffer			lovBuffer;
-			Page 		lovPage;
-			BMLOVItem	lovItem;
+			Buffer				vmiBuffer;
+			Page 				vmiPage;
+			BMVectorMetaItem	vmi;
 
-			lovBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_lov_blkno, false);
-			if (!BufferIsValid(lovBuffer))
-				elog(PANIC, "_bitmap_xlog_updatewords lov block %d does not exist",
-					 xlrec->bm_lov_blkno);
+			vmiBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_vmi_blkno,
+									   false);
+			if (!BufferIsValid(vmiBuffer))
+				elog(PANIC, "_bitmap_xlog_updatewords VMI block %d "
+					 "does not exist", xlrec->bm_vmi_blkno);
 
-			lovPage = BufferGetPage(lovBuffer);
-			lovItem = (BMLOVItem) PageGetItem(lovPage, 
-				PageGetItemId(lovPage, xlrec->bm_lov_offset));
-			lovItem->bm_lov_tail = BufferGetBlockNumber(secondBuffer);
+			vmiPage = BufferGetPage(vmiBuffer);
+			vmi = (BMVectorMetaItem)
+				PageGetItem(vmiPage,
+							PageGetItemId(vmiPage, xlrec->bm_vmi_offset));
+			vmi->bm_bitmap_tail = BufferGetBlockNumber(secondBuffer);
 
-			PageSetLSN(lovPage, lsn);
-			PageSetTLI(lovPage, ThisTimeLineID);
-			_bitmap_wrtbuf(lovBuffer);			
+			PageSetLSN(vmiPage, lsn);
+			PageSetTLI(vmiPage, ThisTimeLineID);
+			_bitmap_wrtbuf(vmiBuffer);
 		}
 
 		PageSetLSN(firstPage, lsn);
@@ -589,11 +591,11 @@ bitmap_redo(XLogRecPtr lsn, XLogRecord *record)
 
 	switch (info)
 	{
-		case XLOG_BITMAP_INSERT_NEWLOV:
+		case XLOG_BITMAP_INSERT_NEWVMIPAGE:
 			_bitmap_xlog_newpage(lsn, record);
 			break;
-		case XLOG_BITMAP_INSERT_LOVITEM:
-			_bitmap_xlog_insert_lovitem(lsn, record);
+		case XLOG_BITMAP_INSERT_VMI:
+			_bitmap_xlog_insert_vmi(lsn, record);
 			break;
 		case XLOG_BITMAP_INSERT_META:
 			_bitmap_xlog_insert_meta(lsn, record);
@@ -629,34 +631,33 @@ bitmap_desc(StringInfo buf, uint8 xl_info, char *rec)
 
 	switch (info)
 	{
-		case XLOG_BITMAP_INSERT_NEWLOV:
+		case XLOG_BITMAP_INSERT_NEWVMIPAGE:
 		{
-			xl_bm_newpage *xlrec = (xl_bm_newpage *)rec;
+			xl_bm_newpage *xlrec = (xl_bm_newpage *) rec;
 
-			appendStringInfo(buf, "insert a new LOV page: ");
+			appendStringInfo(buf, "insert a new VMI page: ");
 			out_target(buf, &(xlrec->bm_node));
 			break;
 		}
-		case XLOG_BITMAP_INSERT_LOVITEM:
+		case XLOG_BITMAP_INSERT_VMI:
 		{
-			xl_bm_lovitem *xlrec = (xl_bm_lovitem *)rec;
+			xl_bm_vmi *xlrec = (xl_bm_vmi *) rec;
 
-			appendStringInfo(buf, "insert a new LOV item: ");
+			appendStringInfo(buf, "insert a new vector meta item: ");
 			out_target(buf, &(xlrec->bm_node));
 			break;
 		}
 		case XLOG_BITMAP_INSERT_META:
 		{
-			xl_bm_metapage *xlrec = (xl_bm_metapage *)rec;
+			xl_bm_metapage *xlrec = (xl_bm_metapage *) rec;
 
 			appendStringInfo(buf, "update the metapage: ");
 			out_target(buf, &(xlrec->bm_node));
 			break;
 		}
-
 		case XLOG_BITMAP_INSERT_BITMAP_LASTWORDS:
 		{
-			xl_bm_bitmap_lastwords *xlrec = (xl_bm_bitmap_lastwords *)rec;
+			xl_bm_bitmap_lastwords *xlrec = (xl_bm_bitmap_lastwords *) rec;
 
 			appendStringInfo(buf, "update the last two words in a bitmap: ");
 			out_target(buf, &(xlrec->bm_node));
@@ -674,7 +675,7 @@ bitmap_desc(StringInfo buf, uint8 xl_info, char *rec)
 
 		case XLOG_BITMAP_UPDATEWORD:
 		{
-			xl_bm_updateword *xlrec = (xl_bm_updateword *)rec;
+			xl_bm_updateword *xlrec = (xl_bm_updateword *) rec;
 
 			appendStringInfo(buf, "update a word in a bitmap page: ");
 			out_target(buf, &(xlrec->bm_node));
@@ -682,7 +683,7 @@ bitmap_desc(StringInfo buf, uint8 xl_info, char *rec)
 		}
 		case XLOG_BITMAP_UPDATEWORDS:
 		{
-			xl_bm_updatewords *xlrec = (xl_bm_updatewords*)rec;
+			xl_bm_updatewords *xlrec = (xl_bm_updatewords*) rec;
 
 			appendStringInfo(buf, "update words in bitmap pages: ");
 			out_target(buf, &(xlrec->bm_node));
@@ -707,47 +708,43 @@ bitmap_xlog_cleanup(void)
 	ListCell* l;
 	foreach (l, incomplete_actions)
 	{
-		Relation 			reln;
-		Buffer				lovBuffer;
-		BMTIDBuffer 	    newWords;
+		Relation 		reln;
+		Buffer			vmiBuffer;
+		BMTIDBuffer		newWords;
 
-		int					lastTids_size;
-		int					cwords_size;
-		int					hwords_size;
+		int				lastTids_size;
+		int				cwords_size;
+		int				hwords_size;
 		BM_WORD        *hwords;
 
 		bm_incomplete_action *action = (bm_incomplete_action *) lfirst(l);
 
-		lovBuffer = XLogReadBuffer(action->bm_node, action->bm_lov_blkno, false);
+		vmiBuffer = XLogReadBuffer(action->bm_node, action->bm_vmi_blkno, false);
 
 		newWords.num_cwords = action->bm_num_cwords;
 		newWords.start_wordno = action->bm_start_wordno;
 
 		lastTids_size = newWords.num_cwords * sizeof(uint64);
 		cwords_size = newWords.num_cwords * sizeof(BM_WORD);
-		hwords_size = (BM_CALC_H_WORDS(newWords.num_cwords)) *
-						sizeof(BM_WORD);
+		hwords_size = (BM_CALC_H_WORDS(newWords.num_cwords)) * sizeof(BM_WORD);
 
-		newWords.last_tids =
-			(uint64*)(((char*)action) + sizeof(xl_bm_bitmapwords));
-		newWords.cwords =
-			(BM_WORD*)(((char*)action) +
-						 sizeof(xl_bm_bitmapwords) + lastTids_size);
-		hwords =
-			(BM_WORD*)(((char*)action) +
-							 sizeof(xl_bm_bitmapwords) + lastTids_size +
-							 cwords_size);
+		newWords.last_tids = (uint64 *)
+			(((char *) action) + sizeof(xl_bm_bitmapwords));
+		newWords.cwords = (BM_WORD*)
+			(((char *) action) + sizeof(xl_bm_bitmapwords) + lastTids_size);
+		hwords = (BM_WORD*)
+			(((char *) action) + sizeof(xl_bm_bitmapwords) + lastTids_size +
+			 cwords_size);
 		memcpy(newWords.hwords, hwords, hwords_size);
 
 		newWords.last_compword = action->bm_last_compword;
 		newWords.last_word = action->bm_last_word;
-		newWords.is_last_compword_fill = (action->lov_words_header == 2);
+		newWords.is_last_compword_fill = (action->vmi_words_header == 2);
 		newWords.last_tid = action->bm_last_setbit;
 
 		/* Finish an incomplete insert */
-		_bitmap_write_new_bitmapwords(reln,
-							  lovBuffer, action->bm_lov_offset,
-							  &newWords, false);
+		_bitmap_write_new_bitmapwords(reln, vmiBuffer, action->bm_vmi_offset,
+									  &newWords, false);
 	}
 	incomplete_actions = NIL;
 }

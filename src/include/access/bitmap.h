@@ -44,20 +44,36 @@ typedef uint16			BM_WORD;
  * Metapage, always the first page (page 0) in the index.
  *
  * This page stores some meta-data information about this index.
+ *
+ * The list of values (LOV) is comprised of a heap (normal table) and an index.
+ * The heap maintains all distinct values along with the block numbers and
+ * offset numbers required to locate their vector meta items which in turn
+ * point to the real vector pages unless the vector is empty.  Along with this
+ * heap, we also create a new btree index on this heap using attribute(s) as
+ * btree keys. In this way, for any given value, we search this btree to find
+ * the block number and offset number for its corresponding vector meta item.
+ * Each item in the heap is corresponding to a distinct value for attribute(s)
+ * to be indexed.  For multi-column indexes on (a_1,a_2,...,a_n), we say two
+ * values (l_1,l_2,...,l_n) and (k_1,k_2,...,k_n) for (a_1,a_2,...,a_n) are the
+ * same if and only if for all i, l_i=k_i.  This makes it possible to index the
+ * list of all the distinct n-ples of values, which can be thought as the
+ * result of "SELECT DISTINCT a_1,...,a_n FROM table".
  */
 typedef struct BMMetaPageData 
 {
 	/*
-	 * The relation ids for a heap and a btree on this heap. They are
-	 * used to speed up finding the bitmap vector for given attribute
-	 * value(s), see the comments for LOV pages below for more
-	 * information. We consider these as the metadata for LOV pages.
+	 * The relation ids for a heap and a btree on this heap.  They are used to
+	 * speed up finding the bitmap vector for given attribute value(s), see the
+	 * comments for LOV pages below for more information.  We consider these as
+	 * the general metadata of the index.  There is additional metadata per
+	 * vector contained in the BMVectorMetaItemData structures which are stored
+	 * to custom pages.
 	 */
 	Oid			bm_lov_heapId;		/* the relation id for the heap */
 	Oid			bm_lov_indexId;		/* the relation id for the index */
 
-	/* the block number for the last LOV pages. */
-	BlockNumber	bm_lov_lastpage;
+	/* the block number for the last page of vector meta items (VMI). */
+	BlockNumber	bm_last_vmi_page;
 } BMMetaPageData;
 
 typedef BMMetaPageData *BMMetaPage;
@@ -76,44 +92,44 @@ typedef BMMetaPageData *BMMetaPage;
 #define BM_MAX_HTUP_PER_PAGE MaxHeapTuplesPerPage
 
 /*
- * LOV (List Of Values) page -- pages to store a list of distinct
- * values for attribute(s) to be indexed, some metadata related to
- * their corresponding bitmap vectors, and the pointers to their
- * bitmap vectors. For each distinct value, there is a BMLOVItemData
- * associated with it. A LOV page maintains an array of BMLOVItemData
- * instances, called lov items.
- *
- * To speed up finding the lov item for a given value, we
- * create a heap to maintain all distinct values along with the
- * block numbers and offset numbers for their lov items in LOV pages.
- * That is, there are total "<number_of_attributes> + 2" attributes
- * in this new heap. Along with this heap, we also create a new btree
- * index on this heap using attribute(s) as btree keys. In this way,
- * for any given value, we search this btree to find
- * the block number and offset number for its corresponding lov item.
+ * VMI (Vector Meta Info) pages store some metadata related to their
+ * corresponding bitmap vectors.  A VMI page maintains an array of
+ * BMVectorMetaItemData instances, called VMI.
  */
 
 /*
- * The first LOV page is reserved for NULL keys
+ * The first VMI (Vector Meta Item) page is reserved for NULL keys
  */
-#define		BM_LOV_STARTPAGE	1 
+#define		BM_VMI_STARTPAGE	1
 
 /*
- * Items in a LOV page.
+ * BMVMIID is a kind of a pointer to a vector meta item.
  *
- * Each item is corresponding to a distinct value for attribute(s)
- * to be indexed. For multi-column indexes on (a_1,a_2,...,a_n), we say
- * two values (l_1,l_2,...,l_n) and (k_1,k_2,...,k_n) for (a_1,a_2,...,a_n)
- * are the same if and only if for all i, l_i=k_i.
- * The LOV structure makes it possible to index the list of all the distinct n-ples of values,
- * which can be thought as the result of "SELECT DISTINCT a_1,...,a_n FROM table"
- * 
+ * It is made of a block and offset number of the BMVectorMetaItemData record
+ * within the set of VMI pages.
  */
-typedef struct BMLOVItemData 
+typedef struct BMVMIID
+{
+	BlockNumber		block;
+	OffsetNumber	offset;
+} BMVMIID;
+
+/*
+ * Vector Meta Items (a.k.a. VMI or entries in a VMI page).
+ *
+ * This is a bit of meta information for each vector.  It exists even if the
+ * real vector does not exist because the table is empty or contains no matches
+ * for the key.
+ *
+ * The most important information comes from the pointers to the real vector
+ * pages.  The other fields contain information required for performance
+ * optimization purposes.
+ */
+typedef struct BMVectorMetaItemData
 {
 	/* the first page and last page of the bitmap vector. */
-	BlockNumber		bm_lov_head;
-	BlockNumber 	bm_lov_tail;
+	BlockNumber		bm_bitmap_head;
+	BlockNumber 	bm_bitmap_tail;
 
 	/* 
 	 * Additional information to be used to append new bits into
@@ -155,28 +171,27 @@ typedef struct BMLOVItemData
 	 * that bm_last_word is a fill word. If the second least-significant
 	 * bit is 1, it represents that bm_last_compword is a fill word.
 	 */
-	uint8			lov_words_header;
-	 
-} BMLOVItemData;
-typedef BMLOVItemData *BMLOVItem;
+	uint8			vmi_words_header;
+} BMVectorMetaItemData;
+typedef BMVectorMetaItemData *BMVectorMetaItem;
 
-#define BM_LOV_ITEM_SIZE (sizeof(BMLOVItemData))
+#define BM_VECTOR_META_ITEM_SIZE (sizeof(BMVectorMetaItemData))
 
-#define BM_MAX_LOVITEMS_PER_PAGE	\
-	((BLCKSZ - sizeof(PageHeaderData)) / sizeof(BMLOVItemData))
+#define BM_MAX_VMI_PER_PAGE	\
+	((BLCKSZ - sizeof(PageHeaderData)) / sizeof(BMVectorMetaItemData))
 
-#define BM_LOV_WORDS_NO_FILL 0
+#define BM_VMI_WORDS_NO_FILL 0
 #define BM_LAST_WORD_BIT 1
 #define BM_LAST_COMPWORD_BIT 2
 
-#define BM_LASTWORD_IS_FILL(lov) \
-	(lov->lov_words_header & BM_LAST_WORD_BIT)
+#define BM_LASTWORD_IS_FILL(vmi) \
+	(vmi->vmi_words_header & BM_LAST_WORD_BIT)
 
-#define BM_LAST_COMPWORD_IS_FILL(lov) \
-	(lov->lov_words_header & BM_LAST_COMPWORD_BIT)
+#define BM_LAST_COMPWORD_IS_FILL(vmi) \
+	(vmi->vmi_words_header & BM_LAST_COMPWORD_BIT)
 
-#define BM_BOTH_LOV_WORDS_FILL(lov) \
-	(BM_LASTWORD_IS_FILL(lov) && BM_LAST_COMPWORD_IS_FILL(lov))
+#define BM_BOTH_VMI_WORDS_FILL(vmi) \
+	(BM_LASTWORD_IS_FILL(vmi) && BM_LAST_COMPWORD_IS_FILL(vmi))
 
 /*
  * Bitmap page -- pages to store bits in a bitmap vector.
@@ -252,18 +267,18 @@ typedef BMBitmapVectorPageData *BMBitmapVectorPage;
  * on disk.
  *
  * byte_size counts how many bytes we've consumed in the buffer.
- * max_lov_block is a hint as to whether we'll find a LOV block in lov_blocks
- * or not (we take advantage of the fact that LOV block numbers will be
+ * max_vmi_block is a hint as to whether we'll find a VMI block in vmi_blocks
+ * or not (we take advantage of the fact that VMI block numbers will be
  * increasing).
- * lov_blocks is a list of LOV block buffers. The structures put in
+ * vmi_blocks is a list of VMI block buffers. The structures put in
  * this list are defined in bitmapinsert.c.
  */
 
 typedef struct BMTidBuildBuf
 {
-	uint32 byte_size; /* The size in bytes of the buffer's data */
-	BlockNumber max_lov_block; /* highest lov block we're seen */
-	List *lov_blocks;	/* list of lov blocks we're buffering */
+	uint32	     byte_size;		/* The size in bytes of the buffer's data */
+	BlockNumber  max_vmi_block;	/* highest VMI block we're seen */
+	List		*vmi_blocks;	/* list of VMI blocks we're buffering */
 } BMTidBuildBuf;
 
 
@@ -399,13 +414,6 @@ typedef struct BMTIDBuffer
   uint16 hot_buffer_last_offset;
 } BMTIDBuffer;
 
-typedef struct BMBuildLovData
-{
-	BlockNumber 	lov_block;
-	OffsetNumber	lov_off;
-} BMBuildLovData;
-
-
 /*
  * the state for index build 
  */
@@ -415,43 +423,34 @@ typedef struct BMBuildState
 	Relation		bm_lov_heap;
 	Relation		bm_lov_index;
 	/*
-	 * We use this hash to cache lookups of lov blocks for different keys
-	 * When one of attribute types can not be hashed, we set this hash
-	 * to NULL.
+	 * We use this hash to cache lookups of VMI blocks for different keys When
+	 * one of attribute types can not be hashed, we set this hash to NULL.
 	 */
-	HTAB		   *lovitem_hash;
+	HTAB		   *vmi_hash;
 
 	/*
-	 * When the attributes to be indexed can not be hashed, we can not use
-	 * the hash for the lov blocks. We have to search through the
-	 * btree.
+	 * When the attributes to be indexed can not be hashed, we can not use the
+	 * hash for the VMI blocks.  We have to search through the btree.
 	 */
 	ScanKey			bm_lov_scanKeys;
 	IndexScanDesc	bm_lov_scanDesc;
 
 	/*
-	 * the buffer to store last several tid locations for each distinct
-	 * value.
+	 * The buffer to store last several tid locations for each distinct value.
 	 */
 	BMTidBuildBuf	*bm_tidLocsBuffer;
 
 	double 			ituples;	/* the number of index tuples */
 	bool			use_wal;	/* whether or not we write WAL records */
 
-  /* HOT tuples prebuffer */
-  BlockNumber hot_prebuffer_block;
-  uint64	  hot_prebuffer_tdn[BM_MAX_HTUP_PER_PAGE];
-  ItemPointerData hot_prebuffer_ipd[BM_MAX_HTUP_PER_PAGE];
-  Datum*	  hot_prebuffer_atd[BM_MAX_HTUP_PER_PAGE];
-  bool*	          hot_prebuffer_nll[BM_MAX_HTUP_PER_PAGE];
-  int16 hot_prebuffer_count;
+	/* HOT tuples prebuffer */
+	BlockNumber		hot_prebuffer_block;
+	uint64			hot_prebuffer_tdn[BM_MAX_HTUP_PER_PAGE];
+	ItemPointerData	hot_prebuffer_ipd[BM_MAX_HTUP_PER_PAGE];
+	Datum		   *hot_prebuffer_atd[BM_MAX_HTUP_PER_PAGE];
+	bool		   *hot_prebuffer_nll[BM_MAX_HTUP_PER_PAGE];
+	int16			hot_prebuffer_count;
 } BMBuildState;
-
-typedef struct BMItemPos
-{
-	BlockNumber		blockNo;
-	OffsetNumber	offset;
-} BMItemPos;
 
 /*
  * Define an iteration result while scanning an BMBatchWords.
@@ -503,13 +502,13 @@ typedef struct BMBatchWords
  */
 typedef struct BMVectorData
 {
-	Buffer			bm_lovBuffer;/* the buffer that contains the LOV item. */
-	OffsetNumber	bm_lovOffset;	/* the offset of the LOV item */
+	Buffer			bm_vmiBuffer;/* the buffer that contains the VMI */
+	OffsetNumber	bm_vmiOffset;	/* the offset of the VMI */
 	BlockNumber		bm_nextBlockNo; /* the next bitmap page block */
 
-	/* indicate if the last two words in the bitmap has been read. 
-	 * These two words are stored inside a BMLovItem. If this value
-	 * is true, it means this bitmap vector has no more words.
+	/* indicate if the last two words in the bitmap has been read.  These two
+	 * words are stored inside a VMI.  If this value is true, it means this
+	 * bitmap vector has no more words.
 	 */
 	bool			bm_readLastWords;
 	BMBatchWords   *bm_batchWords; /* actual bitmap words */
@@ -562,21 +561,20 @@ typedef BMScanOpaqueData *BMScanOpaque;
  *
  * Some information in high 4 bits of log record xl_info field.
  */
-#define XLOG_BITMAP_INSERT_NEWLOV	0x10 /* add a new LOV page */
-#define XLOG_BITMAP_INSERT_LOVITEM	0x20 /* add a new entry into a LOV page */
-#define XLOG_BITMAP_INSERT_META		0x30 /* update the metapage */
+#define XLOG_BITMAP_INSERT_NEWVMIPAGE		0x10 /* add a new VMI page */
+#define XLOG_BITMAP_INSERT_VMI				0x20 /* add a new VMI */
+#define XLOG_BITMAP_INSERT_META				0x30 /* update the metapage */
 #define XLOG_BITMAP_INSERT_BITMAP_LASTWORDS	0x40 /* update the last 2 words
 													in a bitmap */
 /* insert bitmap words into a bitmap page which is not the last one. */
-#define XLOG_BITMAP_INSERT_WORDS		0x50
-/* insert bitmap words to the last bitmap page and the lov buffer */
-#define XLOG_BITMAP_INSERT_LASTWORDS	0x60
-#define XLOG_BITMAP_UPDATEWORD			0x70
-#define XLOG_BITMAP_UPDATEWORDS			0x80
+#define XLOG_BITMAP_INSERT_WORDS			0x50
+/* insert bitmap words to the last bitmap page and the VMI buffer */
+#define XLOG_BITMAP_INSERT_LASTWORDS		0x60
+#define XLOG_BITMAP_UPDATEWORD				0x70
+#define XLOG_BITMAP_UPDATEWORDS				0x80
 
 /*
- * The information about writing bitmap words to last bitmap page
- * and lov page.
+ * The information about writing bitmap words to last bitmap page and VMI page.
  */
 typedef struct xl_bm_bitmapwords
 {
@@ -588,21 +586,21 @@ typedef struct xl_bm_bitmapwords
 	/* The last tid location for this bitmap page */
 	uint64			bm_last_tid;
 	/*
-	 * The block number and offset for the lov page that is associated
-	 * with this bitmap page.
+	 * The block number and offset for the VMI page that is associated with
+	 * this bitmap page.
 	 */
-	BlockNumber		bm_lov_blkno;
-	OffsetNumber	bm_lov_offset;
+	BlockNumber		bm_vmi_blkno;
+	OffsetNumber	bm_vmi_offset;
 
-	/* The information for the lov page */
-	BM_WORD		bm_last_compword;
-	BM_WORD		bm_last_word;
-	uint8			lov_words_header;
+	/* The information for the VMI page */
+	BM_WORD			bm_last_compword;
+	BM_WORD			bm_last_word;
+	uint8			vmi_words_header;
 	uint64			bm_last_setbit;
 
 	/*
-	 * Indicate if these bitmap words are stored in the last bitmap
-	 * page and the lov buffer.
+	 * Indicate if these bitmap words are stored in the last bitmap page and
+	 * the VMI buffer.
 	 */
 	bool			bm_is_last;
 
@@ -636,18 +634,18 @@ typedef struct xl_bm_bitmapwords
 typedef struct xl_bm_updatewords
 {
 	RelFileNode		bm_node;
-	BlockNumber		bm_lov_blkno;
-	OffsetNumber	bm_lov_offset;
+	BlockNumber		bm_vmi_blkno;
+	OffsetNumber	bm_vmi_offset;
 
 	BlockNumber		bm_first_blkno;
-	BM_WORD		bm_first_cwords[BM_NUM_OF_HRL_WORDS_PER_PAGE];
-	BM_WORD		bm_first_hwords[BM_NUM_OF_HEADER_WORDS];
+	BM_WORD			bm_first_cwords[BM_NUM_OF_HRL_WORDS_PER_PAGE];
+	BM_WORD			bm_first_hwords[BM_NUM_OF_HEADER_WORDS];
 	uint64			bm_first_last_tid;
 	uint64			bm_first_num_cwords;
 
 	BlockNumber		bm_second_blkno;
-	BM_WORD		bm_second_cwords[BM_NUM_OF_HRL_WORDS_PER_PAGE];
-	BM_WORD		bm_second_hwords[BM_NUM_OF_HEADER_WORDS];
+	BM_WORD			bm_second_cwords[BM_NUM_OF_HRL_WORDS_PER_PAGE];
+	BM_WORD			bm_second_hwords[BM_NUM_OF_HEADER_WORDS];
 	uint64			bm_second_last_tid;
 	uint64			bm_second_num_cwords;
 
@@ -666,19 +664,19 @@ typedef struct xl_bm_updateword
 	RelFileNode		bm_node;
 	BlockNumber		bm_blkno;
 	int				bm_word_no;
-	BM_WORD		bm_cword;
-	BM_WORD		bm_hword;
+	BM_WORD			bm_cword;
+	BM_WORD			bm_hword;
 } xl_bm_updateword;
 
-/* The information about inserting a new lovitem into the LOV list. */
-typedef struct xl_bm_lovitem
+/* The information about inserting a new VMI. */
+typedef struct xl_bm_vmi
 {
 	RelFileNode 	bm_node;
-	BlockNumber		bm_lov_blkno;
-	OffsetNumber	bm_lov_offset;
-	BMLOVItemData	bm_lovItem;
-	bool			bm_is_new_lov_blkno;
-} xl_bm_lovitem;
+	BlockNumber		bm_vmi_blkno;
+	OffsetNumber	bm_vmi_offset;
+	BMVectorMetaItemData bm_vmi;
+	bool			bm_is_new_vmi_blkno;
+} xl_bm_vmi;
 
 /* The information about adding a new page */
 typedef struct xl_bm_newpage
@@ -713,10 +711,10 @@ typedef struct xl_bm_bitmap_lastwords
 	RelFileNode 	bm_node;
 	BM_WORD			bm_last_compword;
 	BM_WORD			bm_last_word;
-	uint8			lov_words_header;
+	uint8			vmi_words_header;
 
-	BlockNumber		bm_lov_blkno;
-	OffsetNumber	bm_lov_offset;
+	BlockNumber		bm_vmi_blkno;
+	OffsetNumber	bm_vmi_offset;
 } xl_bm_bitmap_lastwords;
 
 /* The information about the changes in the metapage. */
@@ -725,8 +723,8 @@ typedef struct xl_bm_metapage
 	RelFileNode bm_node;
 	Oid			bm_lov_heapId;		/* the relation id for the heap */
 	Oid			bm_lov_indexId;		/* the relation id for the index */
-	/* the block number for the last LOV pages. */
-	BlockNumber	bm_lov_lastpage;
+	/* the block number for the last VMI pages. */
+	BlockNumber	bm_last_vmi_page;
 } xl_bm_metapage;
 
 /* public routines */
@@ -749,10 +747,10 @@ extern Buffer _bitmap_getbuf(Relation rel, BlockNumber blkno, int access);
 extern void _bitmap_wrtbuf(Buffer buf);
 extern void _bitmap_relbuf(Buffer buf);
 extern void _bitmap_wrtnorelbuf(Buffer buf);
-extern void _bitmap_init_lovpage(Buffer buf);
+extern void _bitmap_init_vmipage(Buffer buf);
 extern void _bitmap_init_bitmappage(Buffer buf);
-extern void _bitmap_init_buildstate(Relation index, BMBuildState* bmstate);
-extern void _bitmap_cleanup_buildstate(Relation index, BMBuildState* bmstate);
+extern void _bitmap_init_buildstate(Relation index, BMBuildState *bmstate);
+extern void _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate);
 extern void _bitmap_init(Relation index, bool use_wal);
 
 /* bitmapinsert.c */
@@ -765,21 +763,20 @@ extern void _bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids,
 						  		  bool use_wal);
 extern uint64 _bitmap_write_bitmapwords(Buffer bitmapBuffer,
 								BMTIDBuffer* buf);
-extern void _bitmap_write_new_bitmapwords(
-	Relation rel,
-	Buffer lovBuffer, OffsetNumber lovOffset,
-	BMTIDBuffer* buf, bool use_wal);
-extern uint16 _bitmap_free_tidbuf(BMTIDBuffer* buf);
+extern void _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
+										  OffsetNumber vmiOffset,
+										  BMTIDBuffer *buf, bool use_wal);
+extern uint16 _bitmap_free_tidbuf(BMTIDBuffer *buf);
 extern void build_inserttuple_flush(Relation rel, BMBuildState *state);
 
 /* bitmaputil.c */
-extern BMLOVItem _bitmap_formitem(uint64 currTidNumber);
-extern void _bitmap_init_batchwords(BMBatchWords* words,
+extern BMVectorMetaItem _bitmap_formitem(uint64 currTidNumber);
+extern void _bitmap_init_batchwords(BMBatchWords *words,
 									uint32	maxNumOfWords,
 									MemoryContext mcxt);
 extern void _bitmap_copy_batchwords(BMBatchWords *words, BMBatchWords *copyWords);
-extern void _bitmap_reset_batchwords(BMBatchWords* words);
-extern void _bitmap_cleanup_batchwords(BMBatchWords* words);
+extern void _bitmap_reset_batchwords(BMBatchWords *words);
+extern void _bitmap_cleanup_batchwords(BMBatchWords *words);
 extern void _bitmap_cleanup_scanpos(BMVector bmScanPos,
 									uint32 numBitmapVectors);
 extern uint64 _bitmap_findnexttid(BMBatchWords *words,
@@ -796,19 +793,20 @@ extern void _bitmap_union(BMBatchWords **batches, uint32 numBatches,
 extern void _bitmap_begin_iterate(BMBatchWords *words, BMIterateResult *result);
 extern void _bitmap_log_newpage(Relation rel, uint8 info, Buffer buf);
 extern void _bitmap_log_metapage(Relation rel, Page page);
-extern void _bitmap_log_bitmap_lastwords(Relation rel, Buffer lovBuffer,
-									 OffsetNumber lovOffset, BMLOVItem lovItem);
-extern void _bitmap_log_lovitem	(Relation rel, Buffer lovBuffer,
-								 OffsetNumber offset, BMLOVItem lovItem,
-								 Buffer metabuf,  bool is_new_lov_blkno);
-extern void _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer lovBuffer,
-						OffsetNumber lovOffset, BMTIDBuffer* buf,
-						uint64 words_written, uint64 tidnum, BlockNumber nextBlkno,
-						bool isLast, bool isFirst);
-extern void _bitmap_log_updatewords(Relation rel,
-						Buffer lovBuffer, OffsetNumber lovOffset,
-						Buffer firstBuffer, Buffer secondBuffer,
-						bool new_lastpage);
+extern void _bitmap_log_bitmap_lastwords(Relation rel, Buffer vmiBuffer,
+									 OffsetNumber vmiOffset, BMVectorMetaItem vmi);
+extern void _bitmap_log_vmi(Relation rel, Buffer vmiBuffer,
+							OffsetNumber offset, BMVectorMetaItem vmi,
+							Buffer metabuf,  bool is_new_vmi_blkno);
+extern void _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer,
+									Buffer vmiBuffer,
+									OffsetNumber vmiOffset, BMTIDBuffer* buf,
+									uint64 words_written, uint64 tidnum,
+									BlockNumber nextBlkno,
+									bool isLast, bool isFirst);
+extern void _bitmap_log_updatewords(Relation rel, Buffer vmiBuffer,
+									OffsetNumber vmiOffset, Buffer firstBuffer,
+									Buffer secondBuffer, bool new_lastpage);
 extern void _bitmap_log_updateword(Relation rel, Buffer bitmapBuffer, int word_no);
 
 /* bitmapsearch.c */
@@ -818,7 +816,8 @@ extern bool _bitmap_firstbatchwords(IndexScanDesc scan, ScanDirection dir);
 extern bool _bitmap_nextbatchwords(IndexScanDesc scan, ScanDirection dir);
 extern void _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir);
 extern void _bitmap_initscanpos(IndexScanDesc scan, BMVector bmScanPos,
-								BlockNumber lovBlock, OffsetNumber lovOffset);
+								BlockNumber vmiBlock, OffsetNumber vmiOffset);
+extern void _bitmap_get_null_vmiid(Relation index, BMVMIID *vmiid);
 
 
 /* bitmapattutil.c */
@@ -833,7 +832,7 @@ extern void _bitmap_close_lov_heapandindex(Relation lovHeap,
 										Relation lovIndex, LOCKMODE lockMode);
 extern bool _bitmap_findvalue(Relation lovHeap, Relation lovIndex,
 							  ScanKey scanKey, IndexScanDesc scanDesc,
-							  BMItemPos *lovItemPos);
+							  BMVMIID *vmiid);
 extern void _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			               IndexBulkDeleteCallback callback, 
 						   void *callback_state);

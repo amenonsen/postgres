@@ -24,10 +24,10 @@
 #include "utils/tqual.h" /* for SnapshotAny */
 
 static void next_batch_words(IndexScanDesc scan);
-static void read_words(Relation rel, Buffer lovBuffer, 
-					   OffsetNumber lovOffset, BlockNumber *nextBlockNoP,
-							  BM_WORD *headerWords, BM_WORD *words,
-							  uint32 *numOfWordsP, bool *readLastWords);
+static void read_words(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
+					   BlockNumber *nextBlockNoP, BM_WORD *headerWords,
+					   BM_WORD *words, uint32 *numOfWordsP,
+					   bool *readLastWords);
 /*
  * _bitmap_first() -- find the first tuple that satisfies a given scan.
  */
@@ -181,13 +181,13 @@ next_batch_words(IndexScanDesc scan)
 
 			_bitmap_reset_batchwords(batchWords);
 			read_words(scan->indexRelation,
-							  bmScanPos[i].bm_lovBuffer,
-							  bmScanPos[i].bm_lovOffset,
-							  &(bmScanPos[i].bm_nextBlockNo),
-							  batchWords->hwords,
-							  batchWords->cwords,
-						  	  &(batchWords->nwords),
-							  &(bmScanPos[i].bm_readLastWords));
+					   bmScanPos[i].bm_vmiBuffer,
+					   bmScanPos[i].bm_vmiOffset,
+					   &(bmScanPos[i].bm_nextBlockNo),
+					   batchWords->hwords,
+					   batchWords->cwords,
+					   &(batchWords->nwords),
+					   &(bmScanPos[i].bm_readLastWords));
 		}
 
 		if (bmScanPos[i].bm_batchWords->nwords > 0)
@@ -233,10 +233,10 @@ next_batch_words(IndexScanDesc scan)
  *	the bitmap page.
  *
  * If nextBlockNo is an invalid block number, then the two last words
- * are stored in lovItem. Otherwise, read words from nextBlockNo.
+ * are stored in vmi. Otherwise, read words from nextBlockNo.
  */
 static void
-read_words(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
+read_words(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 				  BlockNumber *nextBlockNoP, BM_WORD *headerWords, 
 				  BM_WORD *words, uint32 *numOfWordsP, bool *readLastWords)
 {
@@ -280,7 +280,7 @@ read_words(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 			uint32		nwords;
 			int			offs;
 
-			read_words(rel, lovBuffer, lovOffset, nextBlockNoP, &hword, 
+			read_words(rel, vmiBuffer, vmiOffset, nextBlockNoP, &hword,
 					   cwords, &nwords, readLastWords);
 
 			Assert(nwords > 0 && nwords <= 2);
@@ -301,32 +301,32 @@ read_words(Relation rel, Buffer lovBuffer, OffsetNumber lovOffset,
 	}
 	else
 	{
-		BMLOVItem	lovItem;
-		Page		lovPage;
+		BMVectorMetaItem vmi;
+		Page		vmiPage;
 
-		LockBuffer(lovBuffer, BM_READ);
+		LockBuffer(vmiBuffer, BM_READ);
 
-		lovPage = BufferGetPage(lovBuffer);
-		lovItem = (BMLOVItem) PageGetItem(lovPage, 
-										  PageGetItemId(lovPage, lovOffset));
+		vmiPage = BufferGetPage(vmiBuffer);
+		vmi = (BMVectorMetaItem)
+			PageGetItem(vmiPage, PageGetItemId(vmiPage, vmiOffset));
 
-		if (lovItem->bm_last_compword != LITERAL_ALL_ONE)
+		if (vmi->bm_last_compword != LITERAL_ALL_ONE)
 		{
 			*numOfWordsP = 2;
-			headerWords[0] = (((BM_WORD)lovItem->lov_words_header) <<
+			headerWords[0] = (((BM_WORD) vmi->vmi_words_header) <<
 							  (BM_WORD_SIZE-2));
-			words[0] = lovItem->bm_last_compword;
-			words[1] = lovItem->bm_last_word;
+			words[0] = vmi->bm_last_compword;
+			words[1] = vmi->bm_last_word;
 		}
 		else
 		{
 			*numOfWordsP = 1;
-			headerWords[0] = (((BM_WORD)lovItem->lov_words_header) <<
+			headerWords[0] = (((BM_WORD) vmi->vmi_words_header) <<
 							  (BM_WORD_SIZE-1));
-			words[0] = lovItem->bm_last_word;
+			words[0] = vmi->bm_last_word;
 		}
 
-		LockBuffer(lovBuffer, BUFFER_LOCK_UNLOCK);
+		LockBuffer(vmiBuffer, BUFFER_LOCK_UNLOCK);
 		*readLastWords = true;
 	}
 }
@@ -342,9 +342,8 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 	BMScanPosition			scanPos;
 	Buffer					metabuf;
 	BMMetaPage				metapage;
-	BlockNumber				lovBlock;
-	OffsetNumber			lovOffset;
-	bool					blockNull, offsetNull;
+	BlockNumber				vmiBlock;
+	OffsetNumber			vmiOffset;
 	int						vectorNo, keyNo;
 
 	so = (BMScanOpaque) scan->opaque;
@@ -374,16 +373,16 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 
 	/*
 	 * If the values for these keys are all NULL, the bitmap vector
-	 * is the first LOV item in the LOV pages.
+	 * is accessed through the first VMI.
 	 */
 	if (0)
 	{
-		lovBlock = BM_LOV_STARTPAGE;
-		lovOffset = 1;
+		vmiBlock = BM_VMI_STARTPAGE;
+		vmiOffset = 1;
 
 		scanPos->posvecs = (BMVector) palloc0(sizeof(BMVectorData));
 
-		_bitmap_initscanpos(scan, scanPos->posvecs, lovBlock, lovOffset);
+		_bitmap_initscanpos(scan, scanPos->posvecs, vmiBlock, vmiOffset);
 		scanPos->nvec = 1;
 	}
 	else
@@ -392,8 +391,8 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		TupleDesc		indexTupDesc;
 		ScanKey			scanKeys;
 		IndexScanDesc	scanDesc;
-		BMItemPos		lovItemPos;
-		List		   *lovItemPoss = NIL;
+		BMVMIID			vmiid;
+		List		   *vmiids = NIL;
 		ListCell	   *cell;
 
 		/*
@@ -402,8 +401,8 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		 * fundamentally wrong. This could change when we have VACUUM
 		 * support, of course.
 		 */
-		_bitmap_open_lov_heapandindex(metapage, 
-				 &lovHeap, &lovIndex, AccessShareLock);
+		_bitmap_open_lov_heapandindex(metapage, &lovHeap, &lovIndex,
+									  AccessShareLock);
 
 		indexTupDesc = RelationGetDescr(lovIndex);
 
@@ -434,18 +433,18 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		index_rescan(scanDesc, scanKeys, scan->numberOfKeys, NULL, 0);
 
 		/*
-		 * finds all lov items for this scan through lovHeap and lovIndex.
+		 * finds all VMI IDs for this scan through lovHeap and lovIndex.
 		 */
 		while (_bitmap_findvalue(lovHeap, lovIndex, scanKeys, scanDesc,
-								 &lovItemPos))
+								 &vmiid))
 		{
 			/*
-			 * We find the position for one LOV item. Append it into the list.
+			 * We find the VMI ID of one item. Append it into the list.
 			 */
-			BMItemPos	*posCopy = (BMItemPos *) palloc0(sizeof(BMItemPos));
+			BMVMIID *idCopy = (BMVMIID *) palloc0(sizeof(BMVMIID));
 
-			*posCopy = lovItemPos;
-			lovItemPoss = lappend(lovItemPoss, posCopy);
+			*idCopy = vmiid;
+			vmiids = lappend(vmiids, idCopy);
 
 			scanPos->nvec++;
 		}
@@ -453,18 +452,18 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		scanPos->posvecs =
 			(BMVector)palloc0(sizeof(BMVectorData) * scanPos->nvec);
 		vectorNo = 0;
-		foreach(cell, lovItemPoss)
+		foreach(cell, vmiids)
 		{
-			BMItemPos  *_lovItemPos = (BMItemPos *) lfirst(cell);
+			BMVMIID	   *_vmiid = (BMVMIID *) lfirst(cell);
 			BMVector	bmScanPos = &(scanPos->posvecs[vectorNo]);
 
-			_bitmap_initscanpos(scan, bmScanPos, _lovItemPos->blockNo,
-								_lovItemPos->offset);
+			_bitmap_initscanpos(scan, bmScanPos, _vmiid->block,
+								_vmiid->offset);
 
 			vectorNo++;
 		}
 
-		list_free_deep(lovItemPoss);
+		list_free_deep(vmiids);
 
 		index_endscan(scanDesc);
 		_bitmap_close_lov_heapandindex(lovHeap, lovIndex, AccessShareLock);
@@ -501,25 +500,36 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
  */
 void
 _bitmap_initscanpos(IndexScanDesc scan, BMVector bmScanPos, 
-					BlockNumber lovBlock, OffsetNumber lovOffset)
+					BlockNumber vmiBlock, OffsetNumber vmiOffset)
 {
-	Page 					lovPage;
-	BMLOVItem				lovItem;
+	Page 				vmiPage;
+	BMVectorMetaItem	vmi;
 
-	bmScanPos->bm_lovOffset = lovOffset;
-	bmScanPos->bm_lovBuffer = _bitmap_getbuf(scan->indexRelation, lovBlock, 
+	bmScanPos->bm_vmiOffset = vmiOffset;
+	bmScanPos->bm_vmiBuffer = _bitmap_getbuf(scan->indexRelation, vmiBlock,
 										     BM_READ);
 
-	lovPage	= BufferGetPage(bmScanPos->bm_lovBuffer);
-	lovItem = (BMLOVItem) PageGetItem(lovPage, 
-					PageGetItemId(lovPage, bmScanPos->bm_lovOffset));
+	vmiPage	= BufferGetPage(bmScanPos->bm_vmiBuffer);
+	vmi = (BMVectorMetaItem)
+		PageGetItem(vmiPage, PageGetItemId(vmiPage, bmScanPos->bm_vmiOffset));
 			
-	bmScanPos->bm_nextBlockNo = lovItem->bm_lov_head;
+	bmScanPos->bm_nextBlockNo = vmi->bm_bitmap_head;
 	bmScanPos->bm_readLastWords = false;
 	bmScanPos->bm_batchWords = (BMBatchWords *) palloc0(sizeof(BMBatchWords));
 	_bitmap_init_batchwords(bmScanPos->bm_batchWords,
 							BM_NUM_OF_HRL_WORDS_PER_PAGE,
 							CurrentMemoryContext);	
 
-	LockBuffer(bmScanPos->bm_lovBuffer, BUFFER_LOCK_UNLOCK);
+	LockBuffer(bmScanPos->bm_vmiBuffer, BUFFER_LOCK_UNLOCK);
+}
+
+/*
+ * _bitmap_get_null_vmiid() -- return the vmiid of the all-nulls entry for the
+ * given relation.
+ */
+void
+_bitmap_get_null_vmiid(Relation index, BMVMIID *vmiid)
+{
+	vmiid->block = BM_VMI_STARTPAGE;
+	vmiid->offset = 1;
 }
