@@ -163,6 +163,11 @@ appendPQExpBuffer(PQExpBuffer str, const char *fmt,...)
 /* This extension allows gcc to check the format string */
 __attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 
+extern void
+appendPQExpBufferVA(PQExpBuffer str, const char *fmt, va_list args)
+/* This extension allows gcc to check the format string */
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 0)));
+
 /*------------------------
  * appendPQExpBufferStr
  * Append the given string to a PQExpBuffer, allocating more space

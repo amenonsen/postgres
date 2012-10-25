@@ -272,6 +272,46 @@ printfPQExpBuffer(PQExpBuffer str, const char *fmt,...)
 	}
 }
 
+void
+appendPQExpBufferVA(PQExpBuffer str, const char *fmt, va_list args)
+{
+	size_t		avail;
+	int			nprinted;
+
+	if (PQExpBufferBroken(str))
+		return;					/* already failed */
+
+	for (;;)
+	{
+		/*
+		 * Try to format the given string into the available space; but if
+		 * there's hardly any space, don't bother trying, just fall through to
+		 * enlarge the buffer first.
+		 */
+		if (str->maxlen > str->len + 16)
+		{
+			avail = str->maxlen - str->len - 1;
+			nprinted = vsnprintf(str->data + str->len, avail,
+								 fmt, args);
+
+			/*
+			 * Note: some versions of vsnprintf return the number of chars
+			 * actually stored, but at least one returns -1 on failure. Be
+			 * conservative about believing whether the print worked.
+			 */
+			if (nprinted >= 0 && nprinted < (int) avail - 1)
+			{
+				/* Success.  Note nprinted does not include trailing null. */
+				str->len += nprinted;
+				break;
+			}
+		}
+		/* Double the buffer size and try again. */
+		if (!enlargePQExpBuffer(str, str->maxlen))
+			return;				/* oops, out of memory */
+	}
+}
+
 /*
  * appendPQExpBuffer
  *
