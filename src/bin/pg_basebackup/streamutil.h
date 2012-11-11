@@ -4,6 +4,7 @@ extern const char *progname;
 extern char *dbhost;
 extern char *dbuser;
 extern char *dbport;
+extern char *dbname;
 extern int	dbgetpassword;
 
 /* Connection kept global so we can disconnect easily */
