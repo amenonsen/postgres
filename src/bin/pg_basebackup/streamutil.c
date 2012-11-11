@@ -27,6 +27,7 @@ const char *progname;
 char	   *dbhost = NULL;
 char	   *dbuser = NULL;
 char	   *dbport = NULL;
+char	   *dbname = NULL;
 int			dbgetpassword = 0;	/* 0=auto, -1=never, 1=always */
 static char *dbpassword = NULL;
 PGconn	   *conn = NULL;
@@ -96,7 +97,7 @@ GetConnection(void)
 	values = pg_malloc0((argcount + 1) * sizeof(*values));
 
 	keywords[0] = "dbname";
-	values[0] = "replication";
+	values[0] = dbname == NULL ? "replication" : dbname;
 	keywords[1] = "replication";
 	values[1] = "true";
 	keywords[2] = "fallback_application_name";
