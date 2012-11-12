@@ -92,8 +92,12 @@ static void buf_make_space(Relation rel,
 static void verify_bitmappages(Relation rel, BMLOVItem lovitem);
 #endif
 static int16 buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf,
-				   BlockNumber lov_block, OffsetNumber off,
-				   uint64 tidnum, bool use_wal);
+								   BlockNumber vmi_block, OffsetNumber off,
+								   uint64 tidnum, bool use_wal);
+static int16 buf_add_tid_with_fill_immediate(Relation rel, BMTIDBuffer *buf,
+											 BlockNumber vmi_block,
+											 OffsetNumber off,
+											 uint64 tidnum, bool use_wal);
 static uint16 buf_extend(BMTIDBuffer *buf);
 static uint16 buf_ensure_head_space(Relation rel, BMTIDBuffer *buf,
 								   BlockNumber lov_block, OffsetNumber off, 
@@ -1807,6 +1811,127 @@ buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf,
 }
 
 /*
+ * buf_add_tid_with_fill_immediate() -- Add a bit to the given TIDBuffer
+ *
+ * This version does not use the HOT buffer and is faster for one shot inserts.
+ *
+ * Return how many bytes are used. Since we move words to disk when
+ * there is no space left for new header words, this returning number
+ * can be negative.
+ */
+static int16
+buf_add_tid_with_fill_immediate(Relation rel, BMTIDBuffer *buf,
+								BlockNumber vmi_block, OffsetNumber off,
+								uint64 tidnum, bool use_wal)
+{
+	uint64 zeros;
+	uint16 inserting_pos;
+	int16 bytes_used = 0;
+
+	/*
+	 * Compute how many zeros between this set bit and the last inserted
+	 * set bit.
+	 *
+	 * If this is the first time to insert a set bit, then
+	 * we assume that the last set bit is
+	 * (tidnum/BM_WORD_SIZE)*BM_WORD_SIZE, because we have
+	 * already inserted the first 'tidnum - tidnum % BM_WORD_SIZE'
+	 * zeros during creating a new lov item.
+	 */
+	if (buf->last_tid == 0)
+		zeros = tidnum % BM_WORD_SIZE;
+	else
+		zeros = tidnum - buf->last_tid - 1;
+
+	if (zeros > 0)
+	{
+		uint64 zerosNeeded;
+		uint64 numOfTotalFillWords;
+
+		/*
+		 * Calculate how many bits are needed to fill up the existing last
+		 * bitmap word.
+		 */
+		if (buf->last_tid == 0)
+		{
+			zerosNeeded = BM_WORD_SIZE;
+			buf->last_tid = tidnum - tidnum % BM_WORD_SIZE;
+
+		} else
+			zerosNeeded =
+				BM_WORD_SIZE - ((buf->last_tid - 1) % BM_WORD_SIZE) - 1;
+
+		if (zerosNeeded > 0 && zeros >= zerosNeeded)
+		{
+			/*
+			 * The last bitmap word is complete now. We merge it with the
+			 * last bitmap complete word.
+			 */
+			bytes_used -=
+				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
+
+			bytes_used += mergewords(buf, false);
+			zeros -= zerosNeeded;
+		}
+
+		/*
+		 * If the remaining zeros are more than BM_WORD_SIZE,
+		 * We construct the last bitmap word to be a fill word, and merge it
+		 * with the last complete bitmap word.
+		 */
+		numOfTotalFillWords = zeros/BM_WORD_SIZE;
+
+		while (numOfTotalFillWords > 0)
+		{
+			BM_WORD 	numOfFillWords;
+
+			if (numOfTotalFillWords >= MAX_FILL_LENGTH)
+				numOfFillWords = MAX_FILL_LENGTH;
+			else
+				numOfFillWords = numOfTotalFillWords;
+
+			buf->last_word = BM_MAKE_FILL_WORD(0, numOfFillWords);
+
+			bytes_used -=
+				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
+			bytes_used += mergewords(buf, true);
+
+			numOfTotalFillWords -= numOfFillWords;
+			zeros -= numOfFillWords * BM_WORD_SIZE;
+		}
+	}
+
+	Assert((zeros >= 0) && (zeros<BM_WORD_SIZE));
+
+	inserting_pos = (tidnum-1)%BM_WORD_SIZE;
+	buf->last_word |= (((BM_WORD)1) << inserting_pos);
+	buf->last_tid = tidnum;
+
+	if (tidnum % BM_WORD_SIZE == 0)
+	{
+		bool lastWordFill = false;
+
+		if (buf->last_word == LITERAL_ALL_ZERO)
+		{
+			buf->last_word = BM_MAKE_FILL_WORD(0, 1);
+			lastWordFill = true;
+		}
+
+		else if (buf->last_word == LITERAL_ALL_ONE)
+		{
+			buf->last_word = BM_MAKE_FILL_WORD(1, 1);
+			lastWordFill = true;
+		}
+
+		bytes_used -=
+			buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
+		bytes_used += mergewords(buf, lastWordFill);
+	}
+
+	return bytes_used;
+}
+
+/*
  * buf_ensure_head_space() -- If there is no space in the header words,
  * move words in the given buffer to disk and free the existing space,
  * and then allocate new space for future new words.
@@ -2040,9 +2165,14 @@ insertsetbit(Relation rel, BlockNumber vmiBlock, OffsetNumber vmiOffset,
 		/*
 		 * To insert this new set bit, we also need to add all zeros between
 		 * this set bit and last set bit. We construct all new words here.
+		 *
+		 * Use the immediate version of the function that does not use the HOT
+		 * buffer because insertsetbit uses the buffer only for one shot.  The
+		 * alternative way would be to call hot_buffer_flush directly after
+		 * buf_add_tid_with_fill, but this would be superflous overhead.
 		 */
-		buf_add_tid_with_fill(rel, &buf, vmiBuffer, vmiOffset, tidnum,
-							  use_wal);
+		buf_add_tid_with_fill_immediate(rel, &buf, vmiBuffer, vmiOffset,
+										tidnum, use_wal);
 
 		/*
 		 * If there are only updates to the last bitmap complete word and last
