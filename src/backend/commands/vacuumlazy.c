@@ -727,12 +727,13 @@ lazy_scan_heap(Relation onerel, LVRelStats *vacrelstats,
 
 			Assert(ItemIdIsNormal(itemid));
 
+			tuple.t_tableOid = RelationGetRelid(onerel);
 			tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
 			tuple.t_len = ItemIdGetLength(itemid);
 
 			tupgone = false;
 
-			switch (HeapTupleSatisfiesVacuum(tuple.t_data, OldestXmin, buf))
+			switch (HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf))
 			{
 				case HEAPTUPLE_DEAD:
 
