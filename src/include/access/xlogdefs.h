@@ -58,6 +58,7 @@ typedef uint64 XLogSegNo;
  */
 typedef uint32 TimeLineID;
 
+#define InvalidTimelineId	0
 /*
  *	Because O_DIRECT bypasses the kernel buffers, and because we never
  *	read those buffers except during crash recovery or if wal_level != minimal,
