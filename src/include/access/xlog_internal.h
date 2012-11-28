@@ -17,7 +17,6 @@
 #define XLOG_INTERNAL_H
 
 #include "access/xlog.h"
-#include "fmgr.h"
 #include "pgtime.h"
 #include "storage/block.h"
 #include "storage/relfilenode.h"
@@ -271,27 +270,5 @@ extern void XLogArchiveNotifySeg(XLogSegNo segno);
 extern bool XLogArchiveCheckDone(const char *xlog);
 extern bool XLogArchiveIsBusy(const char *xlog);
 extern void XLogArchiveCleanup(const char *xlog);
-
-/*
- * These aren't in xlog.h because I'd rather not include fmgr.h there.
- */
-extern Datum pg_start_backup(PG_FUNCTION_ARGS);
-extern Datum pg_stop_backup(PG_FUNCTION_ARGS);
-extern Datum pg_switch_xlog(PG_FUNCTION_ARGS);
-extern Datum pg_create_restore_point(PG_FUNCTION_ARGS);
-extern Datum pg_current_xlog_location(PG_FUNCTION_ARGS);
-extern Datum pg_current_xlog_insert_location(PG_FUNCTION_ARGS);
-extern Datum pg_last_xlog_receive_location(PG_FUNCTION_ARGS);
-extern Datum pg_last_xlog_replay_location(PG_FUNCTION_ARGS);
-extern Datum pg_last_xact_replay_timestamp(PG_FUNCTION_ARGS);
-extern Datum pg_xlogfile_name_offset(PG_FUNCTION_ARGS);
-extern Datum pg_xlogfile_name(PG_FUNCTION_ARGS);
-extern Datum pg_is_in_recovery(PG_FUNCTION_ARGS);
-extern Datum pg_xlog_replay_pause(PG_FUNCTION_ARGS);
-extern Datum pg_xlog_replay_resume(PG_FUNCTION_ARGS);
-extern Datum pg_is_xlog_replay_paused(PG_FUNCTION_ARGS);
-extern Datum pg_xlog_location_diff(PG_FUNCTION_ARGS);
-extern Datum pg_is_in_backup(PG_FUNCTION_ARGS);
-extern Datum pg_backup_start_time(PG_FUNCTION_ARGS);
 
 #endif   /* XLOG_INTERNAL_H */
