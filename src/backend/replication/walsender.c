@@ -899,6 +899,11 @@ WalSndWaitForWal(XLogRecPtr loc)
 						  MyProcPort->sock, sleeptime);
 		ImmediateInterruptOK = false;
 	}
+
+out:
+	/* reactivate latch so WalSndLoop knows to continue */
+	SetLatch(&MyWalSnd->latch);
+	return flushptr;
 }
 
 /*
