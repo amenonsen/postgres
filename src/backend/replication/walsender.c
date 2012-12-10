@@ -563,6 +563,10 @@ recompute_xmin:
 	logical_reader = initial_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint,
 											 walsnd->xmin);
 
+	/* Lets start with enough information if we can */
+	if (!RecoveryInProgress())
+		LogStandbySnapshot();
+
 	for (;;)
 	{
 		XLogRecord *record;
