@@ -187,11 +187,8 @@ static bool LocalHotStandbyActive = false;
  */
 static int	LocalXLogInsertAllowed = -1;
 
-/*
- * Are we recovering using offline XLOG archives? (only valid in the startup
- * process)
- */
-bool		InArchiveRecovery = false;
+/* Are we recovering using offline XLOG archives? (only valid in the startup process) */
+bool InArchiveRecovery = false;
 
 /* Was the last xlog file restored from archive, or local? */
 static bool restoredFromArchive = false;
@@ -1815,7 +1812,7 @@ UpdateMinRecoveryPoint(XLogRecPtr lsn, bool force)
 		if (!force && XLByteLT(newMinRecoveryPoint, lsn))
 			elog(WARNING,
 			   "xlog min recovery request %X/%X is past current point %X/%X",
-				 (uint32) (lsn >> 32), (uint32) lsn,
+				 (uint32) (lsn >> 32) , (uint32) lsn,
 				 (uint32) (newMinRecoveryPoint >> 32),
 				 (uint32) newMinRecoveryPoint);
 
@@ -1952,7 +1949,7 @@ XLogFlush(XLogRecPtr record)
 			XLogCtlInsert *Insert = &XLogCtl->Insert;
 			uint32		freespace = INSERT_FREESPACE(Insert);
 
-			if (freespace == 0) /* buffer is full */
+			if (freespace == 0)		/* buffer is full */
 				WriteRqstPtr = XLogCtl->xlblocks[Insert->curridx];
 			else
 			{
@@ -5526,7 +5523,7 @@ StartupXLOG(void)
 	 */
 	if (InArchiveRecovery)
 	{
-		char		reason[200];
+		char	reason[200];
 
 		ThisTimeLineID = findNewestTimeLine(recoveryTargetTLI) + 1;
 		ereport(LOG,
@@ -6517,7 +6514,7 @@ CreateCheckPoint(int flags)
 		XLogRecPtr	curInsert;
 
 		INSERT_RECPTR(curInsert, Insert, Insert->curridx);
-		if (curInsert == ControlFile->checkPoint +
+		if (curInsert == ControlFile->checkPoint + 
 			MAXALIGN(SizeOfXLogRecord + sizeof(CheckPoint)) &&
 			ControlFile->checkPoint == ControlFile->checkPointCopy.redo)
 		{
@@ -6930,7 +6927,7 @@ CreateRestartPoint(int flags)
 	if (!RecoveryInProgress())
 	{
 		ereport(DEBUG2,
-             (errmsg("skipping restartpoint, recovery has already ended")));
+			  (errmsg("skipping restartpoint, recovery has already ended")));
 		LWLockRelease(CheckpointLock);
 		return false;
 	}
@@ -7815,8 +7812,8 @@ do_pg_start_backup(const char *backupidstr, bool fast, char **labelfile)
 
 	if (!superuser() && !is_authenticated_user_replication_role())
 		ereport(ERROR,
-		  (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser or replication role to run a backup")));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+		   errmsg("must be superuser or replication role to run a backup")));
 
 	/*
 	 * Currently only non-exclusive backup can be taken during recovery.
@@ -7834,7 +7831,7 @@ do_pg_start_backup(const char *backupidstr, bool fast, char **labelfile)
 	if (!backup_started_in_recovery && !XLogIsNeeded())
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("WAL level not sufficient for making an online backup"),
+			  errmsg("WAL level not sufficient for making an online backup"),
 				 errhint("wal_level must be set to \"archive\" or \"hot_standby\" at server start.")));
 
 	if (strlen(backupidstr) > MAXPGPATH)
@@ -9214,7 +9211,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr,
 		HandleStartupProcInterrupts();
 	}
 
-	return false;	/* not reached */
+	return false; 	/* not reached */
 }
 
 /*
