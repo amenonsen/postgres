@@ -937,6 +937,14 @@ LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 			 CurrRunningXacts->oldestRunningXid,
 			 CurrRunningXacts->latestCompletedXid,
 			 CurrRunningXacts->nextXid);
+
+	/*
+	 * Ensure running xact information is synced to disk not too far in the
+	 * future, logical standby's need this soon after initialization. We don't
+	 * want to stall anything though, so we let the wal writer do it during
+	 * normal operation.
+	 */
+	XLogSetAsyncXactLSN(recptr);
 }
 
 /*
