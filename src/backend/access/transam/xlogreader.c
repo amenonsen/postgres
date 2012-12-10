@@ -83,7 +83,7 @@ XLogReaderAllocate(XLogRecPtr startpoint, XLogPageReadCB pagereadfunc,
 	if (!allocate_recordbuf(state, 0))
 	{
 		free(state->readBuf);
-		pfree(state);
+		free(state);
 		return NULL;
 	}
 
@@ -156,7 +156,6 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, int emode)
 	uint32		pageHeaderSize;
 	bool		gotheader;
 	int         readOff;
-
 
 	if (RecPtr == InvalidXLogRecPtr)
 	{
