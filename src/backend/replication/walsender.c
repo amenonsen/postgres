@@ -228,7 +228,8 @@ IncreaseLogicalXminForSlot(XLogRecPtr lsn, TransactionId xmin)
 	{
 		MyLogicalWalSnd->candidate_xmin_after = lsn;
 		MyLogicalWalSnd->candidate_xmin = xmin;
-		elog(LOG, "got new xmin %u at %lu", xmin, lsn); /* FIXME: log level */
+		elog(LOG, "got new xmin %u at %X/%X", xmin,
+			 (uint32)(lsn >> 32), (uint32)lsn); /* FIXME: log level */
 	}
 	SpinLockRelease(&MyLogicalWalSnd->mutex);
 }
@@ -267,7 +268,7 @@ ComputeLogicalXmin(void)
 	WalSndCtl->logical_xmin = xmin;
 	LWLockRelease(ProcArrayLock);
 
-	elog(LOG, "computed new xmin: %u", xmin);
+	elog(LOG, "computed new global xmin for decoding: %u", xmin);
 
 }
 
@@ -559,7 +560,8 @@ recompute_xmin:
 	old_decoding_ctx = MemoryContextSwitchTo(decoding_ctx);
 	TopTransactionContext = decoding_ctx;
 
-	logical_reader = initial_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint);
+	logical_reader = initial_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint,
+											 walsnd->xmin);
 
 	for (;;)
 	{
@@ -754,6 +756,7 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 	SyncRepInitConfig();
 
 	logical_reader = normal_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint,
+											MyLogicalWalSnd->xmin,
 											NameStr(MyLogicalWalSnd->plugin),
 											cmd->startpoint);
 
@@ -880,7 +883,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 		/* check whether we're done */
 		flushptr = GetFlushRecPtr();
 		if (XLByteLE(loc, flushptr))
-			return flushptr;
+			goto out;
 
 		/* FIXME: wal_sender_timeout integration */
 		wakeEvents = WL_LATCH_SET | WL_POSTMASTER_DEATH |

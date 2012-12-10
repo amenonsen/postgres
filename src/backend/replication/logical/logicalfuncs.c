@@ -131,7 +131,7 @@ change_wrapper(ReorderBuffer* cache, ReorderBufferTXN* txn, ReorderBufferChange*
  * state.
  */
 XLogReaderState *
-initial_snapshot_reader(XLogRecPtr startpoint)
+initial_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin)
 {
 	XLogReaderState *xlogreader;
 	ReaderApplyState *apply_state;
@@ -155,7 +155,7 @@ initial_snapshot_reader(XLogRecPtr startpoint)
 	apply_state->reorderbuffer = reorder;
 	apply_state->stop_after_consistent = true;
 	apply_state->snapstate = AllocateSnapshotBuilder(reorder);
-
+	apply_state->snapstate->initial_xmin_horizon = xmin;
 	return xlogreader;
 }
 
@@ -166,10 +166,11 @@ initial_snapshot_reader(XLogRecPtr startpoint)
  * walsender.
  */
 XLogReaderState *
-normal_snapshot_reader(XLogRecPtr startpoint, char *plugin, XLogRecPtr valid_after)
+normal_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin,
+					   char *plugin, XLogRecPtr valid_after)
 {
 	/* to simplify things we reuse initial_snapshot_reader */
-	XLogReaderState *xlogreader = initial_snapshot_reader(startpoint);
+	XLogReaderState *xlogreader = initial_snapshot_reader(startpoint, xmin);
 	ReaderApplyState *apply_state = (ReaderApplyState *)xlogreader->private_data;
 	ReorderBuffer *reorder = apply_state->reorderbuffer;
 

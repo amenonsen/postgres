@@ -87,6 +87,7 @@ typedef struct Snapstate
 	size_t		nrrunning_initial;
 
 	XLogRecPtr transactions_after;
+	TransactionId initial_xmin_horizon;
 
 	/*
 	 * Transactions which could have catalog changes that committed between

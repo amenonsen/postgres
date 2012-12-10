@@ -1495,7 +1495,7 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 			goto invisible;
 	}
 	/* beyond our xmax horizon, i.e. invisible */
-	else if (TransactionIdFollows(xmin, snapshot->xmax))
+	else if (TransactionIdFollowsOrEquals(xmin, snapshot->xmax))
 	{
 		goto invisible;
 	}
@@ -1557,7 +1557,7 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 			goto invisible;	/* deleted before scan started */
 	}
 	/* we cannot possibly see the deleting transaction */
-	else if (TransactionIdFollows(xmax, snapshot->xmax))
+	else if (TransactionIdFollowsOrEquals(xmax, snapshot->xmax))
 	{
 		goto visible;
 	}

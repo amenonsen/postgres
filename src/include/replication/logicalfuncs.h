@@ -33,10 +33,11 @@ typedef struct ReaderApplyState
 } ReaderApplyState;
 
 XLogReaderState *
-initial_snapshot_reader(XLogRecPtr startpoint);
+initial_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin);
 
 XLogReaderState *
-normal_snapshot_reader(XLogRecPtr startpoint, char *plugin, XLogRecPtr valid_after);
+normal_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin,
+					   char *plugin, XLogRecPtr valid_after);
 
 bool
 initial_snapshot_ready(XLogReaderState *);
