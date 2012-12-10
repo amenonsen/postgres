@@ -22,55 +22,14 @@ all: pg_xlogdump
 xlogreader.c: % : $(top_srcdir)/src/backend/access/transam/%
 	rm -f $@ && $(LN_S) $< .
 
-clogdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-dbasedesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-gindesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-gistdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-hashdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-heapdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-mxactdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-nbtdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-relmapdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-seqdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-smgrdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-spgdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-standbydesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-tblspcdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-xactdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
-xlogdesc.c: % : $(top_srcdir)/src/backend/access/rmgrdesc/%
-	rm -f $@ && $(LN_S) $< .
-
 assert.c: % : $(top_srcdir)/src/backend/utils/error/%
+	rm -f $@ && $(LN_S) $< .
+
+rmgrdescfiles = clogdesc.c dbasedesc.c gindesc.c gistdesc.c hashdesc.c \
+	heapdesc.c mxactdesc.c nbtdesc.c relmapdesc.c seqdesc.c smgrdesc.c \
+	spgdesc.c standbydesc.c tblspcdesc.c xactdesc.c xlogdesc.c
+
+$(rmgrdescfiles): % : $(top_srcdir)/src/backend/access/rmgrdesc/%
 	rm -f $@ && $(LN_S) $< .
 
 OBJS = \
@@ -84,4 +43,4 @@ pg_xlogdump: $(OBJS) | submake-libpq submake-libpgport
 	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX)  $(LIBS) $(libpq_pgport) -o $@$(X)
 
 clean distclean maintainer-clean:
-	rm -f $(OBJS) pg_xlogdump
+	rm -f $(OBJS) pg_xlogdump xlogreader.c assert.c $(rmgrdescfiles)
