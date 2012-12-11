@@ -2623,11 +2623,9 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
 		XLogFilePath(xlogfpath, tli, segno);
 		if (stat(xlogfpath, &statbuf) == 0)
 		{
-			char		oldpath[MAXPGPATH];
-
+			char oldpath[MAXPGPATH];
 #ifdef WIN32
 			static unsigned int deletedcounter = 1;
-
 			/*
 			 * On Windows, if another process (e.g a walsender process) holds
 			 * the file open in FILE_SHARE_DELETE mode, unlink will succeed,
