@@ -88,7 +88,7 @@ XLogReaderAllocate(XLogRecPtr startpoint, XLogPageReadCB pagereadfunc,
 	state->read_page = pagereadfunc;
 	state->private_data = private_data;
 	state->EndRecPtr = startpoint;
-	state->readPageTLI = InvalidTimelineId;
+	state->readPageTLI = 0;
 	state->expectedTLEs = NIL;
 	state->system_identifier = 0;
 	state->errormsg_buf = malloc(MAX_ERRORMSG_LEN + 1);
