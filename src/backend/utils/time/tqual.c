@@ -77,6 +77,10 @@ SnapshotData SnapshotToastData = {HeapTupleSatisfiesToast};
 
 static Snapshot SnapshotNowDecoding;
 
+/* (table, ctid) => (cmin, cmax) mapping during timetravel */
+static HTAB *tuplecid_data = NULL;
+
+
 /* local functions */
 static bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot);
 
@@ -1412,14 +1416,15 @@ XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot)
 	return false;
 }
 
+/*
+ * check whether the transaciont id 'xid' in in the pre-sorted array 'xip'.
+ */
 static bool
 TransactionIdInArray(TransactionId xid, TransactionId *xip, Size num)
 {
 	return bsearch(&xid, xip, num,
 	               sizeof(TransactionId), xidComparator) != NULL;
 }
-
-static HTAB *tuplecid_data = NULL;
 
 /*
  * See the comments for HeapTupleSatisfiesMVCC for the semantics this function
@@ -1440,7 +1445,6 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
                                      Buffer buffer)
 {
 	HeapTupleHeader tuple = htup->t_data;
-/*#define DEBUG_ME*/
 	TransactionId xmin = HeapTupleHeaderGetXmin(tuple);
 	TransactionId xmax = HeapTupleHeaderGetXmax(tuple);
 
@@ -1451,7 +1455,7 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 	if (tuple->t_infomask & HEAP_XMIN_INVALID)
 	{
 		Assert(!TransactionIdDidCommit(xmin));
-		goto invisible;
+		return false;
 	}
     /* check if its one of our txids, toplevel is also in there */
 	else if (TransactionIdInArray(xmin, snapshot->subxip, snapshot->subxcnt))
@@ -1477,12 +1481,8 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 				elog(ERROR, "could not resolve cmin/cmax of catalog tuple");
 		}
 
-#ifdef DEBUG_ME
-		elog(LOG, "curcid: %u cmin: %u; invisible: %u", snapshot->curcid, cmin,
-			 cmin >= snapshot->curcid);
-#endif
 		if (cmin >= snapshot->curcid)
-			goto invisible;	/* inserted after scan started */
+			return false;	/* inserted after scan started */
 	}
 	/* normal transaction state counts */
 	else if (TransactionIdPrecedes(xmin, snapshot->xmin))
@@ -1492,12 +1492,12 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 
 		if (!(tuple->t_infomask & HEAP_XMIN_COMMITTED) &&
 			!TransactionIdDidCommit(xmin))
-			goto invisible;
+			return false;
 	}
 	/* beyond our xmax horizon, i.e. invisible */
 	else if (TransactionIdFollowsOrEquals(xmin, snapshot->xmax))
 	{
-		goto invisible;
+		return false;
 	}
 	/* check if we know the transaction has committed */
 	else if(TransactionIdInArray(xmin, snapshot->xip, snapshot->xcnt))
@@ -1505,20 +1505,20 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 	}
 	else
 	{
-		goto invisible;
+		return false;
 	}
 
-	/* at this point we know xmin is visible */
+	/* at this point we know xmin is visible, check xmax */
 
 	/* why should those be in catalog tables? */
 	Assert(!(tuple->t_infomask & HEAP_XMAX_IS_MULTI));
 
 	/* xid invalid or aborted */
 	if (tuple->t_infomask & HEAP_XMAX_INVALID)
-		goto visible;
+		return true;
 	/* locked tuples are always visible */
 	else if (tuple->t_infomask & HEAP_IS_LOCKED)
-		goto visible;
+		return true;
     /* check if its one of our txids, toplevel is also in there */
 	else if (TransactionIdInArray(xmax, snapshot->subxip, snapshot->subxcnt))
 	{
@@ -1527,40 +1527,23 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 
 		/* Lookup actual cmin/cmax values */
 		if (tuple->t_infomask & HEAP_COMBOCID){
-#ifdef DEBUG_ME
-			CommandId combocid = cmax;
-#endif
 			bool resolved;
 
 			resolved = ResolveCminCmaxDuringDecoding(tuplecid_data, htup,
 													 buffer, &cmin, &cmax);
 
 			if (!resolved)
-			{
-				elog(FATAL, "could not resolve combocid to cmax");
-				goto invisible;
-			}
-
-
-#ifdef DEBUG_ME
-			elog(LOG, "converting combocid %u to cmax %u (cmin %u)",
-				 combocid, cmax, cmin);
-#endif
+				elog(ERROR, "could not resolve combocid to cmax");
 		}
-#ifdef DEBUG_ME
-		elog(LOG, "curcid: %u, cmax %u, visible: %u", snapshot->curcid, cmax,
-			 cmax >= snapshot->curcid);
-#endif
+
 		if (cmax >= snapshot->curcid)
-			goto visible;	/* deleted after scan started */
+			return true;	/* deleted after scan started */
 		else
-			goto invisible;	/* deleted before scan started */
+			return false;	/* deleted before scan started */
 	}
 	/* we cannot possibly see the deleting transaction */
 	else if (TransactionIdFollowsOrEquals(xmax, snapshot->xmax))
-	{
-		goto visible;
-	}
+		return true;
 	/* normal transaction state is valid */
 	else if (TransactionIdPrecedes(xmax, snapshot->xmin))
 	{
@@ -1568,45 +1551,15 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 				 !TransactionIdDidCommit(xmax)));
 
 		if (tuple->t_infomask & HEAP_XMAX_COMMITTED)
-			goto invisible;
+			return false;
 
-		if (TransactionIdDidCommit(xmax))
-			goto invisible;
-		else
-			goto visible;
+		return TransactionIdDidCommit(xmax);
 	}
 	/* do we know that the deleting txn is valid? */
 	else if (TransactionIdInArray(xmax, snapshot->xip, snapshot->xcnt))
-	{
-		goto invisible;
-	}
+		return false;
 	else
-	{
-		goto visible;
-	}
-visible:
-#ifdef DEBUG_ME
-	if (xmin > FirstNormalTransactionId)
-		elog(DEBUG1, "visible tuple with xmin: %u, xmax: %u, cmin %u, snapmin: %u, snapmax: %u, snapcid: %u, owncnt: %u top: %u, combo: %u, (%u, %u)",
-			 xmin, xmax, HeapTupleHeaderGetRawCommandId(tuple),
-			 snapshot->xmin, snapshot->xmax, snapshot->curcid,
-			 snapshot->subxcnt, snapshot->subxcnt ? snapshot->subxip[0] : 0,
-			 !!(tuple->t_infomask & HEAP_COMBOCID),
-			 BlockIdGetBlockNumber(&htup->t_self.ip_blkid), htup->t_self.ip_posid);
-#endif
-	return true;
-
-invisible:
-#ifdef DEBUG_ME
-	if (xmin > FirstNormalTransactionId)
-		elog(DEBUG1, "invisible tuple with xmin: %u, xmax: %u, cmin %u, snapmin: %u, snapmax: %u, snapcid: %u, owncnt: %u top: %u, combo: %u, (%u, %u)",
-			 xmin, xmax, HeapTupleHeaderGetRawCommandId(tuple),
-			 snapshot->xmin, snapshot->xmax, snapshot->curcid,
-			 snapshot->subxcnt, snapshot->subxcnt ? snapshot->subxip[0] : 0,
-			 !!(tuple->t_infomask & HEAP_COMBOCID),
-			 BlockIdGetBlockNumber(&htup->t_self.ip_blkid), htup->t_self.ip_posid);
-#endif
-	return false;
+		return true;
 }
 
 static bool
