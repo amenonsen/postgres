@@ -41,8 +41,7 @@ typedef struct XLogDumpPrivateData {
 } XLogDumpPrivateData;
 
 static void fatal_error(const char *fmt, ...)
-__attribute__((format(printf, 1, 2)))
-	;
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 1, 2)));
 
 static void fatal_error(const char *fmt, ...)
 {
