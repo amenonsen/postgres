@@ -13,8 +13,6 @@
  *		xlogreader.h, more specifically in the definition of the
  *		XLogReaderState struct where all parameters are documented.
  *
- * TODO:
- * * usable without backend code around
  *-------------------------------------------------------------------------
  */
 
@@ -35,12 +33,13 @@ static bool ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 static bool ValidXLogRecord(XLogReaderState *state, XLogRecord *record,
 						    XLogRecPtr recptr);
 static int ReadPageInternal(struct XLogReaderState *state, XLogRecPtr pageptr,
-					int reqLen, char *readBuf, TimeLineID *pageTLI);
+				 int reqLen);
 static void report_invalid_record(XLogReaderState *state, const char *fmt, ...)
 /* This extension allows gcc to check the format string for consistency with
    the supplied arguments. */
 __attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 
+/* size of the buffer allocated for error message. */
 #define MAX_ERRORMSG_LEN 1000
 
 /*
@@ -214,9 +213,8 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 
 	targetPagePtr = RecPtr - (RecPtr % XLOG_BLCKSZ);
 
-	/* Read the page containing the record */
-	readOff = ReadPageInternal(state, targetPagePtr, SizeOfXLogRecord,
-							   state->readBuf, &state->readPageTLI);
+	/* Read the page containing the record into state->readBuf */
+	readOff = ReadPageInternal(state, targetPagePtr, SizeOfXLogRecord);
 
 	if (readOff < 0)
 	{
@@ -253,7 +251,7 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 		return NULL;
 	}
 
-	/* ReadPageInternal has verfied the page header */
+	/* ReadPageInternal has verified the page header */
 	Assert(pageHeaderSize <= readOff);
 
 	/*
@@ -262,8 +260,7 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 	 */
 	readOff = ReadPageInternal(state,
 							   targetPagePtr,
-							   Min(targetRecOff + SizeOfXLogRecord, XLOG_BLCKSZ),
-	                           state->readBuf, &state->readPageTLI);
+							   Min(targetRecOff + SizeOfXLogRecord, XLOG_BLCKSZ));
 	if (readOff < 0)
 	{
 		if (state->errormsg_buf[0] != '\0')
@@ -350,9 +347,8 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 			XLByteAdvance(targetPagePtr, XLOG_BLCKSZ);
 
 			/* Wait for the next page to become available */
-			readOff = ReadPageInternal(state, targetPagePtr, Min(len, XLOG_BLCKSZ),
-									   state->readBuf,
-									   &state->readPageTLI);
+			readOff = ReadPageInternal(state, targetPagePtr,
+									   Min(len, XLOG_BLCKSZ));
 
 			if (readOff < 0)
 				goto err;
@@ -421,10 +417,8 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 	else
 	{
 		/* Wait for the record data to become available */
-		readOff =
-			ReadPageInternal(state, targetPagePtr,
-							 Min(targetRecOff + total_len, XLOG_BLCKSZ),
-			                 state->readBuf, &state->readPageTLI);
+		readOff = ReadPageInternal(state, targetPagePtr,
+								   Min(targetRecOff + total_len, XLOG_BLCKSZ));
 		if (readOff < 0)
 			goto err;
 
@@ -495,8 +489,7 @@ XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr)
 	targetPagePtr = RecPtr - targetRecOff;
 
 	/* Read the page containing the record */
-	readLen = ReadPageInternal(state, targetPagePtr, targetRecOff,
-							   state->readBuf, &state->readPageTLI);
+	readLen = ReadPageInternal(state, targetPagePtr, targetRecOff);
 	if (readLen < 0)
 		goto err;
 
@@ -505,8 +498,7 @@ XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr)
 	pageHeaderSize = XLogPageHeaderSize(header);
 
 	/* make sure we have enough data for the page header */
-	readLen = ReadPageInternal(state, targetPagePtr, pageHeaderSize,
-							   state->readBuf, &state->readPageTLI);
+	readLen = ReadPageInternal(state, targetPagePtr, pageHeaderSize);
 	if (readLen < 0)
 		goto err;
 
@@ -560,7 +552,7 @@ out:
  */
 static int
 ReadPageInternal(struct XLogReaderState *state, XLogRecPtr pageptr,
-				 int reqLen, char *readBuf, TimeLineID *pageTLI)
+				 int reqLen)
 {
 	int			readLen;
 	uint32		targetPageOff;
@@ -596,7 +588,7 @@ ReadPageInternal(struct XLogReaderState *state, XLogRecPtr pageptr,
 		XLogRecPtr targetSegmentPtr = pageptr - targetPageOff;
 
 		readLen = state->read_page(state, targetSegmentPtr, XLOG_BLCKSZ,
-								   readBuf, pageTLI);
+								   state->readBuf, &state->readPageTLI);
 
 		if (readLen < 0)
 			goto err;
@@ -606,7 +598,7 @@ ReadPageInternal(struct XLogReaderState *state, XLogRecPtr pageptr,
 		/* we can be sure to have enough WAL available, we scrolled back */
 		Assert(readLen == XLOG_BLCKSZ);
 
-		hdr = (XLogPageHeader) readBuf;
+		hdr = (XLogPageHeader) state->readBuf;
 
 		if (!ValidXLogPageHeader(state, targetSegmentPtr, hdr))
 			goto err;
@@ -614,7 +606,7 @@ ReadPageInternal(struct XLogReaderState *state, XLogRecPtr pageptr,
 
 	/* now read the target data */
 	readLen = state->read_page(state, pageptr, Max(reqLen, SizeOfXLogShortPHD),
-							   readBuf, pageTLI);
+							   state->readBuf, &state->readPageTLI);
 	if (readLen < 0)
 		goto err;
 
@@ -626,13 +618,13 @@ ReadPageInternal(struct XLogReaderState *state, XLogRecPtr pageptr,
 
 	Assert(readLen >= reqLen);
 
-	hdr = (XLogPageHeader) readBuf;
+	hdr = (XLogPageHeader) state->readBuf;
 
 	/* still not enough */
 	if (readLen < XLogPageHeaderSize(hdr))
 	{
 		readLen = state->read_page(state, pageptr, XLogPageHeaderSize(hdr),
-								   readBuf, pageTLI);
+								   state->readBuf, &state->readPageTLI);
 		if (readLen < 0)
 			goto err;
 	}

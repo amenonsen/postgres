@@ -94,8 +94,8 @@ typedef struct XLogReaderState
 	TimeLineID  readPageTLI;
 
 	/* Highest TLI we have read so far  */
-	TimeLineID latestReadTLI;
-	XLogRecPtr latestReadPtr;
+	TimeLineID	latestReadTLI;
+	XLogRecPtr	latestReadPtr;
 
 	/* Buffer for current ReadRecord result (expandable) */
 	char	   *readRecordBuf;
