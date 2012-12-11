@@ -43,22 +43,16 @@ tliInHistory(TimeLineID tli, List *expectedTLEs)
 	return false;
 }
 
-void
-pfree(void *a)
-{
-}
-
-
 const char *
 timestamptz_to_str(TimestampTz t)
 {
 	return "";
 }
 
-char *
+const char *
 relpathbackend(RelFileNode rnode, BackendId backend, ForkNumber forknum)
 {
-	return NULL;
+	return "";
 }
 
 /*
