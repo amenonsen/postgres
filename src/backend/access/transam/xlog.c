@@ -9235,11 +9235,11 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 static int
 emode_for_corrupt_record(XLogReaderState *state, XLogRecPtr RecPtr)
 {
-	XLogPageReadPrivate *private = (XLogPageReadPrivate *)state->private_data;
+	XLogPageReadPrivate *private = (XLogPageReadPrivate *) state->private_data;
 	int			emode = private->emode;
 	static XLogRecPtr lastComplaint = 0;
 
-	if (private->currentSource == XLOG_FROM_PG_XLOG && emode == LOG)
+	if (private->readSource == XLOG_FROM_PG_XLOG && emode == LOG)
 	{
 		if (XLByteEQ(RecPtr, lastComplaint))
 			emode = DEBUG1;
