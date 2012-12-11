@@ -632,7 +632,7 @@ static void CleanupBackupHistory(void);
 static void UpdateMinRecoveryPoint(XLogRecPtr lsn, bool force);
 static XLogRecord *ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr,
 		   int emode, bool fetching_ckpt);
-static void CheckRecoveryConsistency(XLogRecPtr EndRecPtr);
+static void CheckRecoveryConsistency(void);
 static XLogRecord *ReadCheckpointRecord(XLogReaderState *xlogreader,
 					 XLogRecPtr RecPtr, int whichChkpt);
 static bool rescanLatestTimeLine(void);
@@ -5237,7 +5237,7 @@ StartupXLOG(void)
 		 * Allow read-only connections immediately if we're consistent
 		 * already.
 		 */
-		CheckRecoveryConsistency(EndRecPtr);
+		CheckRecoveryConsistency();
 
 		/*
 		 * Find the first record that logically follows the checkpoint --- it
@@ -5297,7 +5297,7 @@ StartupXLOG(void)
 				HandleStartupProcInterrupts();
 
 				/* Allow read-only connections if we're consistent now */
-				CheckRecoveryConsistency(EndRecPtr);
+				CheckRecoveryConsistency();
 
 				/*
 				 * Pause WAL replay, if requested by a hot-standby session via
@@ -5783,7 +5783,7 @@ StartupXLOG(void)
  * that it can start accepting read-only connections.
  */
 static void
-CheckRecoveryConsistency(XLogRecPtr EndRecPtr)
+CheckRecoveryConsistency(void)
 {
 	/*
 	 * During crash recovery, we don't reach a consistent state until we've
