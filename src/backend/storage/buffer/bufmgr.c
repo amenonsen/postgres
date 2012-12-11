@@ -1757,7 +1757,7 @@ PrintBufferLeakWarning(Buffer buffer)
 {
 	volatile BufferDesc *buf;
 	int32		loccount;
-	char	   *path;
+	const char *path;
 	BackendId	backend;
 
 	Assert(BufferIsValid(buffer));
@@ -1782,7 +1782,6 @@ PrintBufferLeakWarning(Buffer buffer)
 		 buffer, path,
 		 buf->tag.blockNum, buf->flags,
 		 buf->refcount, loccount);
-	pfree(path);
 }
 
 /*
@@ -2901,7 +2900,7 @@ AbortBufferIO(void)
 			if (sv_flags & BM_IO_ERROR)
 			{
 				/* Buffer is pinned, so we can read tag without spinlock */
-				char	   *path;
+				const char *path;
 
 				path = relpathperm(buf->tag.rnode, buf->tag.forkNum);
 				ereport(WARNING,
@@ -2909,7 +2908,6 @@ AbortBufferIO(void)
 						 errmsg("could not write block %u of %s",
 								buf->tag.blockNum, path),
 						 errdetail("Multiple failures --- write error might be permanent.")));
-				pfree(path);
 			}
 		}
 		TerminateBufferIO(buf, false, BM_IO_ERROR);
@@ -2927,11 +2925,10 @@ shared_buffer_write_error_callback(void *arg)
 	/* Buffer is pinned, so we can read the tag without locking the spinlock */
 	if (bufHdr != NULL)
 	{
-		char	   *path = relpathperm(bufHdr->tag.rnode, bufHdr->tag.forkNum);
+		const char *path = relpathperm(bufHdr->tag.rnode, bufHdr->tag.forkNum);
 
 		errcontext("writing block %u of relation %s",
 				   bufHdr->tag.blockNum, path);
-		pfree(path);
 	}
 }
 
@@ -2945,11 +2942,10 @@ local_buffer_write_error_callback(void *arg)
 
 	if (bufHdr != NULL)
 	{
-		char	   *path = relpathbackend(bufHdr->tag.rnode, MyBackendId,
+		const char *path = relpathbackend(bufHdr->tag.rnode, MyBackendId,
 										  bufHdr->tag.forkNum);
 
 		errcontext("writing block %u of relation %s",
 				   bufHdr->tag.blockNum, path);
-		pfree(path);
 	}
 }

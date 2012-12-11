@@ -31,7 +31,7 @@ extern const char *forkNames[];
 extern ForkNumber forkname_to_number(char *forkName);
 extern int	forkname_chars(const char *str, ForkNumber *);
 
-extern char *relpathbackend(RelFileNode rnode, BackendId backend,
+extern const char *relpathbackend(RelFileNode rnode, BackendId backend,
 			   ForkNumber forknum);
 extern char *GetDatabasePath(Oid dbNode, Oid spcNode);
 

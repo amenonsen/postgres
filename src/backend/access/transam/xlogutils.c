@@ -57,7 +57,7 @@ static void
 report_invalid_page(int elevel, RelFileNode node, ForkNumber forkno,
 					BlockNumber blkno, bool present)
 {
-	char	   *path = relpathperm(node, forkno);
+	const char *path = relpathperm(node, forkno);
 
 	if (present)
 		elog(elevel, "page %u of relation %s is uninitialized",
@@ -65,7 +65,6 @@ report_invalid_page(int elevel, RelFileNode node, ForkNumber forkno,
 	else
 		elog(elevel, "page %u of relation %s does not exist",
 			 blkno, path);
-	pfree(path);
 }
 
 /* Log a reference to an invalid page */
@@ -153,11 +152,10 @@ forget_invalid_pages(RelFileNode node, ForkNumber forkno, BlockNumber minblkno)
 		{
 			if (log_min_messages <= DEBUG2 || client_min_messages <= DEBUG2)
 			{
-				char	   *path = relpathperm(hentry->key.node, forkno);
+				const char *path = relpathperm(hentry->key.node, forkno);
 
 				elog(DEBUG2, "page %u of relation %s has been dropped",
 					 hentry->key.blkno, path);
-				pfree(path);
 			}
 
 			if (hash_search(invalid_page_tab,
@@ -186,11 +184,10 @@ forget_invalid_pages_db(Oid dbid)
 		{
 			if (log_min_messages <= DEBUG2 || client_min_messages <= DEBUG2)
 			{
-				char	   *path = relpathperm(hentry->key.node, hentry->key.forkno);
+				const char *path = relpathperm(hentry->key.node, hentry->key.forkno);
 
 				elog(DEBUG2, "page %u of relation %s has been dropped",
 					 hentry->key.blkno, path);
-				pfree(path);
 			}
 
 			if (hash_search(invalid_page_tab,
