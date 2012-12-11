@@ -13,17 +13,15 @@
  *-------------------------------------------------------------------------
  */
 
+/* ugly hack, same as in e.g pg_controldata */
+#define FRONTEND 1
 #include "postgres.h"
 
 #include "access/timeline.h"
-#include "access/xlogdefs.h"
-#include "access/xlog_internal.h"
 #include "catalog/catalog.h"
 #include "datatype/timestamp.h"
 #include "storage/relfilenode.h"
 #include "utils/timestamp.h"
-
-#include "pqexpbuffer.h"
 
 bool assert_enabled = false;
 
