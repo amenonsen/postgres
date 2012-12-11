@@ -34,7 +34,7 @@
 
 static int
 replay_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
-				 int emode, char* cur_page, TimeLineID *pageTLI)
+				 char* cur_page, TimeLineID *pageTLI)
 {
 	XLogRecPtr flushptr;
 	int count;
@@ -56,13 +56,6 @@ replay_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
 
 	return count;
 }
-
-static int
-replay_error(XLogReaderState* state, int emode, XLogRecPtr recptr)
-{
-	return emode;
-}
-
 
 /*
  * Callbacks for ReorderBuffer which add in some more information and then call
@@ -143,7 +136,7 @@ initial_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin)
 		elog(ERROR, "Could not allocate the ReaderApplyState struct");
 
 	xlogreader = XLogReaderAllocate(startpoint, replay_read_page,
-									replay_error, apply_state);
+									apply_state);
 
 	reorder = ReorderBufferAllocate();
 	/* don't decode yet, we're just searching for a consistent point */

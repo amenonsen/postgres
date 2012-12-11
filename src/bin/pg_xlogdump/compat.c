@@ -8,100 +8,23 @@
  * IDENTIFICATION
  *		src/bin/pg_xlogdump/compat.c
  *
- * NOTES
+ * This file contains client-side implementations for various backend
+ * functions that the rm_desc functions in *desc.c files rely on.
  *
  *-------------------------------------------------------------------------
  */
 
+/* ugly hack, same as in e.g pg_controldata */
+#define FRONTEND 1
 #include "postgres.h"
 
 #include "access/timeline.h"
-#include "access/xlogdefs.h"
-#include "access/xlog_internal.h"
 #include "catalog/catalog.h"
 #include "datatype/timestamp.h"
 #include "storage/relfilenode.h"
 #include "utils/timestamp.h"
 
-#include "pqexpbuffer.h"
-
 bool assert_enabled = false;
-
-typedef struct MyErrorData
-{
-	int elevel;
-	char *filename;
-	int lineno;
-	char *funcname;
-	char *domain;
-	char *message;
-	char *detail;
-} MyErrorData;
-
-static struct MyErrorData errdata;
-
-bool
-errstart(int elevel, const char *filename, int lineno,
-		 const char *funcname, const char *domain)
-{
-	errdata.elevel = elevel;
-	errdata.filename = strdup(filename);
-	errdata.lineno = lineno;
-	errdata.funcname = strdup(funcname);
-	errdata.domain = domain ? strdup(domain) : NULL;
-	errdata.message = NULL;
-	errdata.detail = NULL;
-	return true;
-}
-
-int
-errmsg(const char *fmt,...)
-{
-	StringInfo s = makeStringInfo();
-	va_list args;
-
-	va_start(args, fmt);
-	/* PQExpBuffer always succeeds or dies */
-	appendStringInfoVA(s, fmt, args);
-	va_end(args);
-
-	/* FIXME, deallocate */
-	errdata.message = ((PQExpBuffer)s)->data;
-	return 0;
-}
-
-void
-errfinish(int dummy,...)
-{
-	fprintf(stderr, "level: %d: MESSAGE: %s\n",
-	        errdata.elevel, errdata.message);
-
-	if (errdata.detail != NULL)
-		fprintf(stderr, "DETAIL: %s\n",
-		        errdata.detail);
-
-	fprintf(stderr, "POS: file:%s func:%s() line:%d\n",
-	        errdata.filename, errdata.funcname, errdata.lineno);
-
-	if (errdata.elevel >= ERROR)
-		abort();
-}
-
-int
-errdetail(const char *fmt,...)
-{
-	StringInfo s = makeStringInfo();
-	va_list args;
-
-	va_start(args, fmt);
-	/* PQExpBuffer always succeeds or dies */
-	appendStringInfoVA(s, fmt, args);
-	va_end(args);
-
-	/* FIXME, deallocate */
-	errdata.detail = ((PQExpBuffer)s)->data;
-	return 0;
-}
 
 /*
  * Returns true if 'expectedTLEs' contains a timeline with id 'tli'

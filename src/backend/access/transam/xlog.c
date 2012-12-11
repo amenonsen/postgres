@@ -187,11 +187,8 @@ static bool LocalHotStandbyActive = false;
  */
 static int	LocalXLogInsertAllowed = -1;
 
-/*
- * Are we recovering using offline XLOG archives? (only valid in the startup
- * process)
- */
-bool		InArchiveRecovery = false;
+/* Are we recovering using offline XLOG archives? (only valid in the startup process) */
+bool InArchiveRecovery = false;
 
 /* Was the last xlog file restored from archive, or local? */
 static bool restoredFromArchive = false;
@@ -236,7 +233,6 @@ static bool recoveryStopAfter;
  * segments we read, and indeed only these TLIs will be considered as
  * candidate WAL files to open at all.
  *
- * FIXME:
  * curFileTLI: the TLI appearing in the name of the current input WAL file.
  * (This is not necessarily the same as ThisTimeLineID, because we could
  * be scanning data that was copied from an ancestor timeline when the current
@@ -246,6 +242,7 @@ static bool recoveryStopAfter;
 static TimeLineID recoveryTargetTLI;
 static bool recoveryTargetIsLatest = false;
 static List *expectedTLEs;
+static TimeLineID curFileTLI;
 
 /*
  * ProcLastRecPtr points to the start of the last XLOG record inserted by the
@@ -551,6 +548,8 @@ static uint32 openLogOff = 0;
  */
 typedef struct XLogPageReadPrivate
 {
+	int			emode;
+
 	int			readFile;
 	XLogSegNo	readSegNo;
 	uint32		readOff;
@@ -618,12 +617,12 @@ static bool InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 static int XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno,
 			 int emode, TimeLineID tli, int source, bool notexistOk);
 static int XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
-							  int emode, int source, TimeLineID *curFileTLI);
+							  int emode, int source);
 static int XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
-				 int reqLen, int emode, char *readBuf, TimeLineID *curFileTLI);
+				 int reqLen, char *readBuf, TimeLineID *readTLI);
 static bool WaitForWALToBecomeAvailable(XLogPageReadPrivate *private,
-										XLogRecPtr RecPtr, TimeLineID *curFileTLI);
-static int emode_for_corrupt_record(XLogReaderState *state, int emode, XLogRecPtr RecPtr);
+										XLogRecPtr RecPtr);
+static int emode_for_corrupt_record(XLogReaderState *state, XLogRecPtr RecPtr);
 static void XLogFileClose(void);
 static void PreallocXlogFiles(XLogRecPtr endptr);
 static void RemoveOldXlogFiles(XLogSegNo segno, XLogRecPtr endptr);
@@ -633,7 +632,7 @@ static void CleanupBackupHistory(void);
 static void UpdateMinRecoveryPoint(XLogRecPtr lsn, bool force);
 static XLogRecord *ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr,
 		   int emode, bool fetching_ckpt);
-static void CheckRecoveryConsistency(XLogRecPtr EndRecPtr);
+static void CheckRecoveryConsistency(void);
 static XLogRecord *ReadCheckpointRecord(XLogReaderState *xlogreader,
 					 XLogRecPtr RecPtr, int whichChkpt);
 static bool rescanLatestTimeLine(void);
@@ -1815,7 +1814,7 @@ UpdateMinRecoveryPoint(XLogRecPtr lsn, bool force)
 		if (!force && XLByteLT(newMinRecoveryPoint, lsn))
 			elog(WARNING,
 			   "xlog min recovery request %X/%X is past current point %X/%X",
-				 (uint32) (lsn >> 32), (uint32) lsn,
+				 (uint32) (lsn >> 32) , (uint32) lsn,
 				 (uint32) (newMinRecoveryPoint >> 32),
 				 (uint32) newMinRecoveryPoint);
 
@@ -1952,7 +1951,7 @@ XLogFlush(XLogRecPtr record)
 			XLogCtlInsert *Insert = &XLogCtl->Insert;
 			uint32		freespace = INSERT_FREESPACE(Insert);
 
-			if (freespace == 0) /* buffer is full */
+			if (freespace == 0)		/* buffer is full */
 				WriteRqstPtr = XLogCtl->xlblocks[Insert->curridx];
 			else
 			{
@@ -2624,11 +2623,9 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
 		XLogFilePath(xlogfpath, tli, segno);
 		if (stat(xlogfpath, &statbuf) == 0)
 		{
-			char		oldpath[MAXPGPATH];
-
+			char oldpath[MAXPGPATH];
 #ifdef WIN32
 			static unsigned int deletedcounter = 1;
-
 			/*
 			 * On Windows, if another process (e.g a walsender process) holds
 			 * the file open in FILE_SHARE_DELETE mode, unlink will succeed,
@@ -2686,6 +2683,9 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
 	fd = BasicOpenFile(path, O_RDONLY | PG_BINARY, 0);
 	if (fd >= 0)
 	{
+		/* Success! */
+		curFileTLI = tli;
+
 		/* Report recovery progress in PS display */
 		snprintf(activitymsg, sizeof(activitymsg), "recovering %s",
 				 xlogfname);
@@ -2714,7 +2714,7 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
  */
 static int
 XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
-				   int emode, int source, TimeLineID *curFileTLI)
+				   int emode, int source)
 {
 	char		path[MAXPGPATH];
 	ListCell   *cell;
@@ -2734,7 +2734,7 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 	{
 		TimeLineID	tli = ((TimeLineHistoryEntry *) lfirst(cell))->tli;
 
-		if (tli < *curFileTLI)
+		if (tli < curFileTLI)
 			break;				/* don't bother looking at too-old TLIs */
 
 		if (source == XLOG_FROM_ANY || source == XLOG_FROM_ARCHIVE)
@@ -2743,7 +2743,6 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 							  XLOG_FROM_ARCHIVE, true);
 			if (fd != -1)
 			{
-				*curFileTLI = tli;
 				elog(DEBUG1, "got WAL segment from archive");
 				return fd;
 			}
@@ -2754,10 +2753,7 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 			fd = XLogFileRead(private, segno, emode, tli,
 							  XLOG_FROM_PG_XLOG, true);
 			if (fd != -1)
-			{
-				*curFileTLI = tli;
 				return fd;
-			}
 		}
 	}
 
@@ -3206,18 +3202,24 @@ ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr, int emode,
 	XLogRecord *record;
 	XLogPageReadPrivate *private = (XLogPageReadPrivate *) xlogreader->private_data;
 
-	/* Set flag for XLogPageRead */
+	/* Pass parameters to XLogPageRead */
 	private->fetching_ckpt = fetching_ckpt;
+	private->emode = emode;
 
 	/* This is the first try to read this page. */
 	private->lastSourceFailed = false;
+
 	do
 	{
-		record = XLogReadRecord(xlogreader, RecPtr, emode);
+		char *errormsg;
+		record = XLogReadRecord(xlogreader, RecPtr, &errormsg);
 		ReadRecPtr = xlogreader->ReadRecPtr;
 		EndRecPtr = xlogreader->EndRecPtr;
 		if (record == NULL)
 		{
+			ereport(emode_for_corrupt_record(xlogreader, RecPtr),
+					(errmsg_internal("%s", errormsg) /* already translated */));
+
 			private->lastSourceFailed = true;
 
 			if (private->readFile >= 0)
@@ -4686,7 +4688,7 @@ StartupXLOG(void)
 	bool		backupFromStandby = false;
 	DBState		dbstate_at_startup;
 	XLogReaderState *xlogreader;
-	XLogPageReadPrivate *private;
+	XLogPageReadPrivate private;
 
 	/*
 	 * Read control file and check XLOG status looks valid.
@@ -4848,16 +4850,15 @@ StartupXLOG(void)
 	if (StandbyMode)
 		OwnLatch(&XLogCtl->recoveryWakeupLatch);
 
-	private = palloc0(sizeof(XLogPageReadPrivate));
-	private->readFile = -1;
-	xlogreader = XLogReaderAllocate(InvalidXLogRecPtr, &XLogPageRead,
-									emode_for_corrupt_record, private);
+	/* Set up XLOG reader facility */
+	MemSet(&private, 0, sizeof(XLogPageReadPrivate));
+	private.readFile = -1;
+	xlogreader = XLogReaderAllocate(InvalidXLogRecPtr, &XLogPageRead, &private);
 	if (!xlogreader)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of memory"),
 				 errdetail("Failed while allocating an XLog reading processor")));
-
 	xlogreader->system_identifier = ControlFile->system_identifier;
 	xlogreader->expectedTLEs = expectedTLEs;
 
@@ -5236,7 +5237,7 @@ StartupXLOG(void)
 		 * Allow read-only connections immediately if we're consistent
 		 * already.
 		 */
-		CheckRecoveryConsistency(EndRecPtr);
+		CheckRecoveryConsistency();
 
 		/*
 		 * Find the first record that logically follows the checkpoint --- it
@@ -5296,7 +5297,7 @@ StartupXLOG(void)
 				HandleStartupProcInterrupts();
 
 				/* Allow read-only connections if we're consistent now */
-				CheckRecoveryConsistency(EndRecPtr);
+				CheckRecoveryConsistency();
 
 				/*
 				 * Pause WAL replay, if requested by a hot-standby session via
@@ -5526,7 +5527,7 @@ StartupXLOG(void)
 	 */
 	if (InArchiveRecovery)
 	{
-		char		reason[200];
+		char	reason[200];
 
 		ThisTimeLineID = findNewestTimeLine(recoveryTargetTLI) + 1;
 		ereport(LOG,
@@ -5567,7 +5568,7 @@ StartupXLOG(void)
 	 * we will use that below.)
 	 */
 	if (InArchiveRecovery)
-		exitArchiveRecovery(private, xlogreader->readPageTLI, endLogSegNo);
+		exitArchiveRecovery(&private, xlogreader->readPageTLI, endLogSegNo);
 
 	/*
 	 * Prepare to write WAL starting at EndOfLog position, and init xlog
@@ -5592,7 +5593,7 @@ StartupXLOG(void)
 	}
 	else
 	{
-		Assert(private->readOff == (XLogCtl->xlblocks[0] - XLOG_BLCKSZ) % XLogSegSize);
+		Assert(private.readOff == (XLogCtl->xlblocks[0] - XLOG_BLCKSZ) % XLogSegSize);
 		memcpy((char *) Insert->currpage, xlogreader->readBuf, XLOG_BLCKSZ);
 	}
 	Insert->currpos = (char *) Insert->currpage +
@@ -5745,15 +5746,12 @@ StartupXLOG(void)
 	if (standbyState != STANDBY_DISABLED)
 		ShutdownRecoveryTransactionEnvironment();
 
-	/* Shut down readFile facility, free space */
-	private = (XLogPageReadPrivate *) xlogreader->private_data;
-	if (private->readFile >= 0)
+	/* Shut down xlogreader */
+	if (private.readFile >= 0)
 	{
-		close(private->readFile);
-		private->readFile = -1;
+		close(private.readFile);
+		private.readFile = -1;
 	}
-	if (xlogreader->private_data)
-		pfree(xlogreader->private_data);
 	XLogReaderFree(xlogreader);
 
 	/*
@@ -5785,7 +5783,7 @@ StartupXLOG(void)
  * that it can start accepting read-only connections.
  */
 static void
-CheckRecoveryConsistency(XLogRecPtr EndRecPtr)
+CheckRecoveryConsistency(void)
 {
 	/*
 	 * During crash recovery, we don't reach a consistent state until we've
@@ -6517,7 +6515,7 @@ CreateCheckPoint(int flags)
 		XLogRecPtr	curInsert;
 
 		INSERT_RECPTR(curInsert, Insert, Insert->curridx);
-		if (curInsert == ControlFile->checkPoint +
+		if (curInsert == ControlFile->checkPoint + 
 			MAXALIGN(SizeOfXLogRecord + sizeof(CheckPoint)) &&
 			ControlFile->checkPoint == ControlFile->checkPointCopy.redo)
 		{
@@ -6930,7 +6928,7 @@ CreateRestartPoint(int flags)
 	if (!RecoveryInProgress())
 	{
 		ereport(DEBUG2,
-             (errmsg("skipping restartpoint, recovery has already ended")));
+			  (errmsg("skipping restartpoint, recovery has already ended")));
 		LWLockRelease(CheckpointLock);
 		return false;
 	}
@@ -7815,8 +7813,8 @@ do_pg_start_backup(const char *backupidstr, bool fast, char **labelfile)
 
 	if (!superuser() && !is_authenticated_user_replication_role())
 		ereport(ERROR,
-		  (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser or replication role to run a backup")));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+		   errmsg("must be superuser or replication role to run a backup")));
 
 	/*
 	 * Currently only non-exclusive backup can be taken during recovery.
@@ -7834,7 +7832,7 @@ do_pg_start_backup(const char *backupidstr, bool fast, char **labelfile)
 	if (!backup_started_in_recovery && !XLogIsNeeded())
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("WAL level not sufficient for making an online backup"),
+			  errmsg("WAL level not sufficient for making an online backup"),
 				 errhint("wal_level must be set to \"archive\" or \"hot_standby\" at server start.")));
 
 	if (strlen(backupidstr) > MAXPGPATH)
@@ -8758,10 +8756,11 @@ CancelBackup(void)
  */
 static int
 XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr, int reqLen,
-			 int emode, char *readBuf, TimeLineID *curFileTLI)
+			 char *readBuf, TimeLineID *readTLI)
 {
 	XLogPageReadPrivate *private =
 		(XLogPageReadPrivate *) xlogreader->private_data;
+	int			emode = private->emode;
 	uint32		targetPageOff;
 	XLogSegNo	targetSegNo;
 
@@ -8803,8 +8802,7 @@ retry:
 	{
 		if (StandbyMode)
 		{
-			if (!WaitForWALToBecomeAvailable(private, targetPagePtr + reqLen,
-											 curFileTLI))
+			if (!WaitForWALToBecomeAvailable(private, targetPagePtr + reqLen))
 				goto triggered;
 		}
 		/* In archive or crash recovery. */
@@ -8818,8 +8816,7 @@ retry:
 				source = XLOG_FROM_PG_XLOG;
 
 			private->readFile =
-				XLogFileReadAnyTLI(private, private->readSegNo, emode,
-								   source, curFileTLI);
+				XLogFileReadAnyTLI(private, private->readSegNo, emode, source);
 			if (private->readFile < 0)
 				return -1;
 		}
@@ -8853,8 +8850,8 @@ retry:
 	{
 		char		fname[MAXFNAMELEN];
 
-		XLogFileName(fname, *curFileTLI, private->readSegNo);
-		ereport(xlogreader->emode_for_ptr(xlogreader, emode, targetPagePtr + reqLen),
+		XLogFileName(fname, curFileTLI, private->readSegNo);
+		ereport(emode_for_corrupt_record(xlogreader, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not seek in log segment %s to offset %u: %m",
 						fname, private->readOff)));
@@ -8865,8 +8862,8 @@ retry:
 	{
 		char		fname[MAXFNAMELEN];
 
-		XLogFileName(fname, *curFileTLI, private->readSegNo);
-		ereport(xlogreader->emode_for_ptr(xlogreader, emode, targetPagePtr + reqLen),
+		XLogFileName(fname, curFileTLI, private->readSegNo);
+		ereport(emode_for_corrupt_record(xlogreader, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not read from log segment %s, offset %u: %m",
 						fname, private->readOff)));
@@ -8877,6 +8874,7 @@ retry:
 	Assert(targetPageOff == private->readOff);
 	Assert(reqLen <= private->readLen);
 
+	*readTLI = curFileTLI;
 	return private->readLen;
 
 next_record_is_invalid:
@@ -8916,8 +8914,7 @@ triggered:
  * false.
  */
 static bool
-WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr,
-							TimeLineID *curFileTLI)
+WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 {
 	static pg_time_t last_fail_time = 0;
 	pg_time_t now;
@@ -9094,7 +9091,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr,
 				 */
 				private->readFile =
 					XLogFileReadAnyTLI(private, private->readSegNo, DEBUG2,
-									   private->currentSource, curFileTLI);
+									   private->currentSource);
 
 				if (private->readFile >= 0)
 					return true;	/* success! */
@@ -9214,7 +9211,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr,
 		HandleStartupProcInterrupts();
 	}
 
-	return false;	/* not reached */
+	return false; 	/* not reached */
 }
 
 /*
@@ -9236,12 +9233,13 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr,
  * erroneously suppressed.
  */
 static int
-emode_for_corrupt_record(XLogReaderState *state, int emode, XLogRecPtr RecPtr)
+emode_for_corrupt_record(XLogReaderState *state, XLogRecPtr RecPtr)
 {
-	XLogPageReadPrivate *private = (XLogPageReadPrivate *)state->private_data;
+	XLogPageReadPrivate *private = (XLogPageReadPrivate *) state->private_data;
+	int			emode = private->emode;
 	static XLogRecPtr lastComplaint = 0;
 
-	if (private->currentSource == XLOG_FROM_PG_XLOG && emode == LOG)
+	if (private->readSource == XLOG_FROM_PG_XLOG && emode == LOG)
 	{
 		if (XLByteEQ(RecPtr, lastComplaint))
 			emode = DEBUG1;

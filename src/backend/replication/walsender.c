@@ -572,9 +572,15 @@ recompute_xmin:
 		XLogRecord *record;
 		XLogRecordBuffer buf;
 		ReaderApplyState* apply_state = logical_reader->private_data;
+		char *err = NULL;
 
 		/* the read_page callback waits for new WAL */
-		record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, ERROR);
+		record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, &err);
+
+		/* xlog record was invalid */
+		if (err)
+			elog(ERROR, "%s", err);
+
 		Assert(record);
 
 		buf.origptr = logical_reader->ReadRecPtr;
@@ -1796,6 +1802,7 @@ XLogSendLogical(bool *caughtup)
 	XLogRecPtr curptr;
 #endif
 	XLogRecord *record;
+	char *errm = NULL;
 
 	if (decoding_ctx == NULL)
 	{
@@ -1807,7 +1814,11 @@ XLogSendLogical(bool *caughtup)
 	}
 
 
-	record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, ERROR);
+	record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, &errm);
+
+	/* xlog record was invalid */
+	if (errm)
+		elog(ERROR, "%s", errm);
 
 	if (record != NULL)
 	{
