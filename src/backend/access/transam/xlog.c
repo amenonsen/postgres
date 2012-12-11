@@ -622,7 +622,7 @@ static int XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
 				 int reqLen, char *readBuf, TimeLineID *readTLI);
 static bool WaitForWALToBecomeAvailable(XLogPageReadPrivate *private,
 										XLogRecPtr RecPtr);
-static int emode_for_corrupt_record(XLogReaderState *state, int emode, XLogRecPtr RecPtr);
+static int emode_for_corrupt_record(XLogReaderState *state, XLogRecPtr RecPtr);
 static void XLogFileClose(void);
 static void PreallocXlogFiles(XLogRecPtr endptr);
 static void RemoveOldXlogFiles(XLogSegNo segno, XLogRecPtr endptr);
@@ -3217,7 +3217,7 @@ ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr, int emode,
 		EndRecPtr = xlogreader->EndRecPtr;
 		if (record == NULL)
 		{
-			ereport(emode_for_corrupt_record(xlogreader, emode, RecPtr),
+			ereport(emode_for_corrupt_record(xlogreader, RecPtr),
 					(errmsg_internal("%s", errormsg) /* already translated */));
 
 			private->lastSourceFailed = true;
@@ -8851,7 +8851,7 @@ retry:
 		char		fname[MAXFNAMELEN];
 
 		XLogFileName(fname, curFileTLI, private->readSegNo);
-		ereport(emode_for_corrupt_record(xlogreader, emode, targetPagePtr + reqLen),
+		ereport(emode_for_corrupt_record(xlogreader, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not seek in log segment %s to offset %u: %m",
 						fname, private->readOff)));
@@ -8863,7 +8863,7 @@ retry:
 		char		fname[MAXFNAMELEN];
 
 		XLogFileName(fname, curFileTLI, private->readSegNo);
-		ereport(emode_for_corrupt_record(xlogreader, emode, targetPagePtr + reqLen),
+		ereport(emode_for_corrupt_record(xlogreader, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not read from log segment %s, offset %u: %m",
 						fname, private->readOff)));
@@ -9233,9 +9233,10 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
  * erroneously suppressed.
  */
 static int
-emode_for_corrupt_record(XLogReaderState *state, int emode, XLogRecPtr RecPtr)
+emode_for_corrupt_record(XLogReaderState *state, XLogRecPtr RecPtr)
 {
 	XLogPageReadPrivate *private = (XLogPageReadPrivate *)state->private_data;
+	int			emode = private->emode;
 	static XLogRecPtr lastComplaint = 0;
 
 	if (private->currentSource == XLOG_FROM_PG_XLOG && emode == LOG)
