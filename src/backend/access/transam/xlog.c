@@ -4688,7 +4688,7 @@ StartupXLOG(void)
 	bool		backupFromStandby = false;
 	DBState		dbstate_at_startup;
 	XLogReaderState *xlogreader;
-	XLogPageReadPrivate *private;
+	XLogPageReadPrivate private;
 
 	/*
 	 * Read control file and check XLOG status looks valid.
@@ -4850,15 +4850,15 @@ StartupXLOG(void)
 	if (StandbyMode)
 		OwnLatch(&XLogCtl->recoveryWakeupLatch);
 
-	private = palloc0(sizeof(XLogPageReadPrivate));
-	private->readFile = -1;
-	xlogreader = XLogReaderAllocate(InvalidXLogRecPtr, &XLogPageRead, private);
+	/* Set up XLOG reader facility */
+	MemSet(&private, 0, sizeof(XLogPageReadPrivate));
+	private.readFile = -1;
+	xlogreader = XLogReaderAllocate(InvalidXLogRecPtr, &XLogPageRead, &private);
 	if (!xlogreader)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of memory"),
 				 errdetail("Failed while allocating an XLog reading processor")));
-
 	xlogreader->system_identifier = ControlFile->system_identifier;
 	xlogreader->expectedTLEs = expectedTLEs;
 
@@ -5568,7 +5568,7 @@ StartupXLOG(void)
 	 * we will use that below.)
 	 */
 	if (InArchiveRecovery)
-		exitArchiveRecovery(private, xlogreader->readPageTLI, endLogSegNo);
+		exitArchiveRecovery(&private, xlogreader->readPageTLI, endLogSegNo);
 
 	/*
 	 * Prepare to write WAL starting at EndOfLog position, and init xlog
@@ -5593,7 +5593,7 @@ StartupXLOG(void)
 	}
 	else
 	{
-		Assert(private->readOff == (XLogCtl->xlblocks[0] - XLOG_BLCKSZ) % XLogSegSize);
+		Assert(private.readOff == (XLogCtl->xlblocks[0] - XLOG_BLCKSZ) % XLogSegSize);
 		memcpy((char *) Insert->currpage, xlogreader->readBuf, XLOG_BLCKSZ);
 	}
 	Insert->currpos = (char *) Insert->currpage +
@@ -5746,15 +5746,12 @@ StartupXLOG(void)
 	if (standbyState != STANDBY_DISABLED)
 		ShutdownRecoveryTransactionEnvironment();
 
-	/* Shut down readFile facility, free space */
-	private = (XLogPageReadPrivate *) xlogreader->private_data;
-	if (private->readFile >= 0)
+	/* Shut down xlogreader */
+	if (private.readFile >= 0)
 	{
-		close(private->readFile);
-		private->readFile = -1;
+		close(private.readFile);
+		private.readFile = -1;
 	}
-	if (xlogreader->private_data)
-		pfree(xlogreader->private_data);
 	XLogReaderFree(xlogreader);
 
 	/*
