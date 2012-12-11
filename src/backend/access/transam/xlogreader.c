@@ -177,10 +177,7 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, int emode)
 		 * In this case, the passed-in record pointer should already be
 		 * pointing to a valid record starting position.
 		 */
-		if (!XRecOffIsValid(RecPtr))
-			ereport(PANIC,
-					(errmsg("invalid record offset at %X/%X",
-							(uint32) (RecPtr >> 32), (uint32) RecPtr)));
+		Assert(XRecOffIsValid(RecPtr));
 		randAccess = true;		/* allow readPageTLI to go backwards too */
 	}
 
