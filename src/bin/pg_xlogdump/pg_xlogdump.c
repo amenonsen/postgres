@@ -16,9 +16,6 @@
 #include <unistd.h>
 #include <libgen.h>
 
-/* we don't want to include postgres.h */
-typedef uintptr_t Datum;
-
 #include "access/xlogreader.h"
 #include "access/rmgr.h"
 
