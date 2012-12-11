@@ -49,8 +49,11 @@ typedef struct XLogReaderState
 	 * This callback shall read the the xlog page (of size XLOG_BLKSZ) in which
 	 * RecPtr resides. All data <= RecPtr must be visible. The callback shall
 	 * return the range of actually valid bytes returned or -1 upon
-	 * failure. *pageTLI needs to be set to the TLI the page is assumed to be
-	 * in.
+	 * failure.
+	 *
+	 * *pageTLI should be set to the TLI of the file the page was read from
+	 * to be in. It is currently used only for error reporting purposes, to
+	 * reconstruct the name of the WAL file where an error occurred.
 	 */
 	XLogPageReadCB read_page;
 

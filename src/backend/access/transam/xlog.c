@@ -233,7 +233,6 @@ static bool recoveryStopAfter;
  * segments we read, and indeed only these TLIs will be considered as
  * candidate WAL files to open at all.
  *
- * FIXME:
  * curFileTLI: the TLI appearing in the name of the current input WAL file.
  * (This is not necessarily the same as ThisTimeLineID, because we could
  * be scanning data that was copied from an ancestor timeline when the current
@@ -243,6 +242,7 @@ static bool recoveryStopAfter;
 static TimeLineID recoveryTargetTLI;
 static bool recoveryTargetIsLatest = false;
 static List *expectedTLEs;
+static TimeLineID curFileTLI;
 
 /*
  * ProcLastRecPtr points to the start of the last XLOG record inserted by the
@@ -617,11 +617,11 @@ static bool InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 static int XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno,
 			 int emode, TimeLineID tli, int source, bool notexistOk);
 static int XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
-							  int emode, int source, TimeLineID *curFileTLI);
+							  int emode, int source);
 static int XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
-				 int reqLen, char *readBuf, TimeLineID *curFileTLI);
+				 int reqLen, char *readBuf, TimeLineID *readTLI);
 static bool WaitForWALToBecomeAvailable(XLogPageReadPrivate *private,
-										XLogRecPtr RecPtr, TimeLineID *curFileTLI);
+										XLogRecPtr RecPtr);
 static int emode_for_corrupt_record(XLogReaderState *state, int emode, XLogRecPtr RecPtr);
 static void XLogFileClose(void);
 static void PreallocXlogFiles(XLogRecPtr endptr);
@@ -2685,6 +2685,9 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
 	fd = BasicOpenFile(path, O_RDONLY | PG_BINARY, 0);
 	if (fd >= 0)
 	{
+		/* Success! */
+		curFileTLI = tli;
+
 		/* Report recovery progress in PS display */
 		snprintf(activitymsg, sizeof(activitymsg), "recovering %s",
 				 xlogfname);
@@ -2713,7 +2716,7 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
  */
 static int
 XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
-				   int emode, int source, TimeLineID *curFileTLI)
+				   int emode, int source)
 {
 	char		path[MAXPGPATH];
 	ListCell   *cell;
@@ -2733,7 +2736,7 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 	{
 		TimeLineID	tli = ((TimeLineHistoryEntry *) lfirst(cell))->tli;
 
-		if (tli < *curFileTLI)
+		if (tli < curFileTLI)
 			break;				/* don't bother looking at too-old TLIs */
 
 		if (source == XLOG_FROM_ANY || source == XLOG_FROM_ARCHIVE)
@@ -2742,7 +2745,6 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 							  XLOG_FROM_ARCHIVE, true);
 			if (fd != -1)
 			{
-				*curFileTLI = tli;
 				elog(DEBUG1, "got WAL segment from archive");
 				return fd;
 			}
@@ -2753,10 +2755,7 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 			fd = XLogFileRead(private, segno, emode, tli,
 							  XLOG_FROM_PG_XLOG, true);
 			if (fd != -1)
-			{
-				*curFileTLI = tli;
 				return fd;
-			}
 		}
 	}
 
@@ -8762,7 +8761,7 @@ CancelBackup(void)
  */
 static int
 XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr, int reqLen,
-			 char *readBuf, TimeLineID *curFileTLI)
+			 char *readBuf, TimeLineID *readTLI)
 {
 	XLogPageReadPrivate *private =
 		(XLogPageReadPrivate *) xlogreader->private_data;
@@ -8808,8 +8807,7 @@ retry:
 	{
 		if (StandbyMode)
 		{
-			if (!WaitForWALToBecomeAvailable(private, targetPagePtr + reqLen,
-											 curFileTLI))
+			if (!WaitForWALToBecomeAvailable(private, targetPagePtr + reqLen))
 				goto triggered;
 		}
 		/* In archive or crash recovery. */
@@ -8823,8 +8821,7 @@ retry:
 				source = XLOG_FROM_PG_XLOG;
 
 			private->readFile =
-				XLogFileReadAnyTLI(private, private->readSegNo, emode,
-								   source, curFileTLI);
+				XLogFileReadAnyTLI(private, private->readSegNo, emode, source);
 			if (private->readFile < 0)
 				return -1;
 		}
@@ -8858,7 +8855,7 @@ retry:
 	{
 		char		fname[MAXFNAMELEN];
 
-		XLogFileName(fname, *curFileTLI, private->readSegNo);
+		XLogFileName(fname, curFileTLI, private->readSegNo);
 		ereport(emode_for_corrupt_record(xlogreader, emode, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not seek in log segment %s to offset %u: %m",
@@ -8870,7 +8867,7 @@ retry:
 	{
 		char		fname[MAXFNAMELEN];
 
-		XLogFileName(fname, *curFileTLI, private->readSegNo);
+		XLogFileName(fname, curFileTLI, private->readSegNo);
 		ereport(emode_for_corrupt_record(xlogreader, emode, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not read from log segment %s, offset %u: %m",
@@ -8882,6 +8879,7 @@ retry:
 	Assert(targetPageOff == private->readOff);
 	Assert(reqLen <= private->readLen);
 
+	*readTLI = curFileTLI;
 	return private->readLen;
 
 next_record_is_invalid:
@@ -8921,8 +8919,7 @@ triggered:
  * false.
  */
 static bool
-WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr,
-							TimeLineID *curFileTLI)
+WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 {
 	static pg_time_t last_fail_time = 0;
 	pg_time_t now;
@@ -9099,7 +9096,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr,
 				 */
 				private->readFile =
 					XLogFileReadAnyTLI(private, private->readSegNo, DEBUG2,
-									   private->currentSource, curFileTLI);
+									   private->currentSource);
 
 				if (private->readFile >= 0)
 					return true;	/* success! */
