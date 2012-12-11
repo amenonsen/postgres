@@ -39,8 +39,17 @@ OBJS = \
 	$(WIN32RES) \
 	pg_xlogdump.o pqexpbuf_strinfo.o compat.o tables.o xlogreader.o \
 
-pg_xlogdump: $(OBJS) | submake-libpq submake-libpgport
-	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX)  $(LIBS) $(libpq_pgport) -o $@$(X)
+pg_xlogdump: $(OBJS) | submake-libpgport
+	$(CC) $(CFLAGS) $^ $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) $(libpq_pgport) -o $@$(X)
+
+install: all installdirs
+	$(INSTALL_PROGRAM) pg_xlogdump$(X) '$(DESTDIR)$(bindir)/pg_xlogdump$(X)'
+
+installdirs:
+	$(MKDIR_P) '$(DESTDIR)$(bindir)'
+
+uninstall:
+	rm -f '$(DESTDIR)$(bindir)/pg_xlogdump$(X)'
 
 clean distclean maintainer-clean:
 	rm -f $(OBJS) pg_xlogdump xlogreader.c assert.c $(rmgrdescfiles)
