@@ -33,13 +33,8 @@ struct XLogReaderState;
 typedef int (*XLogPageReadCB) (struct XLogReaderState *state,
 							   XLogRecPtr pageptr,
 							   int reqLen,
-							   int emode,
 							   char *readBuf,
 							   TimeLineID *pageTLI);
-
-typedef int (*XLogEmodeCB) (struct XLogReaderState *state,
-							int emode, XLogRecPtr RecPtr);
-
 
 typedef struct XLogReaderState
 {
@@ -58,17 +53,6 @@ typedef struct XLogReaderState
 	 * in.
 	 */
 	XLogPageReadCB read_page;
-
-
-	/*
-	 * Error handling callback (mandatory)
-	 *
-	 * This callback shall return how severe an error at a particular location
-	 * is. ereport(level, ...) where level is the value returned by the
-	 * callback will be raised. If the loglevel is < ERROR the respective
-	 * XLogReadRecord will return NULL.
-	 */
-	XLogEmodeCB emode_for_ptr;
 
 	/*
 	 * System identifier of the xlog files were about to read.
@@ -100,8 +84,6 @@ typedef struct XLogReaderState
 	 * ----------------------------------------
 	 */
 
-
-
 	/* Buffer for currently read page (XLOG_BLCKSZ bytes) */
 	char	   *readBuf;
 
@@ -119,6 +101,8 @@ typedef struct XLogReaderState
 	char	   *readRecordBuf;
 	uint32		readRecordBufSize;
 
+	/* Buffer to hold error message */
+	char	   *errormsg_buf;
 } XLogReaderState;
 
 /*
@@ -128,8 +112,7 @@ typedef struct XLogReaderState
  * the reader can be used.
  */
 extern XLogReaderState *XLogReaderAllocate(XLogRecPtr startpoint,
-					  XLogPageReadCB pagereadfunc, XLogEmodeCB emodecb,
-										   void *private_data);
+				   XLogPageReadCB pagereadfunc, void *private_data);
 
 /*
  * Free an XLogReader
@@ -140,12 +123,11 @@ extern void XLogReaderFree(XLogReaderState *state);
  * Read the next record from xlog. Returns NULL on end-of-WAL or on failure.
  */
 extern XLogRecord *XLogReadRecord(XLogReaderState *state, XLogRecPtr ptr,
-			   int emode);
+			   char **errormsg);
 
 /*
  * Find the address of the next record with a lsn >= RecPtr.
  */
-extern XLogRecPtr XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr,
-									 int emode);
+extern XLogRecPtr XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr);
 
 #endif   /* XLOGREADER_H */

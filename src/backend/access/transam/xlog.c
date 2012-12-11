@@ -548,6 +548,8 @@ static uint32 openLogOff = 0;
  */
 typedef struct XLogPageReadPrivate
 {
+	int			emode;
+
 	int			readFile;
 	XLogSegNo	readSegNo;
 	uint32		readOff;
@@ -617,7 +619,7 @@ static int XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno,
 static int XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 							  int emode, int source, TimeLineID *curFileTLI);
 static int XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
-				 int reqLen, int emode, char *readBuf, TimeLineID *curFileTLI);
+				 int reqLen, char *readBuf, TimeLineID *curFileTLI);
 static bool WaitForWALToBecomeAvailable(XLogPageReadPrivate *private,
 										XLogRecPtr RecPtr, TimeLineID *curFileTLI);
 static int emode_for_corrupt_record(XLogReaderState *state, int emode, XLogRecPtr RecPtr);
@@ -3203,18 +3205,24 @@ ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr, int emode,
 	XLogRecord *record;
 	XLogPageReadPrivate *private = (XLogPageReadPrivate *) xlogreader->private_data;
 
-	/* Set flag for XLogPageRead */
+	/* Pass parameters to XLogPageRead */
 	private->fetching_ckpt = fetching_ckpt;
+	private->emode = emode;
 
 	/* This is the first try to read this page. */
 	private->lastSourceFailed = false;
+
 	do
 	{
-		record = XLogReadRecord(xlogreader, RecPtr, emode);
+		char *errormsg;
+		record = XLogReadRecord(xlogreader, RecPtr, &errormsg);
 		ReadRecPtr = xlogreader->ReadRecPtr;
 		EndRecPtr = xlogreader->EndRecPtr;
 		if (record == NULL)
 		{
+			ereport(emode_for_corrupt_record(xlogreader, emode, RecPtr),
+					(errmsg_internal("%s", errormsg) /* already translated */));
+
 			private->lastSourceFailed = true;
 
 			if (private->readFile >= 0)
@@ -4847,8 +4855,7 @@ StartupXLOG(void)
 
 	private = palloc0(sizeof(XLogPageReadPrivate));
 	private->readFile = -1;
-	xlogreader = XLogReaderAllocate(InvalidXLogRecPtr, &XLogPageRead,
-									emode_for_corrupt_record, private);
+	xlogreader = XLogReaderAllocate(InvalidXLogRecPtr, &XLogPageRead, private);
 	if (!xlogreader)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -8755,10 +8762,11 @@ CancelBackup(void)
  */
 static int
 XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr, int reqLen,
-			 int emode, char *readBuf, TimeLineID *curFileTLI)
+			 char *readBuf, TimeLineID *curFileTLI)
 {
 	XLogPageReadPrivate *private =
 		(XLogPageReadPrivate *) xlogreader->private_data;
+	int			emode = private->emode;
 	uint32		targetPageOff;
 	XLogSegNo	targetSegNo;
 
@@ -8851,7 +8859,7 @@ retry:
 		char		fname[MAXFNAMELEN];
 
 		XLogFileName(fname, *curFileTLI, private->readSegNo);
-		ereport(xlogreader->emode_for_ptr(xlogreader, emode, targetPagePtr + reqLen),
+		ereport(emode_for_corrupt_record(xlogreader, emode, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not seek in log segment %s to offset %u: %m",
 						fname, private->readOff)));
@@ -8863,7 +8871,7 @@ retry:
 		char		fname[MAXFNAMELEN];
 
 		XLogFileName(fname, *curFileTLI, private->readSegNo);
-		ereport(xlogreader->emode_for_ptr(xlogreader, emode, targetPagePtr + reqLen),
+		ereport(emode_for_corrupt_record(xlogreader, emode, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
 				 errmsg("could not read from log segment %s, offset %u: %m",
 						fname, private->readOff)));

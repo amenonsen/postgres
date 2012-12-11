@@ -163,7 +163,7 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 
 static int
 XLogDumpReadPage(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
-				 int emode, char *readBuff, TimeLineID *curFileTLI)
+				 char *readBuff, TimeLineID *curFileTLI)
 {
 	XLogDumpPrivateData *private = state->private_data;
 	int count = XLOG_BLCKSZ;
@@ -244,12 +244,6 @@ usage(const char *progname)
 	printf(_("  -s, --start RECPTR     read wal in directory indicated by -p starting at RECPTR\n"));
 	printf(_("  -t, --timeline TLI     which timeline do we want to read, defaults to 1\n"));
 	printf(_("  -v, --version          output version information, then exit\n"));
-}
-
-static int
-emode_for_corrupt_record(XLogReaderState *state, int emode, XLogRecPtr RecPtr)
-{
-	return emode;
 }
 
 int main(int argc, char **argv)
@@ -422,12 +416,14 @@ int main(int argc, char **argv)
 	/* we have everything we need, continue */
 	{
 		XLogRecPtr first_record;
+		char	*errormsg;
 
-		xlogreader_state = XLogReaderAllocate(private.startptr, XLogDumpReadPage,
-											  emode_for_corrupt_record, &private);
+		xlogreader_state = XLogReaderAllocate(private.startptr,
+											  XLogDumpReadPage,
+											  &private);
 
 		/* first find a valid recptr to start from */
-		first_record = XLogFindNextRecord(xlogreader_state, private.startptr, ERROR);
+		first_record = XLogFindNextRecord(xlogreader_state, private.startptr);
 
 		if (first_record == InvalidXLogRecPtr)
 			fatal_error("Could not find a valid record after %X/%X",
@@ -444,12 +440,14 @@ int main(int argc, char **argv)
 					(uint32)(first_record >> 32), (uint32)first_record,
 					(uint32)(first_record - private.endptr));
 
-		while ((record = XLogReadRecord(xlogreader_state, first_record, ERROR)))
+		while ((record = XLogReadRecord(xlogreader_state, first_record, &errormsg)))
 		{
 			/* continue after the last record */
 			first_record = InvalidXLogRecPtr;
 			XLogDumpDisplayRecord(xlogreader_state, record);
 		}
+		if (errormsg)
+			fprintf(stderr, "error in WAL record: %s\n", errormsg);
 
 		XLogReaderFree(xlogreader_state);
 	}
