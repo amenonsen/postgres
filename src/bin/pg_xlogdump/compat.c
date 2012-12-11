@@ -8,7 +8,8 @@
  * IDENTIFICATION
  *		src/bin/pg_xlogdump/compat.c
  *
- * NOTES
+ * This file contains client-side implementations for various backend
+ * functions that the rm_desc functions in *desc.c files rely on.
  *
  *-------------------------------------------------------------------------
  */

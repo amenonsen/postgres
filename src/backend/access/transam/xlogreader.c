@@ -927,7 +927,7 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 
 		XLogFileName(fname, state->readPageTLI, segno);
 
-		report_invalid_record(state, 
+		report_invalid_record(state,
 			  "unexpected pageaddr %X/%X in log segment %s, offset %u",
 			  (uint32) (hdr->xlp_pageaddr >> 32), (uint32) hdr->xlp_pageaddr,
 							  fname,

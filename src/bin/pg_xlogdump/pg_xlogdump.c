@@ -18,26 +18,24 @@
 
 #include "access/xlogreader.h"
 #include "access/rmgr.h"
-
 #include "catalog/catalog.h"
-
+#include "pg_config_manual.h"
 #include "utils/elog.h"
 
 #include "getopt_long.h"
 
-#include "pg_config_manual.h"
-
 static const char *progname;
 
-typedef struct XLogDumpPrivateData {
-	TimeLineID timeline;
-	char* outpath;
-	char* inpath;
-	char* file;
-	XLogRecPtr startptr;
-	XLogRecPtr endptr;
+typedef struct XLogDumpPrivateData
+{
+	TimeLineID	timeline;
+	char	   *outpath;
+	char	   *inpath;
+	char	   *file;
+	XLogRecPtr	startptr;
+	XLogRecPtr	endptr;
 
-	bool  bkp_details;
+	bool		bkp_details;
 } XLogDumpPrivateData;
 
 static void fatal_error(const char *fmt, ...)
@@ -45,7 +43,7 @@ __attribute__((format(PG_PRINTF_ATTRIBUTE, 1, 2)));
 
 static void fatal_error(const char *fmt, ...)
 {
-	va_list         args;
+	va_list		args;
 	fflush(stdout);
 
 	fprintf(stderr, "fatal_error: ");
@@ -58,12 +56,12 @@ static void fatal_error(const char *fmt, ...)
 
 static void
 XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
-                 XLogRecPtr startptr, char *buf, Size count);
+				 XLogRecPtr startptr, char *buf, Size count);
 
 /* this should probably be put in a general implementation */
 static void
 XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
-                 XLogRecPtr startptr, char *buf, Size count)
+				 XLogRecPtr startptr, char *buf, Size count)
 {
 	char	   *p;
 	XLogRecPtr	recptr;
@@ -99,7 +97,7 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 			XLogFileName(fname, timeline_id, sendSegNo);
 
 			snprintf(fpath, MAXPGPATH, "%s/%s",
-			         directory == NULL ? XLOGDIR : directory, fname);
+					 (directory == NULL) ? XLOGDIR : directory, fname);
 
 			sendFile = open(fpath, O_RDONLY, 0);
 			if (sendFile < 0)
@@ -176,8 +174,8 @@ XLogDumpReadPage(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
 			count = private->endptr - targetPagePtr;
 	}
 
-    XLogDumpXLogRead(private->inpath, private->timeline, targetPagePtr,
-                     readBuff, count);
+	XLogDumpXLogRead(private->inpath, private->timeline, targetPagePtr,
+					 readBuff, count);
 
 	return count;
 }
@@ -192,8 +190,8 @@ XLogDumpDisplayRecord(XLogReaderState* state, XLogRecord* record)
 			rmgr->rm_name,
 			record->xl_len, record->xl_tot_len,
 			record->xl_xid,
-			(uint32)(state->ReadRecPtr >> 32), (uint32)state->ReadRecPtr,
-			(uint32)(record->xl_prev >> 32), (uint32)record->xl_prev,
+			(uint32) (state->ReadRecPtr >> 32), (uint32) state->ReadRecPtr,
+			(uint32) (record->xl_prev >> 32), (uint32) record->xl_prev,
 			!!(XLR_BKP_BLOCK(0) & record->xl_info),
 			!!(XLR_BKP_BLOCK(1) & record->xl_info),
 			!!(XLR_BKP_BLOCK(2) & record->xl_info),
@@ -230,7 +228,7 @@ static void
 usage(const char *progname)
 {
 	printf(_("%s: reads/writes postgres transaction logs for debugging.\n\n"),
-	       progname);
+		   progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -244,10 +242,11 @@ usage(const char *progname)
 	printf(_("  -v, --version          output version information, then exit\n"));
 }
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
-	uint32 xlogid;
-	uint32 xrecoff;
+	uint32		xlogid;
+	uint32		xrecoff;
 	XLogReaderState *xlogreader_state;
 	XLogDumpPrivateData private;
 	XLogRecord *record;
@@ -367,14 +366,12 @@ int main(int argc, char **argv)
 				progname);
 		goto bad_argument;
 	}
-    /* everything ok, do some more setup */
+	/* everything ok, do some more setup */
 	else
 	{
 		/* default value */
 		if (private.file == NULL && private.inpath == NULL)
-		{
 			private.inpath = "pg_xlog";
-		}
 
 		/* XXX: validate directory */
 
@@ -425,7 +422,8 @@ int main(int argc, char **argv)
 
 		if (first_record == InvalidXLogRecPtr)
 			fatal_error("Could not find a valid record after %X/%X",
-						(uint32)(private.startptr >> 32), (uint32)private.startptr);
+						(uint32) (private.startptr >> 32),
+						(uint32) private.startptr);
 
 		/*
 		 * Display a message that were skipping data if `from` wasn't a pointer
@@ -434,9 +432,9 @@ int main(int argc, char **argv)
 		 */
 		if (first_record != private.startptr && (private.startptr % XLogSegSize) != 0)
 			fprintf(stdout, "first record is after %X/%X, at %X/%X, skipping over %u bytes\n",
-					(uint32)(private.startptr >> 32), (uint32)private.startptr,
-					(uint32)(first_record >> 32), (uint32)first_record,
-					(uint32)(first_record - private.endptr));
+					(uint32) (private.startptr >> 32), (uint32) private.startptr,
+					(uint32) (first_record >> 32), (uint32) first_record,
+					(uint32) (first_record - private.endptr));
 
 		while ((record = XLogReadRecord(xlogreader_state, first_record, &errormsg)))
 		{
