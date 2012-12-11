@@ -188,11 +188,7 @@ XLogDumpDisplayRecord(XLogReaderState* state, XLogRecord* record)
 	XLogDumpPrivateData *config = (XLogDumpPrivateData *)state->private_data;
 	const RmgrData *rmgr = &RmgrTable[record->xl_rmid];
 
-	StringInfo str = makeStringInfo();
-
-	rmgr->rm_desc(str, record->xl_info, XLogRecGetData(record));
-
-	fprintf(stdout, "xlog record: rmgr: %-11s, record_len: %6u, tot_len: %6u, tx: %10u, lsn: %X/%08X, prev %X/%08X, bkp: %u%u%u%u, desc: %s\n",
+	fprintf(stdout, "xlog record: rmgr: %-11s, record_len: %6u, tot_len: %6u, tx: %10u, lsn: %X/%08X, prev %X/%08X, bkp: %u%u%u%u, desc:",
 			rmgr->rm_name,
 			record->xl_len, record->xl_tot_len,
 			record->xl_xid,
@@ -201,8 +197,12 @@ XLogDumpDisplayRecord(XLogReaderState* state, XLogRecord* record)
 			!!(XLR_BKP_BLOCK(0) & record->xl_info),
 			!!(XLR_BKP_BLOCK(1) & record->xl_info),
 			!!(XLR_BKP_BLOCK(2) & record->xl_info),
-			!!(XLR_BKP_BLOCK(3) & record->xl_info),
-			str->data);
+			!!(XLR_BKP_BLOCK(3) & record->xl_info));
+
+	/* the desc routine will printf the description directly to stdout */
+	rmgr->rm_desc(NULL, record->xl_info, XLogRecGetData(record));
+
+	fprintf(stdout, "\n");
 
 	if (config->bkp_details)
 	{

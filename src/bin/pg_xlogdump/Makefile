@@ -15,7 +15,7 @@ subdir = src/bin/pg_xlogdump
 top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
-override CPPFLAGS := -DFRONTEND -I$(libpq_srcdir) $(CPPFLAGS)
+override CPPFLAGS := -DFRONTEND $(CPPFLAGS)
 
 all: pg_xlogdump
 
@@ -37,7 +37,7 @@ OBJS = \
 	mxactdesc.o nbtdesc.o relmapdesc.o seqdesc.o smgrdesc.o spgdesc.o \
 	standbydesc.o tblspcdesc.o xactdesc.o xlogdesc.o assert.o \
 	$(WIN32RES) \
-	pg_xlogdump.o pqexpbuf_strinfo.o compat.o tables.o xlogreader.o \
+	pg_xlogdump.o stdout_strinfo.o compat.o tables.o xlogreader.o \
 
 pg_xlogdump: $(OBJS) | submake-libpgport
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) $(libpq_pgport) -o $@$(X)
