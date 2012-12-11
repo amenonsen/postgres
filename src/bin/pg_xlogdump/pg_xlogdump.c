@@ -165,7 +165,7 @@ XLogDumpReadPage(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
 				 char *readBuff, TimeLineID *curFileTLI)
 {
 	XLogDumpPrivateData *private = state->private_data;
-	int count = XLOG_BLCKSZ;
+	int			count = XLOG_BLCKSZ;
 
 	if (private->endptr != InvalidXLogRecPtr)
 	{
@@ -189,7 +189,6 @@ XLogDumpDisplayRecord(XLogReaderState* state, XLogRecord* record)
 	const RmgrData *rmgr = &RmgrTable[record->xl_rmid];
 
 	StringInfo str = makeStringInfo();
-	initStringInfo(str);
 
 	rmgr->rm_desc(str, record->xl_info, XLogRecGetData(record));
 

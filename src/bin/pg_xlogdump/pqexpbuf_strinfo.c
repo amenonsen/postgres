@@ -19,14 +19,6 @@ makeStringInfo(void)
 }
 
 void
-initStringInfo(StringInfo str)
-{
-	PQExpBuffer	buffer = (PQExpBuffer) str;
-
-	initPQExpBuffer(buffer);
-}
-
-void
 appendStringInfo(StringInfo str, const char *fmt, ...)
 {
 	PQExpBuffer	buffer = (PQExpBuffer) str;
