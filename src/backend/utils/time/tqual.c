@@ -83,7 +83,9 @@ static HTAB *tuplecid_data = NULL;
 
 /* local functions */
 static bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot);
-
+static bool FailsSatisfies(HeapTuple htup, Snapshot snapshot, Buffer buffer);
+static bool RedirectSatisfiesNow(HeapTuple htup, Snapshot snapshot,
+								 Buffer buffer);
 
 /*
  * SetHintBits()
@@ -1562,21 +1564,12 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 		return true;
 }
 
-static bool
-FailsSatisfies(HeapTuple htup, Snapshot snapshot, Buffer buffer)
-{
-	elog(ERROR, "Normal snapshots cannot be used during timetravel access.");
-	return false;
-}
-
-static bool
-RedirectSatisfiesNow(HeapTuple htup, Snapshot snapshot, Buffer buffer)
-{
-	Assert(SnapshotNowDecoding != NULL);
-	return HeapTupleSatisfiesMVCCDuringDecoding(htup, SnapshotNowDecoding,
-	                                            buffer);
-}
-
+/*
+ * Setup a replacement SnapshotNow that allows catalog access to behave just
+ * like it did at a certain point in the past.
+ *
+ * Needed for after-the-fact WAL decoding.
+ */
 void
 SetupDecodingSnapshots(Snapshot snapshot_now, HTAB *tuplecids)
 {
@@ -1597,6 +1590,9 @@ SetupDecodingSnapshots(Snapshot snapshot_now, HTAB *tuplecids)
 }
 
 
+/*
+ * Make SnapshotNow behave normally again.
+ */
 void
 RevertFromDecodingSnapshots(void)
 {
@@ -1608,4 +1604,26 @@ RevertFromDecodingSnapshots(void)
 	SnapshotSelfData.satisfies = HeapTupleSatisfiesSelf;
 	SnapshotAnyData.satisfies = HeapTupleSatisfiesAny;
 	SnapshotToastData.satisfies = HeapTupleSatisfiesToast;
+}
+
+/*
+ * Error out if a normal snapshot is used. That is neither legal nor expected
+ * during timetravel, so this is just extra assurance.
+ */
+static bool
+FailsSatisfies(HeapTuple htup, Snapshot snapshot, Buffer buffer)
+{
+	elog(ERROR, "Normal snapshots cannot be used during timetravel access.");
+	return false;
+}
+
+/*
+ * Call the replacement SatisifiesNow with the required SnapshotNow data.
+ */
+static bool
+RedirectSatisfiesNow(HeapTuple htup, Snapshot snapshot, Buffer buffer)
+{
+	Assert(SnapshotNowDecoding != NULL);
+	return HeapTupleSatisfiesMVCCDuringDecoding(htup, SnapshotNowDecoding,
+	                                            buffer);
 }
