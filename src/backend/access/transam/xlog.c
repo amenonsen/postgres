@@ -446,11 +446,15 @@ typedef struct XLogCtlData
 	XLogRecPtr	lastCheckPointRecPtr;
 	CheckPoint	lastCheckPoint;
 
-	/* end+1 of the last record replayed (or being replayed) */
+	/*
+	 * lastReplayedEndRecPtr points to end+1 of the last record successfully
+	 * replayed. When we're currently replaying a record, ie. in a redo
+	 * function, replayEndRecPtr points to the end+1 of the record being
+	 * replayed, otherwise it's equal to lastReplayedEndRecPtr.
+	 */
+	XLogRecPtr	lastReplayedEndRecPtr;
 	XLogRecPtr	replayEndRecPtr;
 	TimeLineID	replayEndTLI;
-	/* end+1 of the last record replayed */
-	XLogRecPtr	recoveryLastRecPtr;
 	/* timestamp of last COMMIT/ABORT record replayed (or being replayed) */
 	TimestampTz recoveryLastXTime;
 	/* current effective recovery target timeline */
@@ -602,6 +606,7 @@ static void SetLatestXTime(TimestampTz xtime);
 static void SetCurrentChunkStartTime(TimestampTz xtime);
 static void CheckRequiredParameterValues(void);
 static void XLogReportParameters(void);
+static void checkTimeLineSwitch(XLogRecPtr lsn, TimeLineID newTLI);
 static void LocalSetXLogInsertAllowed(void);
 static void CheckPointGuts(XLogRecPtr checkPointRedo, int flags);
 static void KeepLogSeg(XLogRecPtr recptr, XLogSegNo *logSegNo);
@@ -5190,7 +5195,7 @@ StartupXLOG(void)
 		}
 
 		/*
-		 * Initialize shared replayEndRecPtr, recoveryLastRecPtr, and
+		 * Initialize shared replayEndRecPtr, lastReplayedEndRecPtr, and
 		 * recoveryLastXTime.
 		 *
 		 * This is slightly confusing if we're starting from an online
@@ -5204,7 +5209,7 @@ StartupXLOG(void)
 		SpinLockAcquire(&xlogctl->info_lck);
 		xlogctl->replayEndRecPtr = ReadRecPtr;
 		xlogctl->replayEndTLI = ThisTimeLineID;
-		xlogctl->recoveryLastRecPtr = EndRecPtr;
+		xlogctl->lastReplayedEndRecPtr = EndRecPtr;
 		xlogctl->recoveryLastXTime = 0;
 		xlogctl->currentChunkStartTime = 0;
 		xlogctl->recoveryPause = false;
@@ -5296,9 +5301,6 @@ StartupXLOG(void)
 				/* Handle interrupt signals of startup process */
 				HandleStartupProcInterrupts();
 
-				/* Allow read-only connections if we're consistent now */
-				CheckRecoveryConsistency();
-
 				/*
 				 * Pause WAL replay, if requested by a hot-standby session via
 				 * SetRecoveryPause().
@@ -5356,11 +5358,40 @@ StartupXLOG(void)
 				}
 
 				/*
+				 * Before replaying this record, check if it is a shutdown
+				 * checkpoint record that causes the current timeline to
+				 * change. The checkpoint record is already considered to be
+				 * part of the new timeline, so we update ThisTimeLineID
+				 * before replaying it. That's important so that replayEndTLI,
+				 * which is recorded as the minimum recovery point's TLI if
+				 * recovery stops after this record, is set correctly.
+				 */
+				if (record->xl_rmid == RM_XLOG_ID &&
+					(record->xl_info & ~XLR_INFO_MASK) == XLOG_CHECKPOINT_SHUTDOWN)
+				{
+					CheckPoint	checkPoint;
+					TimeLineID	newTLI;
+
+					memcpy(&checkPoint, XLogRecGetData(record), sizeof(CheckPoint));
+					newTLI = checkPoint.ThisTimeLineID;
+
+					if (newTLI != ThisTimeLineID)
+					{
+						/* Check that it's OK to switch to this TLI */
+						checkTimeLineSwitch(EndRecPtr, newTLI);
+
+						/* Following WAL records should be run with new TLI */
+						ThisTimeLineID = newTLI;
+					}
+				}
+
+				/*
 				 * Update shared replayEndRecPtr before replaying this record,
 				 * so that XLogFlush will update minRecoveryPoint correctly.
 				 */
 				SpinLockAcquire(&xlogctl->info_lck);
 				xlogctl->replayEndRecPtr = EndRecPtr;
+				xlogctl->replayEndTLI = ThisTimeLineID;
 				SpinLockRelease(&xlogctl->info_lck);
 
 				/*
@@ -5399,15 +5430,18 @@ StartupXLOG(void)
 				}
 
 				/*
-				 * Update shared recoveryLastRecPtr after this record has been
-				 * replayed.
+				 * Update lastReplayedEndRecPtr after this record has been
+				 * successfully replayed.
 				 */
 				SpinLockAcquire(&xlogctl->info_lck);
-				xlogctl->recoveryLastRecPtr = EndRecPtr;
+				xlogctl->lastReplayedEndRecPtr = EndRecPtr;
 				SpinLockRelease(&xlogctl->info_lck);
 
 				/* Remember this record as the last-applied one */
 				LastRec = ReadRecPtr;
+
+				/* Allow read-only connections if we're consistent now */
+				CheckRecoveryConsistency();
 
 				/* Exit loop if we reached inclusive recovery target */
 				if (!recoveryContinue)
@@ -5796,10 +5830,11 @@ CheckRecoveryConsistency(void)
 	 * Have we passed our safe starting point? Note that minRecoveryPoint
 	 * is known to be incorrectly set if ControlFile->backupEndRequired,
 	 * until the XLOG_BACKUP_RECORD arrives to advise us of the correct
-	 * minRecoveryPoint. All we prior to that is its not consistent yet.
+	 * minRecoveryPoint. All we know prior to that is that we're not
+	 * consistent yet.
 	 */
 	if (!reachedConsistency && !ControlFile->backupEndRequired &&
-		XLByteLE(minRecoveryPoint, EndRecPtr) &&
+		XLByteLE(minRecoveryPoint, XLogCtl->lastReplayedEndRecPtr) &&
 		XLogRecPtrIsInvalid(ControlFile->backupStartPoint))
 	{
 		/*
@@ -5811,7 +5846,8 @@ CheckRecoveryConsistency(void)
 		reachedConsistency = true;
 		ereport(LOG,
 				(errmsg("consistent recovery state reached at %X/%X",
-						(uint32) (EndRecPtr >> 32), (uint32) EndRecPtr)));
+						(uint32) (XLogCtl->lastReplayedEndRecPtr >> 32),
+						(uint32) XLogCtl->lastReplayedEndRecPtr)));
 	}
 
 	/*
@@ -7302,6 +7338,48 @@ UpdateFullPageWrites(void)
 }
 
 /*
+ * Check that it's OK to switch to new timeline during recovery.
+ *
+ * 'lsn' is the address of the shutdown checkpoint record we're about to
+ * replay. (Currently, timeline can only change at a shutdown checkpoint).
+ */
+static void
+checkTimeLineSwitch(XLogRecPtr lsn, TimeLineID newTLI)
+{
+	/*
+	 * The new timeline better be in the list of timelines we expect
+	 * to see, according to the timeline history. It should also not
+	 * decrease.
+	 */
+	if (newTLI < ThisTimeLineID || !tliInHistory(newTLI, expectedTLEs))
+		ereport(PANIC,
+				(errmsg("unexpected timeline ID %u (after %u) in checkpoint record",
+						newTLI, ThisTimeLineID)));
+
+	/*
+	 * If we have not yet reached min recovery point, and we're about
+	 * to switch to a timeline greater than the timeline of the min
+	 * recovery point: trouble. After switching to the new timeline,
+	 * we could not possibly visit the min recovery point on the
+	 * correct timeline anymore. This can happen if there is a newer
+	 * timeline in the archive that branched before the timeline the
+	 * min recovery point is on, and you attempt to do PITR to the
+	 * new timeline.
+	 */
+	if (!XLogRecPtrIsInvalid(minRecoveryPoint) &&
+		XLByteLT(lsn, minRecoveryPoint) &&
+		newTLI > minRecoveryPointTLI)
+		ereport(PANIC,
+				(errmsg("unexpected timeline ID %u in checkpoint record, before reaching minimum recovery point %X/%X on timeline %u",
+						newTLI,
+						(uint32) (minRecoveryPoint >> 32),
+						(uint32) minRecoveryPoint,
+						minRecoveryPointTLI)));
+
+	/* Looks good */
+}
+
+/*
  * XLOG resource manager's routines
  *
  * Definitions of info values are in include/catalog/pg_control.h, though
@@ -7414,44 +7492,13 @@ xlog_redo(XLogRecPtr lsn, XLogRecord *record)
 		}
 
 		/*
-		 * TLI may change in a shutdown checkpoint.
+		 * We should've already switched to the new TLI before replaying this
+		 * record.
 		 */
 		if (checkPoint.ThisTimeLineID != ThisTimeLineID)
-		{
-			/*
-			 * The new timeline better be in the list of timelines we expect
-			 * to see, according to the timeline history. It should also not
-			 * decrease.
-			 */
-			if (checkPoint.ThisTimeLineID < ThisTimeLineID ||
-				!tliInHistory(checkPoint.ThisTimeLineID, expectedTLEs))
-				ereport(PANIC,
-						(errmsg("unexpected timeline ID %u (after %u) in checkpoint record",
-								checkPoint.ThisTimeLineID, ThisTimeLineID)));
-
-			/*
-			 * If we have not yet reached min recovery point, and we're about
-			 * to switch to a timeline greater than the timeline of the min
-			 * recovery point: trouble. After switching to the new timeline,
-			 * we could not possibly visit the min recovery point on the
-			 * correct timeline anymore. This can happen if there is a newer
-			 * timeline in the archive that branched before the timeline the
-			 * min recovery point is on, and you attempt to do PITR to the
-			 * new timeline.
-			 */
-			if (!XLogRecPtrIsInvalid(minRecoveryPoint) &&
-				XLByteLT(lsn, minRecoveryPoint) &&
-				checkPoint.ThisTimeLineID > minRecoveryPointTLI)
-				ereport(PANIC,
-						(errmsg("unexpected timeline ID %u in checkpoint record, before reaching minimum recovery point %X/%X on timeline %u",
-								checkPoint.ThisTimeLineID,
-								(uint32) (minRecoveryPoint >> 32),
-								(uint32) minRecoveryPoint,
-								minRecoveryPointTLI)));
-
-			/* Following WAL records should be run with new TLI */
-			ThisTimeLineID = checkPoint.ThisTimeLineID;
-		}
+			ereport(PANIC,
+					(errmsg("unexpected timeline ID %u (should be %u) in checkpoint record",
+							checkPoint.ThisTimeLineID, ThisTimeLineID)));
 
 		RecoveryRestartPoint(&checkPoint);
 	}
@@ -8496,7 +8543,7 @@ GetXLogReplayRecPtr(TimeLineID *targetTLI)
 	XLogRecPtr	recptr;
 
 	SpinLockAcquire(&xlogctl->info_lck);
-	recptr = xlogctl->recoveryLastRecPtr;
+	recptr = xlogctl->lastReplayedEndRecPtr;
 	if (targetTLI)
 		*targetTLI = xlogctl->RecoveryTargetTLI;
 	SpinLockRelease(&xlogctl->info_lck);
