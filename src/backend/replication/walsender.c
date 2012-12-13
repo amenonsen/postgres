@@ -472,6 +472,9 @@ CheckLogicalReplicationRequirements(void)
 
 	if (MyDatabaseId == InvalidOid)
 		ereport(ERROR, (errmsg("logical replication requires to be connected to a database")));
+
+	if (max_logical_slots == 0)
+		ereport(ERROR, (errmsg("logical replication requires needs max_logical_slots > 0")));
 }
 
 /*
