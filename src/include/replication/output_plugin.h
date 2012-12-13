@@ -16,12 +16,12 @@
 
 /*
  * Callback that gets called in a user-defined plugin.
- * 'private' can be set to some private data.
+ * 'private_data' can be set to some private data.
  *
  * Gets looked up in the library symbol pg_decode_init.
  */
 typedef void (*LogicalDecodeInitCB) (
-	void **private
+	void **private_data
 	);
 
 /*
@@ -32,7 +32,7 @@ typedef void (*LogicalDecodeInitCB) (
  * Gets looked up in the library symbol pg_decode_begin_txn.
  */
 typedef bool (*LogicalDecodeBeginCB) (
-	void *private,
+	void *private_data,
 	StringInfo out,
 	ReorderBufferTXN *txn);
 
@@ -44,7 +44,7 @@ typedef bool (*LogicalDecodeBeginCB) (
  * Gets looked up in the library symbol pg_decode_change.
  */
 typedef bool (*LogicalDecodeChangeCB) (
-	void *private,
+	void *private_data,
 	StringInfo out,
 	ReorderBufferTXN *txn,
 	Oid tableoid,
@@ -59,7 +59,7 @@ typedef bool (*LogicalDecodeChangeCB) (
  * Gets looked up in the library symbol pg_decode_commit_txn.
  */
 typedef bool (*LogicalDecodeCommitCB) (
-	void *private,
+	void *private_data,
 	StringInfo out,
 	ReorderBufferTXN *txn,
 	XLogRecPtr commit_lsn);
@@ -70,7 +70,7 @@ typedef bool (*LogicalDecodeCommitCB) (
  * Gets looked up in the library symbol pg_decode_cleanup.
  */
 typedef void (*LogicalDecodeCleanupCB) (
-	void *private
+	void *private_data
 	);
 
 #endif
