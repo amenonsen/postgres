@@ -20,6 +20,7 @@
 
 #include "catalog/catalog.h"
 #include "datatype/timestamp.h"
+#include "lib/stringinfo.h"
 #include "storage/relfilenode.h"
 #include "utils/timestamp.h"
 
@@ -32,7 +33,6 @@ pfree(void *a)
 {
 }
 
-
 const char *
 timestamptz_to_str(TimestampTz t)
 {
@@ -43,6 +43,22 @@ char *
 relpathbackend(RelFileNode rnode, BackendId backend, ForkNumber forknum)
 {
 	return NULL;
+}
+
+void
+appendStringInfo(StringInfo str, const char *fmt, ...)
+{
+	va_list		args;
+
+	va_start(args, fmt);
+	vprintf(fmt, args);
+	va_end(args);
+}
+
+void
+appendStringInfoString(StringInfo str, const char *string)
+{
+	appendStringInfo(str, "%s", string);
 }
 
 #ifdef USE_ASSERT_CHECKING

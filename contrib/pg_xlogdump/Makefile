@@ -4,9 +4,8 @@ PGFILEDESC = "pg_xlogdump"
 PGAPPICON=win32
 
 PROGRAM = pg_xlogdump
-OBJS =  pg_xlogdump.o stdout_strinfo.o compat.o tables.o \
-	xlogreader.o \
-	$(WIN32RES) $(RMGRDESCOBJS)
+OBJS =  pg_xlogdump.o compat.o tables.o xlogreader.o $(RMGRDESCOBJS) \
+	$(WIN32RES)
 
 # XXX: Perhaps this should be done by a wildcard rule so that you don't need
 # to remember to add new rmgrdesc files to this list.
