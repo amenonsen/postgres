@@ -100,17 +100,8 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 			sendFile = open(fpath, O_RDONLY, 0);
 			if (sendFile < 0)
 			{
-				/*
-				 * If the file is not found, assume it's because the standby
-				 * asked for a too old WAL segment that has already been
-				 * removed or recycled.
-				 */
-				if (errno == ENOENT)
-					fatal_error("requested WAL segment %s has already been removed",
-								fname);
-				else
-					fatal_error("could not open file \"%s\": %u",
-								fpath, errno);
+				fatal_error("could not open file \"%s\": %s",
+							fpath, strerror(errno));
 			}
 			sendOff = 0;
 		}
@@ -118,14 +109,14 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 		/* Need to seek in the file? */
 		if (sendOff != startoff)
 		{
-			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0){
-				char fname[MAXPGPATH];
+			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0)
+			{
+				int		err = errno;
+				char	fname[MAXPGPATH];
 				XLogFileName(fname, timeline_id, sendSegNo);
 
-				fatal_error("could not seek in log segment %s to offset %u: %d",
-							fname,
-							startoff,
-							errno);
+				fatal_error("could not seek in log segment %s to offset %u: %s",
+							fname, startoff, strerror(err));
 			}
 			sendOff = startoff;
 		}
@@ -139,12 +130,12 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 		readbytes = read(sendFile, p, segbytes);
 		if (readbytes <= 0)
 		{
-			char fname[MAXPGPATH];
+			int		err = errno;
+			char	fname[MAXPGPATH];
 			XLogFileName(fname, timeline_id, sendSegNo);
 
-			fatal_error("could not read from log segment %s, offset %u, length %lu: %d",
-						fname,
-						sendOff, (unsigned long) segbytes, errno);
+			fatal_error("could not read from log segment %s, offset %d, length %d: %s",
+						fname, sendOff, segbytes, strerror(err));
 		}
 
 		/* Update state for read */
