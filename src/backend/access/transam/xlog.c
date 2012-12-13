@@ -536,32 +536,34 @@ static XLogSegNo openLogSegNo = 0;
 static uint32 openLogOff = 0;
 
 /*
- * Status data for XLogPageRead.
- *
- * The first three are used similarly to the ones above, but for reading
+ * These variables are used similarly to the ones above, but for reading
  * the XLOG.  Note, however, that readOff generally represents the offset
  * of the page just read, not the seek position of the FD itself, which
  * will be just past that page. readLen indicates how much of the current
  * page has been read into readBuf, and readSource indicates where we got
  * the currently open file from.
- *
- * currentSource keeps track of which source we're currently reading from. This
- * is different from readSource in that this is always set, even when we don't
- * currently have a WAL file open. If lastSourceFailed is set, our last attempt
- * to read from currentSource failed, and we should try another source next.
  */
+static int	readFile = -1;
+static XLogSegNo readSegNo = 0;
+static uint32 readOff = 0;
+static uint32 readLen = 0;
+static XLogSource readSource = 0;		/* XLOG_FROM_* code */
+
+/*
+ * Keeps track of which source we're currently reading from. This is
+ * different from readSource in that this is always set, even when we don't
+ * currently have a WAL file open. If lastSourceFailed is set, our last
+ * attempt to read from currentSource failed, and we should try another source
+ * next.
+ */
+static XLogSource currentSource = 0;	/* XLOG_FROM_* code */
+static bool	lastSourceFailed = false;
+
 typedef struct XLogPageReadPrivate
 {
 	int			emode;
-
-	int			readFile;
-	XLogSegNo	readSegNo;
-	uint32		readOff;
-	uint32		readLen;
 	bool		fetching_ckpt;	/* are we fetching a checkpoint record? */
-	XLogSource	readSource;		/* XLOG_FROM_* code */
-	XLogSource	currentSource;	/* XLOG_FROM_* code */
-	bool		lastSourceFailed;
+	bool		randAccess;
 } XLogPageReadPrivate;
 
 /*
@@ -598,8 +600,7 @@ static bool bgwriterLaunched = false;
 
 
 static void readRecoveryCommandFile(void);
-static void exitArchiveRecovery(XLogPageReadPrivate *private, TimeLineID endTLI,
-					XLogSegNo endLogSegNo);
+static void exitArchiveRecovery(TimeLineID endTLI, XLogSegNo endLogSegNo);
 static bool recoveryStopsHere(XLogRecord *record, bool *includeThis);
 static void recoveryPausesHere(void);
 static void SetLatestXTime(TimestampTz xtime);
@@ -619,15 +620,14 @@ static void XLogWrite(XLogwrtRqst WriteRqst, bool flexible, bool xlog_switch);
 static bool InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 					   bool find_free, int *max_advance,
 					   bool use_lock);
-static int XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno,
-			 int emode, TimeLineID tli, int source, bool notexistOk);
-static int XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
-							  int emode, int source);
+static int XLogFileRead(XLogSegNo segno, int emode, TimeLineID tli,
+			 int source, bool notexistOk);
+static int XLogFileReadAnyTLI(XLogSegNo segno, int emode, int source);
 static int XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
 				 int reqLen, char *readBuf, TimeLineID *readTLI);
-static bool WaitForWALToBecomeAvailable(XLogPageReadPrivate *private,
-										XLogRecPtr RecPtr);
-static int emode_for_corrupt_record(XLogReaderState *state, XLogRecPtr RecPtr);
+static bool WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
+							bool fetching_ckpt);
+static int	emode_for_corrupt_record(int emode, XLogRecPtr RecPtr);
 static void XLogFileClose(void);
 static void PreallocXlogFiles(XLogRecPtr endptr);
 static void RemoveOldXlogFiles(XLogSegNo segno, XLogRecPtr endptr);
@@ -2579,8 +2579,8 @@ XLogFileOpen(XLogSegNo segno)
  * Otherwise, it's assumed to be already available in pg_xlog.
  */
 static int
-XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
-			 TimeLineID tli, int source, bool notfoundOk)
+XLogFileRead(XLogSegNo segno, int emode, TimeLineID tli,
+			 int source, bool notfoundOk)
 {
 	char		xlogfname[MAXFNAMELEN];
 	char		activitymsg[MAXFNAMELEN + 16];
@@ -2697,7 +2697,7 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
 		set_ps_display(activitymsg, false);
 
 		/* Track source of data in assorted state variables */
-		private->readSource = source;
+		readSource = source;
 		XLogReceiptSource = source;
 		/* In FROM_STREAM case, caller tracks receipt time, not me */
 		if (source != XLOG_FROM_STREAM)
@@ -2718,8 +2718,7 @@ XLogFileRead(XLogPageReadPrivate *private, XLogSegNo segno, int emode,
  * This version searches for the segment with any TLI listed in expectedTLEs.
  */
 static int
-XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
-				   int emode, int source)
+XLogFileReadAnyTLI(XLogSegNo segno, int emode, int source)
 {
 	char		path[MAXPGPATH];
 	ListCell   *cell;
@@ -2744,7 +2743,7 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 
 		if (source == XLOG_FROM_ANY || source == XLOG_FROM_ARCHIVE)
 		{
-			fd = XLogFileRead(private, segno, emode, tli,
+			fd = XLogFileRead(segno, emode, tli,
 							  XLOG_FROM_ARCHIVE, true);
 			if (fd != -1)
 			{
@@ -2755,7 +2754,7 @@ XLogFileReadAnyTLI(XLogPageReadPrivate *private, XLogSegNo segno,
 
 		if (source == XLOG_FROM_ANY || source == XLOG_FROM_PG_XLOG)
 		{
-			fd = XLogFileRead(private, segno, emode, tli,
+			fd = XLogFileRead(segno, emode, tli,
 							  XLOG_FROM_PG_XLOG, true);
 			if (fd != -1)
 				return fd;
@@ -3207,31 +3206,32 @@ ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr, int emode,
 	XLogRecord *record;
 	XLogPageReadPrivate *private = (XLogPageReadPrivate *) xlogreader->private_data;
 
-	/* Pass parameters to XLogPageRead */
+	/* Pass through parameters to XLogPageRead */
 	private->fetching_ckpt = fetching_ckpt;
 	private->emode = emode;
+	private->randAccess = (RecPtr != InvalidXLogRecPtr);
 
 	/* This is the first try to read this page. */
-	private->lastSourceFailed = false;
+	lastSourceFailed = false;
 
 	do
 	{
-		char *errormsg;
+		char   *errormsg;
 		record = XLogReadRecord(xlogreader, RecPtr, &errormsg);
 		ReadRecPtr = xlogreader->ReadRecPtr;
 		EndRecPtr = xlogreader->EndRecPtr;
 		if (record == NULL)
 		{
-			ereport(emode_for_corrupt_record(xlogreader,
+			ereport(emode_for_corrupt_record(emode,
 											 RecPtr ? RecPtr : EndRecPtr),
 					(errmsg_internal("%s", errormsg) /* already translated */));
 
-			private->lastSourceFailed = true;
+			lastSourceFailed = true;
 
-			if (private->readFile >= 0)
+			if (readFile >= 0)
 			{
-				close(private->readFile);
-				private->readFile = -1;
+				close(readFile);
+				readFile = -1;
 			}
 			break;
 		}
@@ -3250,7 +3250,7 @@ ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr, int emode,
 
 			XLogFileName(fname, xlogreader->readPageTLI, segno);
 
-			ereport(emode_for_corrupt_record(xlogreader,
+			ereport(emode_for_corrupt_record(emode,
 											 RecPtr ? RecPtr : EndRecPtr),
 					(errmsg("unexpected timeline ID %u in log segment %s, offset %u",
 							xlogreader->latestPageTLI,
@@ -4254,8 +4254,7 @@ readRecoveryCommandFile(void)
  * Exit archive-recovery state
  */
 static void
-exitArchiveRecovery(XLogPageReadPrivate *private, TimeLineID endTLI,
-					XLogSegNo endLogSegNo)
+exitArchiveRecovery(TimeLineID endTLI, XLogSegNo endLogSegNo)
 {
 	char		recoveryPath[MAXPGPATH];
 	char		xlogpath[MAXPGPATH];
@@ -4274,10 +4273,10 @@ exitArchiveRecovery(XLogPageReadPrivate *private, TimeLineID endTLI,
 	 * If the ending log segment is still open, close it (to avoid problems on
 	 * Windows with trying to rename or delete an open file).
 	 */
-	if (private->readFile >= 0)
+	if (readFile >= 0)
 	{
-		close(private->readFile);
-		private->readFile = -1;
+		close(readFile);
+		readFile = -1;
 	}
 
 	/*
@@ -4883,7 +4882,6 @@ StartupXLOG(void)
 
 	/* Set up XLOG reader facility */
 	MemSet(&private, 0, sizeof(XLogPageReadPrivate));
-	private.readFile = -1;
 	xlogreader = XLogReaderAllocate(InvalidXLogRecPtr, &XLogPageRead, &private);
 	if (!xlogreader)
 		ereport(ERROR,
@@ -5627,7 +5625,7 @@ StartupXLOG(void)
 	 * we will use that below.)
 	 */
 	if (InArchiveRecovery)
-		exitArchiveRecovery(&private, xlogreader->readPageTLI, endLogSegNo);
+		exitArchiveRecovery(xlogreader->readPageTLI, endLogSegNo);
 
 	/*
 	 * Prepare to write WAL starting at EndOfLog position, and init xlog
@@ -5652,7 +5650,7 @@ StartupXLOG(void)
 	}
 	else
 	{
-		Assert(private.readOff == (XLogCtl->xlblocks[0] - XLOG_BLCKSZ) % XLogSegSize);
+		Assert(readOff == (XLogCtl->xlblocks[0] - XLOG_BLCKSZ) % XLogSegSize);
 		memcpy((char *) Insert->currpage, xlogreader->readBuf, XLOG_BLCKSZ);
 	}
 	Insert->currpos = (char *) Insert->currpage +
@@ -5806,10 +5804,10 @@ StartupXLOG(void)
 		ShutdownRecoveryTransactionEnvironment();
 
 	/* Shut down xlogreader */
-	if (private.readFile >= 0)
+	if (readFile >= 0)
 	{
-		close(private.readFile);
-		private.readFile = -1;
+		close(readFile);
+		readFile = -1;
 	}
 	XLogReaderFree(xlogreader);
 
@@ -8843,7 +8841,7 @@ XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr, int reqLen,
 	 * See if we need to switch to a new segment because the requested record
 	 * is not in the currently open one.
 	 */
-	if (private->readFile >= 0 && !XLByteInSeg(targetPagePtr, private->readSegNo))
+	if (readFile >= 0 && !XLByteInSeg(targetPagePtr, readSegNo))
 	{
 		/*
 		 * Request a restartpoint if we've replayed too much xlog since the
@@ -8851,34 +8849,36 @@ XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr, int reqLen,
 		 */
 		if (StandbyMode && bgwriterLaunched)
 		{
-			if (XLogCheckpointNeeded(private->readSegNo))
+			if (XLogCheckpointNeeded(readSegNo))
 			{
 				(void) GetRedoRecPtr();
-				if (XLogCheckpointNeeded(private->readSegNo))
+				if (XLogCheckpointNeeded(readSegNo))
 					RequestCheckpoint(CHECKPOINT_CAUSE_XLOG);
 			}
 		}
 
-		close(private->readFile);
-		private->readFile = -1;
-		private->readSource = 0;
+		close(readFile);
+		readFile = -1;
+		readSource = 0;
 	}
 
-	XLByteToSeg(targetPagePtr, private->readSegNo);
+	XLByteToSeg(targetPagePtr, readSegNo);
 
 retry:
 	/* See if we need to retrieve more data */
-	if (private->readFile < 0 ||
-		(private->readSource == XLOG_FROM_STREAM &&
+	if (readFile < 0 ||
+		(readSource == XLOG_FROM_STREAM &&
 		 !XLByteLT(targetPagePtr + reqLen, receivedUpto)))
 	{
 		if (StandbyMode)
 		{
-			if (!WaitForWALToBecomeAvailable(private, targetPagePtr + reqLen))
+			if (!WaitForWALToBecomeAvailable(targetPagePtr + reqLen,
+											 private->randAccess,
+											 private->fetching_ckpt))
 				goto triggered;
 		}
 		/* In archive or crash recovery. */
-		else if (private->readFile < 0)
+		else if (readFile < 0)
 		{
 			int source;
 
@@ -8887,9 +8887,8 @@ retry:
 			else
 				source = XLOG_FROM_PG_XLOG;
 
-			private->readFile =
-				XLogFileReadAnyTLI(private, private->readSegNo, emode, source);
-			if (private->readFile < 0)
+			readFile = XLogFileReadAnyTLI(readSegNo, emode, source);
+			if (readFile < 0)
 				return -1;
 		}
 	}
@@ -8898,7 +8897,7 @@ retry:
 	 * At this point, we have the right segment open and if we're streaming we
 	 * know the requested record is in it.
 	 */
-	Assert(private->readFile != -1);
+	Assert(readFile != -1);
 
 	/*
 	 * If the current segment is being streamed from master, calculate how
@@ -8906,57 +8905,57 @@ retry:
 	 * requested record has been received, but this is for the benefit of
 	 * future calls, to allow quick exit at the top of this function.
 	 */
-	if (private->readSource == XLOG_FROM_STREAM)
+	if (readSource == XLOG_FROM_STREAM)
 	{
 		if (((targetPagePtr) / XLOG_BLCKSZ) != (receivedUpto / XLOG_BLCKSZ))
-			private->readLen = XLOG_BLCKSZ;
+			readLen = XLOG_BLCKSZ;
 		else
-			private->readLen = receivedUpto % XLogSegSize - targetPageOff;
+			readLen = receivedUpto % XLogSegSize - targetPageOff;
 	}
 	else
-		private->readLen = XLOG_BLCKSZ;
+		readLen = XLOG_BLCKSZ;
 
 	/* Read the requested page */
-	private->readOff = targetPageOff;
-	if (lseek(private->readFile, (off_t) private->readOff, SEEK_SET) < 0)
+	readOff = targetPageOff;
+	if (lseek(readFile, (off_t) readOff, SEEK_SET) < 0)
 	{
-		char		fname[MAXFNAMELEN];
+		char fname[MAXFNAMELEN];
 
-		XLogFileName(fname, curFileTLI, private->readSegNo);
-		ereport(emode_for_corrupt_record(xlogreader, targetPagePtr + reqLen),
+		XLogFileName(fname, curFileTLI, readSegNo);
+		ereport(emode_for_corrupt_record(emode, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
-				 errmsg("could not seek in log segment %s to offset %u: %m",
-						fname, private->readOff)));
+		 errmsg("could not seek in log segment %s to offset %u: %m",
+						fname, readOff)));
 		goto next_record_is_invalid;
 	}
 
-	if (read(private->readFile, readBuf, XLOG_BLCKSZ) != XLOG_BLCKSZ)
+	if (read(readFile, readBuf, XLOG_BLCKSZ) != XLOG_BLCKSZ)
 	{
-		char		fname[MAXFNAMELEN];
+		char fname[MAXFNAMELEN];
 
-		XLogFileName(fname, curFileTLI, private->readSegNo);
-		ereport(emode_for_corrupt_record(xlogreader, targetPagePtr + reqLen),
+		XLogFileName(fname, curFileTLI, readSegNo);
+		ereport(emode_for_corrupt_record(emode, targetPagePtr + reqLen),
 				(errcode_for_file_access(),
-				 errmsg("could not read from log segment %s, offset %u: %m",
-						fname, private->readOff)));
+		 errmsg("could not read from log segment %s, offset %u: %m",
+						fname, readOff)));
 		goto next_record_is_invalid;
 	}
 
-	Assert(targetSegNo == private->readSegNo);
-	Assert(targetPageOff == private->readOff);
-	Assert(reqLen <= private->readLen);
+	Assert(targetSegNo == readSegNo);
+	Assert(targetPageOff == readOff);
+	Assert(reqLen <= readLen);
 
 	*readTLI = curFileTLI;
-	return private->readLen;
+	return readLen;
 
 next_record_is_invalid:
-	private->lastSourceFailed = true;
+	lastSourceFailed = true;
 
-	if (private->readFile >= 0)
-		close(private->readFile);
-	private->readFile = -1;
-	private->readLen = 0;
-	private->readSource = 0;
+	if (readFile >= 0)
+		close(readFile);
+	readFile = -1;
+	readLen = 0;
+	readSource = 0;
 
 	/* In standby-mode, keep trying */
 	if (StandbyMode)
@@ -8965,11 +8964,11 @@ next_record_is_invalid:
 		return -1;
 
 triggered:
-	if (private->readFile >= 0)
-		close(private->readFile);
-	private->readFile = -1;
-	private->readLen = 0;
-	private->readSource = 0;
+	if (readFile >= 0)
+		close(readFile);
+	readFile = -1;
+	readLen = 0;
+	readSource = 0;
 
 	return -1;
 }
@@ -8986,7 +8985,8 @@ triggered:
  * false.
  */
 static bool
-WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
+WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
+							bool fetching_ckpt)
 {
 	static pg_time_t last_fail_time = 0;
 	pg_time_t now;
@@ -9012,12 +9012,12 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 	 * part of advancing to the next state.
 	 *-------
 	 */
-	if (private->currentSource == 0)
-		private->currentSource = XLOG_FROM_ARCHIVE;
+	if (currentSource == 0)
+		currentSource = XLOG_FROM_ARCHIVE;
 
 	for (;;)
 	{
-		int		oldSource = private->currentSource;
+		int		oldSource = currentSource;
 
 		/*
 		 * First check if we failed to read from the current source, and
@@ -9025,13 +9025,13 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 		 * happened outside this function, e.g when a CRC check fails on a
 		 * record, or within this loop.
 		 */
-		if (private->lastSourceFailed)
+		if (lastSourceFailed)
 		{
 
-			switch (private->currentSource)
+			switch (currentSource)
 			{
 				case XLOG_FROM_ARCHIVE:
-					private->currentSource = XLOG_FROM_PG_XLOG;
+					currentSource = XLOG_FROM_PG_XLOG;
 					break;
 
 				case XLOG_FROM_PG_XLOG:
@@ -9056,7 +9056,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 					 */
 					if (PrimaryConnInfo)
 					{
-						XLogRecPtr ptr = private->fetching_ckpt ? RedoStartLSN : RecPtr;
+						XLogRecPtr ptr = fetching_ckpt ? RedoStartLSN : RecPtr;
 
 						RequestXLogStreaming(ptr, PrimaryConnInfo);
 					}
@@ -9065,7 +9065,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 					 * immediate failure if we didn't launch walreceiver, and
 					 * move on to the next state.
 					 */
-					private->currentSource = XLOG_FROM_STREAM;
+					currentSource = XLOG_FROM_STREAM;
 					break;
 
 				case XLOG_FROM_STREAM:
@@ -9098,7 +9098,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 					{
 						if (rescanLatestTimeLine())
 						{
-							private->currentSource = XLOG_FROM_ARCHIVE;
+							currentSource = XLOG_FROM_ARCHIVE;
 							break;
 						}
 					}
@@ -9117,61 +9117,60 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 						now = (pg_time_t) time(NULL);
 					}
 					last_fail_time = now;
-					private->currentSource = XLOG_FROM_ARCHIVE;
+					currentSource = XLOG_FROM_ARCHIVE;
 					break;
 
 				default:
-					elog(ERROR, "unexpected WAL source %d", private->currentSource);
+					elog(ERROR, "unexpected WAL source %d", currentSource);
 			}
 		}
-		else if (private->currentSource == XLOG_FROM_PG_XLOG)
+		else if (currentSource == XLOG_FROM_PG_XLOG)
 		{
 			/*
 			 * We just successfully read a file in pg_xlog. We prefer files
 			 * in the archive over ones in pg_xlog, so try the next file
 			 * again from the archive first.
 			 */
-			private->currentSource = XLOG_FROM_ARCHIVE;
+			currentSource = XLOG_FROM_ARCHIVE;
 		}
 
-		if (private->currentSource != oldSource)
+		if (currentSource != oldSource)
 			elog(DEBUG2, "switched WAL source from %s to %s after %s",
-				 xlogSourceNames[oldSource],
-				 xlogSourceNames[private->currentSource],
-				 private->lastSourceFailed ? "failure" : "success");
+				 xlogSourceNames[oldSource], xlogSourceNames[currentSource],
+				 lastSourceFailed ? "failure" : "success");
 
 		/*
 		 * We've now handled possible failure. Try to read from the chosen
 		 * source.
 		 */
-		private->lastSourceFailed = false;
+		lastSourceFailed = false;
 
-		switch (private->currentSource)
+		switch (currentSource)
 		{
 			case XLOG_FROM_ARCHIVE:
 			case XLOG_FROM_PG_XLOG:
 				/* Close any old file we might have open. */
-				if (private->readFile >= 0)
+				if (readFile >= 0)
 				{
-					close(private->readFile);
-					private->readFile = -1;
+					close(readFile);
+					readFile = -1;
 				}
+				/* Reset curFileTLI if random fetch. */
+				if (randAccess)
+					curFileTLI = 0;
 
 				/*
 				 * Try to restore the file from archive, or read an existing
 				 * file from pg_xlog.
 				 */
-				private->readFile =
-					XLogFileReadAnyTLI(private, private->readSegNo, DEBUG2,
-									   private->currentSource);
-
-				if (private->readFile >= 0)
+				readFile = XLogFileReadAnyTLI(readSegNo, DEBUG2, currentSource);
+				if (readFile >= 0)
 					return true;	/* success! */
 
 				/*
 				 * Nope, not found in archive or pg_xlog.
 				 */
-				private->lastSourceFailed = true;
+				lastSourceFailed = true;
 				break;
 
 			case XLOG_FROM_STREAM:
@@ -9183,7 +9182,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 				 */
 				if (!WalRcvInProgress())
 				{
-					private->lastSourceFailed = true;
+					lastSourceFailed = true;
 					break;
 				}
 
@@ -9224,18 +9223,17 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 					 * open already.  Use XLOG_FROM_STREAM so that source info
 					 * is set correctly and XLogReceiptTime isn't changed.
 					 */
-					if (private->readFile < 0)
+					if (readFile < 0)
 					{
-						private->readFile =
-							XLogFileRead(private, private->readSegNo, PANIC,
-										 recoveryTargetTLI,
-										 XLOG_FROM_STREAM, false);
-						Assert(private->readFile >= 0);
+						readFile = XLogFileRead(readSegNo, PANIC,
+												recoveryTargetTLI,
+												XLOG_FROM_STREAM, false);
+						Assert(readFile >= 0);
 					}
 					else
 					{
 						/* just make sure source info is correct... */
-						private->readSource = XLOG_FROM_STREAM;
+						readSource = XLOG_FROM_STREAM;
 						XLogReceiptSource = XLOG_FROM_STREAM;
 						return true;
 					}
@@ -9256,7 +9254,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 					 * will move on to replay the streamed WAL from pg_xlog,
 					 * and then recheck the trigger and exit replay.
 					 */
-					private->lastSourceFailed = true;
+					lastSourceFailed = true;
 					break;
 				}
 
@@ -9273,7 +9271,7 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
 			}
 
 			default:
-				elog(ERROR, "unexpected WAL source %d", private->currentSource);
+				elog(ERROR, "unexpected WAL source %d", currentSource);
 		}
 
 		/*
@@ -9305,13 +9303,11 @@ WaitForWALToBecomeAvailable(XLogPageReadPrivate *private, XLogRecPtr RecPtr)
  * erroneously suppressed.
  */
 static int
-emode_for_corrupt_record(XLogReaderState *state, XLogRecPtr RecPtr)
+emode_for_corrupt_record(int emode, XLogRecPtr RecPtr)
 {
-	XLogPageReadPrivate *private = (XLogPageReadPrivate *) state->private_data;
-	int			emode = private->emode;
 	static XLogRecPtr lastComplaint = 0;
 
-	if (private->readSource == XLOG_FROM_PG_XLOG && emode == LOG)
+	if (readSource == XLOG_FROM_PG_XLOG && emode == LOG)
 	{
 		if (XLByteEQ(RecPtr, lastComplaint))
 			emode = DEBUG1;
