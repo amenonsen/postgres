@@ -3222,7 +3222,8 @@ ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr, int emode,
 		EndRecPtr = xlogreader->EndRecPtr;
 		if (record == NULL)
 		{
-			ereport(emode_for_corrupt_record(xlogreader, RecPtr),
+			ereport(emode_for_corrupt_record(xlogreader,
+											 RecPtr ? RecPtr : EndRecPtr),
 					(errmsg_internal("%s", errormsg) /* already translated */));
 
 			private->lastSourceFailed = true;
