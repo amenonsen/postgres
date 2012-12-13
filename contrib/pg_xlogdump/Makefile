@@ -16,7 +16,7 @@ RMGRDESCSOURCES = clogdesc.c dbasedesc.c gindesc.c gistdesc.c hashdesc.c \
 
 RMGRDESCOBJS = $(patsubst %.c,%.o,$(RMGRDESCSOURCES))
 
-EXTRA_CLEAN = $(rmgrdescsrcs) xlogreader.c assert.c
+EXTRA_CLEAN = $(RMGRDESCSOURCES) xlogreader.c assert.c
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config
