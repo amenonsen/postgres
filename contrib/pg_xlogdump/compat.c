@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * compat.c
- *		Support functions for xlogdump.c
+ *		Reimplementations of various backend functions.
  *
  * Portions Copyright (c) 2012, PostgreSQL Global Development Group
  *
