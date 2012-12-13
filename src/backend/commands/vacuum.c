@@ -394,7 +394,7 @@ vacuum_set_xid_limits(int freeze_min_age,
 	 * working on a particular table at any time, and that each vacuum is
 	 * always an independent transaction.
 	 */
-	*oldestXmin = GetOldestXmin(sharedRel, true);
+	*oldestXmin = GetOldestXmin(sharedRel, true, false);
 
 	Assert(TransactionIdIsNormal(*oldestXmin));
 
@@ -686,7 +686,7 @@ vac_update_datfrozenxid(void)
 	 * committed pg_class entries for new tables; see AddNewRelationTuple().
 	 * Se we cannot produce a wrong minimum by starting with this.
 	 */
-	newFrozenXid = GetOldestXmin(true, true);
+	newFrozenXid = GetOldestXmin(true, true, false);
 
 	/*
 	 * We must seqscan pg_class to find the minimum Xid, because there is no

@@ -1089,7 +1089,7 @@ XLogWalRcvSendHSFeedback(void)
 	 * Make the expensive call to get the oldest xmin once we are certain
 	 * everything else has been checked.
 	 */
-	xmin = GetOldestXmin(true, false);
+	xmin = GetOldestXmin(true, false, false);
 
 	/*
 	 * Get epoch and adjust if nextXid and oldestXmin are different sides of
