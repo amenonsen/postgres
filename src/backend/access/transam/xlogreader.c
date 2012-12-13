@@ -50,6 +50,9 @@ static void
 report_invalid_record(XLogReaderState *state, const char *fmt, ...)
 {
 	va_list	args;
+
+	fmt = _(fmt);
+
 	va_start(args, fmt);
 	vsnprintf(state->errormsg_buf, MAX_ERRORMSG_LEN, fmt, args);
 	va_end(args);
