@@ -544,16 +544,12 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	 * cannot go backwards anymore, as ComputeLogicalXmin() nails the value
 	 * down.
 	 *
-	 * We need to do this *after* releasing the spinlock, otherwise
-	 * GetOldestXmin will deadlock with ourselves.
-	 *
-	 * FIXME: think about solving the race conditions in a nicer way.
+	 * FIXME: this should probably be in procarray.c?
 	 */
-recompute_xmin:
-	walsnd->xmin = GetOldestXmin(true, true);
+	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+	walsnd->xmin = GetOldestXminNoLock(true, true);
+	LWLockRelease(ProcArrayLock);
 	ComputeLogicalXmin();
-	if (walsnd->xmin != GetOldestXmin(true, true))
-		goto recompute_xmin;
 
 	decoding_ctx = AllocSetContextCreate(TopMemoryContext,
 										 "decoding context",
@@ -1133,8 +1129,10 @@ ProcessStandbyReplyMessage(void)
 	}
 
 	/*
-	 * Do an unlocked check for candidate_xmin first.
+	 * Advance our local xmin horizin when the client confirmed a flush.
 	 */
+
+	/* Do an unlocked check for candidate_xmin first.*/
 	if (MyLogicalWalSnd &&
 		TransactionIdIsValid(MyLogicalWalSnd->candidate_xmin))
 	{
