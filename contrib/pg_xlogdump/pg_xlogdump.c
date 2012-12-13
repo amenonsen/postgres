@@ -5,7 +5,7 @@
  * Copyright (c) 2012, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  src/bin/pg_xlogdump/pg_xlogdump.c
+ *		  contrib/pg_xlogdump/pg_xlogdump.c
  *-------------------------------------------------------------------------
  */
 
