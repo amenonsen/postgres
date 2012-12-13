@@ -18,7 +18,6 @@
 
 #include "postgres.h"
 
-#include "access/timeline.h"
 #include "access/transam.h"
 #include "access/xlog_internal.h"
 #include "access/xlogreader.h"
@@ -92,7 +91,6 @@ XLogReaderAllocate(XLogRecPtr startpoint, XLogPageReadCB pagereadfunc,
 	state->private_data = private_data;
 	state->EndRecPtr = startpoint;
 	state->readPageTLI = 0;
-	state->expectedTLEs = NIL;
 	state->system_identifier = 0;
 	state->errormsg_buf = malloc(MAX_ERRORMSG_LEN + 1);
 	if (!state->errormsg_buf)
@@ -939,24 +937,6 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 	}
 
 	/*
-	 * Check page TLI is one of the expected values.
-	 */
-	if (state->expectedTLEs != NIL &&
-		!tliInHistory(hdr->xlp_tli, state->expectedTLEs))
-	{
-		char		fname[MAXFNAMELEN];
-
-		XLogFileName(fname, state->readPageTLI, segno);
-
-		report_invalid_record(state,
-					"unexpected timeline ID %u in log segment %s, offset %u",
-							  hdr->xlp_tli,
-							  fname,
-							  offset);
-		return false;
-	}
-
-	/*
 	 * Since child timelines are always assigned a TLI greater than their
 	 * immediate parent's TLI, we should never see TLI go backwards across
 	 * successive pages of a consistent WAL sequence.
@@ -972,9 +952,9 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 	 * XXX: This is slightly less precise than the check we did in earlier
 	 * times. I don't see a problem with that though.
 	 */
-	if (state->latestReadPtr < recptr)
+	if (state->latestPagePtr < recptr)
 	{
-		if (hdr->xlp_tli < state->latestReadTLI)
+		if (hdr->xlp_tli < state->latestPageTLI)
 		{
 			char		fname[MAXFNAMELEN];
 
@@ -983,13 +963,13 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 			report_invalid_record(state,
 								  "out-of-sequence timeline ID %u (after %u) in log segment %s, offset %u",
 								  hdr->xlp_tli,
-								  state->latestReadTLI,
+								  state->latestPageTLI,
 								  fname,
 								  offset);
 			return false;
 		}
-		state->latestReadPtr = recptr;
-		state->latestReadTLI = hdr->xlp_tli;
 	}
+	state->latestPagePtr = recptr;
+	state->latestPageTLI = hdr->xlp_tli;
 	return true;
 }

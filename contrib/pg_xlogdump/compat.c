@@ -18,30 +18,12 @@
 #define FRONTEND 1
 #include "postgres.h"
 
-#include "access/timeline.h"
 #include "catalog/catalog.h"
 #include "datatype/timestamp.h"
 #include "storage/relfilenode.h"
 #include "utils/timestamp.h"
 
 bool assert_enabled = false;
-
-/*
- * Returns true if 'expectedTLEs' contains a timeline with id 'tli'
- */
-bool
-tliInHistory(TimeLineID tli, List *expectedTLEs)
-{
-	ListCell *cell;
-
-	foreach(cell, expectedTLEs)
-	{
-		if (((TimeLineHistoryEntry *) lfirst(cell))->tli == tli)
-			return true;
-	}
-
-	return false;
-}
 
 void
 pfree(void *a)

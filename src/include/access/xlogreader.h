@@ -21,7 +21,6 @@
 #define XLOGREADER_H
 
 #include "access/xlog_internal.h"
-#include "nodes/pg_list.h"
 
 struct XLogReaderState;
 
@@ -65,13 +64,6 @@ typedef struct XLogReaderState
 	uint64		system_identifier;
 
 	/*
-	 * List of acceptable TLIs.
-	 *
-	 * Set to NIL (the default value) if this should not be checked.
-	 */
-	List	   *expectedTLEs;
-
-	/*
 	 * Opaque data for callbacks to use.  Not used by XLogReader.
 	 */
 	void	   *private_data;
@@ -81,6 +73,11 @@ typedef struct XLogReaderState
 	 */
 	XLogRecPtr	ReadRecPtr;		/* start of last record read */
 	XLogRecPtr	EndRecPtr;		/* end+1 of last record read */
+
+	/*
+	 * TLI of the current xlog page
+	 */
+	TimeLineID	ReadTimeLineID;
 
 	/* ----------------------------------------
 	 * private/internal state
@@ -96,9 +93,9 @@ typedef struct XLogReaderState
 	uint32      readLen;
 	TimeLineID  readPageTLI;
 
-	/* Highest TLI we have read so far  */
-	TimeLineID	latestReadTLI;
-	XLogRecPtr	latestReadPtr;
+	/* beginning of last page read, and its TLI  */
+	XLogRecPtr	latestPagePtr;
+	TimeLineID	latestPageTLI;
 
 	/* Buffer for current ReadRecord result (expandable) */
 	char	   *readRecordBuf;

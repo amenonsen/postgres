@@ -3233,7 +3233,32 @@ ReadRecord(XLogReaderState *xlogreader, XLogRecPtr RecPtr, int emode,
 				close(private->readFile);
 				private->readFile = -1;
 			}
+			break;
 		}
+
+		/*
+		 * Check page TLI is one of the expected values.
+		 */
+		if (!tliInHistory(xlogreader->latestPageTLI, expectedTLEs))
+		{
+			char		fname[MAXFNAMELEN];
+			XLogSegNo segno;
+			int32 offset;
+
+			XLByteToSeg(xlogreader->latestPagePtr, segno);
+			offset = xlogreader->latestPagePtr % XLogSegSize;
+
+			XLogFileName(fname, xlogreader->readPageTLI, segno);
+
+			ereport(emode_for_corrupt_record(xlogreader,
+											 RecPtr ? RecPtr : EndRecPtr),
+					(errmsg("unexpected timeline ID %u in log segment %s, offset %u",
+							xlogreader->latestPageTLI,
+							fname,
+							offset)));
+			return false;
+		}
+
 	} while (StandbyMode && record == NULL);
 
 	return record;
@@ -4866,7 +4891,6 @@ StartupXLOG(void)
 				 errmsg("out of memory"),
 				 errdetail("Failed while allocating an XLog reading processor")));
 	xlogreader->system_identifier = ControlFile->system_identifier;
-	xlogreader->expectedTLEs = expectedTLEs;
 
 	if (read_backup_label(&checkPointLoc, &backupEndRequired,
 						  &backupFromStandby))
