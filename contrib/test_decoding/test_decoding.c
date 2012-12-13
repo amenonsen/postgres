@@ -33,11 +33,11 @@ void _PG_init(void);
 
 void WalSndWriteData(XLogRecPtr lsn, const char *data, Size len);
 
-extern void pg_decode_init(void **private);
+extern void pg_decode_init(void **private_data);
 
-extern bool pg_decode_begin_txn(void *private, StringInfo out, ReorderBufferTXN* txn);
-extern bool pg_decode_commit_txn(void *private, StringInfo out, ReorderBufferTXN* txn, XLogRecPtr commit_lsn);
-extern bool pg_decode_change(void *private, StringInfo out, ReorderBufferTXN* txn, Oid tableoid, ReorderBufferChange *change);
+extern bool pg_decode_begin_txn(void *private_data, StringInfo out, ReorderBufferTXN* txn);
+extern bool pg_decode_commit_txn(void *private_data, StringInfo out, ReorderBufferTXN* txn, XLogRecPtr commit_lsn);
+extern bool pg_decode_change(void *private_data, StringInfo out, ReorderBufferTXN* txn, Oid tableoid, ReorderBufferChange *change);
 
 
 void
@@ -46,10 +46,10 @@ _PG_init(void)
 }
 
 void
-pg_decode_init(void **private)
+pg_decode_init(void **private_data)
 {
 	AssertVariableIsOfType(&pg_decode_init, LogicalDecodeInitCB);
-	*private = AllocSetContextCreate(TopMemoryContext,
+	*private_data = AllocSetContextCreate(TopMemoryContext,
 									 "text conversion context",
 									 ALLOCSET_DEFAULT_MINSIZE,
 									 ALLOCSET_DEFAULT_INITSIZE,
@@ -57,7 +57,7 @@ pg_decode_init(void **private)
 }
 
 bool
-pg_decode_begin_txn(void *private, StringInfo out, ReorderBufferTXN* txn)
+pg_decode_begin_txn(void *private_data, StringInfo out, ReorderBufferTXN* txn)
 {
 	AssertVariableIsOfType(&pg_decode_begin_txn, LogicalDecodeBeginCB);
 
@@ -66,7 +66,7 @@ pg_decode_begin_txn(void *private, StringInfo out, ReorderBufferTXN* txn)
 }
 
 bool
-pg_decode_commit_txn(void *private, StringInfo out, ReorderBufferTXN* txn, XLogRecPtr commit_lsn)
+pg_decode_commit_txn(void *private_data, StringInfo out, ReorderBufferTXN* txn, XLogRecPtr commit_lsn)
 {
 	AssertVariableIsOfType(&pg_decode_commit_txn, LogicalDecodeCommitCB);
 
@@ -130,13 +130,13 @@ tuple_to_stringinfo(StringInfo s, TupleDesc tupdesc, HeapTuple tuple)
 
 /* This is is just for demonstration, don't ever use this code for anything real! */
 bool
-pg_decode_change(void *private, StringInfo out, ReorderBufferTXN* txn,
+pg_decode_change(void *private_data, StringInfo out, ReorderBufferTXN* txn,
 				 Oid tableoid, ReorderBufferChange *change)
 {
 	Relation relation = RelationIdGetRelation(tableoid);
 	Form_pg_class class_form = RelationGetForm(relation);
 	TupleDesc	tupdesc = RelationGetDescr(relation);
-	MemoryContext context = (MemoryContext)private;
+	MemoryContext context = (MemoryContext)private_data;
 	MemoryContext old = MemoryContextSwitchTo(context);
 
 	AssertVariableIsOfType(&pg_decode_change, LogicalDecodeChangeCB);
