@@ -52,10 +52,6 @@ static void fatal_error(const char *fmt, ...)
 	exit(1);
 }
 
-static void
-XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
-				 XLogRecPtr startptr, char *buf, Size count);
-
 /* this should probably be put in a general implementation */
 static void
 XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
