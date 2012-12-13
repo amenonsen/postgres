@@ -23,7 +23,9 @@
 #include "storage/relfilenode.h"
 #include "utils/timestamp.h"
 
+#ifdef USE_ASSERT_CHECKING
 bool assert_enabled = false;
+#endif
 
 void
 pfree(void *a)
@@ -43,36 +45,35 @@ relpathbackend(RelFileNode rnode, BackendId backend, ForkNumber forknum)
 	return NULL;
 }
 
-/*
- * Write errors to stderr (or by equal means when stderr is
- * not available).
- */
+#ifdef USE_ASSERT_CHECKING
 void
-write_stderr(const char *fmt,...)
+ExceptionalCondition(const char *conditionName,
+					 const char *errorType,
+					 const char *fileName, int lineNumber)
 {
-	va_list		ap;
+	if (!PointerIsValid(conditionName)
+		|| !PointerIsValid(fileName)
+		|| !PointerIsValid(errorType))
+		fprintf(stderr, "TRAP: ExceptionalCondition: bad arguments\n");
+	else
+	{
+		fprintf(stderr, "TRAP: %s(\"%s\", File: \"%s\", Line: %d)\n",
+					 errorType, conditionName,
+					 fileName, lineNumber);
+	}
 
-	va_start(ap, fmt);
-#if !defined(WIN32) && !defined(__CYGWIN__)
-	/* On Unix, we just fprintf to stderr */
-	vfprintf(stderr, fmt, ap);
-#else
+	/* Usually this shouldn't be needed, but make sure the msg went out */
+	fflush(stderr);
+
+#ifdef SLEEP_ON_ASSERT
 
 	/*
-	 * On Win32, we print to stderr if running on a console, or write to
-	 * eventlog if running as a service
+	 * It would be nice to use pg_usleep() here, but only does 2000 sec or 33
+	 * minutes, which seems too short.
 	 */
-	if (!isatty(fileno(stderr)))	/* Running as a service */
-	{
-		char		errbuf[2048];		/* Arbitrary size? */
-
-		vsnprintf(errbuf, sizeof(errbuf), fmt, ap);
-
-		write_eventlog(EVENTLOG_ERROR_TYPE, errbuf);
-	}
-	else
-		/* Not running as service, write to stderr */
-		vfprintf(stderr, fmt, ap);
+	sleep(1000000);
 #endif
-	va_end(ap);
+
+	abort();
 }
+#endif	/* USE_ASSERT_CHECKING */
