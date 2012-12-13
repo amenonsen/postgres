@@ -125,9 +125,4 @@ extern void XLogReaderFree(XLogReaderState *state);
 extern struct XLogRecord *XLogReadRecord(XLogReaderState *state, XLogRecPtr ptr,
 			   char **errormsg);
 
-/*
- * Find the address of the next record with a lsn >= RecPtr.
- */
-extern XLogRecPtr XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr);
-
 #endif   /* XLOGREADER_H */
