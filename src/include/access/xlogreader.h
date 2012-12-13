@@ -122,7 +122,7 @@ extern void XLogReaderFree(XLogReaderState *state);
 /*
  * Read the next record from xlog. Returns NULL on end-of-WAL or on failure.
  */
-extern XLogRecord *XLogReadRecord(XLogReaderState *state, XLogRecPtr ptr,
+extern struct XLogRecord *XLogReadRecord(XLogReaderState *state, XLogRecPtr ptr,
 			   char **errormsg);
 
 /*

@@ -16,11 +16,11 @@
 #include <unistd.h>
 #include <libgen.h>
 
+#include "access/xlog.h"
 #include "access/xlogreader.h"
 #include "access/rmgr.h"
 #include "catalog/catalog.h"
 #include "pg_config_manual.h"
-#include "utils/elog.h"
 
 #include "getopt_long.h"
 
