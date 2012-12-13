@@ -1104,14 +1104,33 @@ TransactionIdIsActive(TransactionId xid)
 TransactionId
 GetOldestXmin(bool allDbs, bool ignoreVacuum)
 {
+	TransactionId res;
+
+	/* Cannot look for individual databases during recovery */
+	Assert(allDbs || !RecoveryInProgress());
+
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
+	res = GetOldestXminNoLock(allDbs, ignoreVacuum);
+	LWLockRelease(ProcArrayLock);
+	return res;
+}
+
+/*
+ * GetOldestXminNoLock -- worker routine for GetOldestXmin and others
+ *
+ * Requires ProcArrayLock to be already locked!
+ *
+ * Check GetOldestXmin for the semantics of this.
+ */
+TransactionId
+GetOldestXminNoLock(bool allDbs, bool ignoreVacuum)
+{
 	ProcArrayStruct *arrayP = procArray;
 	TransactionId result;
 	int			index;
 
 	/* Cannot look for individual databases during recovery */
 	Assert(allDbs || !RecoveryInProgress());
-
-	LWLockAcquire(ProcArrayLock, LW_SHARED);
 
 	/*
 	 * We initialize the MIN() calculation with latestCompletedXid + 1. This
@@ -1174,19 +1193,12 @@ GetOldestXmin(bool allDbs, bool ignoreVacuum)
 		 */
 		TransactionId kaxmin = KnownAssignedXidsGetOldestXmin();
 
-		LWLockRelease(ProcArrayLock);
-
 		if (TransactionIdIsNormal(kaxmin) &&
 			TransactionIdPrecedes(kaxmin, result))
 			result = kaxmin;
 	}
 	else
 	{
-		/*
-		 * No other information needed, so release the lock immediately.
-		 */
-		LWLockRelease(ProcArrayLock);
-
 		/*
 		 * Compute the cutoff XID by subtracting vacuum_defer_cleanup_age,
 		 * being careful not to generate a "permanent" XID.
