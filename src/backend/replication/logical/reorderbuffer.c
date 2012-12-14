@@ -54,7 +54,7 @@ const Size max_cached_transactions = 512;
  * This needs to be synchronized with ReorderBufferChangeType! Adjust the
  * StatisAssertExpr's in ReorderBufferAllocate if you add anything!
  */
-enum ReorderBufferChangeTypeInternal
+typedef enum
 {
 	REORDER_BUFFER_CHANGE_INTERNAL_INSERT,
 	REORDER_BUFFER_CHANGE_INTERNAL_UPDATE,
@@ -62,7 +62,7 @@ enum ReorderBufferChangeTypeInternal
 	REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT,
 	REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID,
 	REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID
-};
+} ReorderBufferChangeTypeInternal;
 
 
 /* entry for a hash table we use to map from xid to our transaction state */
@@ -293,7 +293,7 @@ ReorderBufferGetChange(ReorderBuffer *cache)
 void
 ReorderBufferReturnChange(ReorderBuffer *cache, ReorderBufferChange *change)
 {
-	switch ((enum ReorderBufferChangeTypeInternal)change->action_internal)
+	switch ((ReorderBufferChangeTypeInternal)change->action_internal)
 	{
 		case REORDER_BUFFER_CHANGE_INTERNAL_INSERT:
 		/* fall through */
@@ -884,7 +884,7 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 		iterstate = ReorderBufferIterTXNInit(cache, txn);
 		while ((change = ReorderBufferIterTXNNext(cache, iterstate)))
 		{
-			switch ((enum ReorderBufferChangeTypeInternal)change->action_internal)
+			switch ((ReorderBufferChangeTypeInternal)change->action_internal)
 			{
 				case REORDER_BUFFER_CHANGE_INTERNAL_INSERT:
 				case REORDER_BUFFER_CHANGE_INTERNAL_UPDATE:
