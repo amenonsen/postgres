@@ -234,6 +234,8 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder)
 	snapstate->committed.xip = MemoryContextAlloc(context,
 												  snapstate->committed.xcnt_space
 												  * sizeof(TransactionId));
+	snapstate->committed.includes_all_transactions = true;
+
 	snapstate->transactions_after = InvalidXLogRecPtr;
 
 	snapstate->snapshot = NULL;
@@ -411,9 +413,15 @@ SnapBuildExportSnapshot(Snapstate *snapstate)
 
 	elog(LOG, "building snapshot");
 
+	if (snapstate->state != SNAPBUILD_CONSISTENT)
+		elog(ERROR, "cannot export a snapshot before reaching a consistent state");
+
+	if (!snapstate->committed.includes_all_transactions)
+		elog(ERROR, "cannot export a snapshot after, not all transactions are monitored anymore");
+
 	/* so we don't overwrite the existing value */
 	if (TransactionIdIsValid(MyPgXact->xmin))
-		elog(ERROR, "cannot export a transaction when MyPgXact->xmin already is valid");
+		elog(ERROR, "cannot export a snapshot when MyPgXact->xmin already is valid");
 
 	if (SavedResourceOwnerDuringExport)
 		elog(ERROR, "can only export one snapshot at a time");
@@ -1310,5 +1318,10 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 
 		/* add a new SnapshotNow to all currently running transactions */
 		SnapBuildDistributeSnapshotNow(snapstate, reorder, lsn);
+	}
+	else
+	{
+		/* record that we cannot export a general snapshot anymorer */
+		snapstate->committed.includes_all_transactions = false;
 	}
 }

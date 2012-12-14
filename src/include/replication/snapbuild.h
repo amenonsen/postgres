@@ -117,6 +117,13 @@ typedef struct Snapstate
 		 * distributing a snapshot.
 		 */
 		TransactionId *xip;
+
+		/*
+		 * Until we reach a CONSISTENT state, we record commits of all
+		 * transactions, not just the catalog changing ones. Record when that
+		 * changes so we know we cannot export a snapshot safely anymore.
+		 */
+		bool includes_all_transactions;
 	} committed;
 
 	/*
