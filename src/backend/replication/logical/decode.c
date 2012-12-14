@@ -181,7 +181,8 @@ void DecodeRecordIntoReorderBuffer(XLogReaderState *reader,
 							sub_xids = (TransactionId *) &(
 								xlrec->crec.xnodes[xlrec->crec.nrels]);
 
-							DecodeCommit(state, buf, r->xl_xid, sub_xids,
+							/* r->xl_xid is committed in a separate record */
+							DecodeCommit(state, buf, xlrec->xid, sub_xids,
 										 xlrec->crec.nsubxacts);
 
 							break;
@@ -203,7 +204,7 @@ void DecodeRecordIntoReorderBuffer(XLogReaderState *reader,
 							sub_xids = (TransactionId *) &(
 								xlrec->xnodes[xlrec->nrels]);
 
-							DecodeAbort(reorder, r->xl_xid, buf->origptr,
+							DecodeAbort(reorder, buf->origptr, r->xl_xid,
 										sub_xids, xlrec->nsubxacts);
 							break;
 						}
@@ -216,10 +217,9 @@ void DecodeRecordIntoReorderBuffer(XLogReaderState *reader,
 
 							sub_xids = (TransactionId *) &(
 								arec->xnodes[arec->nrels]);
-
-							DecodeAbort(reorder, xlrec->xid, buf->origptr,
+							/* r->xl_xid is committed in a separate record */
+							DecodeAbort(reorder, buf->origptr, xlrec->xid,
 										sub_xids, arec->nsubxacts);
-							/* XXX: any reason for also aborting r->xl_xid? */
 							break;
 						}
 
