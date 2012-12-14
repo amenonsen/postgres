@@ -3,8 +3,7 @@
  *
  * PostgreSQL logical replay "cache" management
  *
- * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
+ * Copyright (c) 2012, PostgreSQL Global Development Group
  *
  * src/include/replication/reorderbuffer.h
  */

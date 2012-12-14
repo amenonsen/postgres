@@ -52,7 +52,7 @@
  * To replace the normal SnapshotNows snapshots use the SetupDecodingSnapshots
  * RevertFromDecodingSnapshots functions.
  *
- * Portions Copyright (c) 2012, PostgreSQL Global Development Group
+ * Copyright (c) 2012, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/snapbuild.c

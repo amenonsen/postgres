@@ -3,7 +3,7 @@
  * snapbuild.h
  *	  Exports from replication/logical/snapbuild.c.
  *
- * Portions Copyright (c) 2012, PostgreSQL Global Development Group
+ * Copyright (c) 2012, PostgreSQL Global Development Group
  *
  * src/include/replication/snapbuild.h
  *

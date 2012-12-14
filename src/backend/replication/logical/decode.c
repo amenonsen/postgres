@@ -8,7 +8,8 @@
  * Its possible that the separation between decode.c and snapbuild.c is a
  * bit too strict, in the end they just about have the same switch.
  *
- * Portions Copyright (c) 2010-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/decode.c

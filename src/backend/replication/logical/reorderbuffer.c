@@ -5,7 +5,7 @@
  * PostgreSQL logical replay "cache" management
  *
  *
- * Portions Copyright (c) 2012, PostgreSQL Global Development Group
+ * Copyright (c) 2012, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION

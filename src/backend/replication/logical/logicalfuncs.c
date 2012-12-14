@@ -5,7 +5,7 @@
  *     Support functions for using xlog decoding
  *
  *
- * Portions Copyright (c) 2012, PostgreSQL Global Development Group
+ * Copyright (c) 2012, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logicalfuncs.c
