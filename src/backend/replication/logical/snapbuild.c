@@ -1230,15 +1230,18 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 	 */
 	if (snapstate->state < SNAPBUILD_CONSISTENT)
 	{
+		/* ensure that only commits after this are getting replayed */
 		if (XLByteLT(snapstate->transactions_after, lsn))
 			snapstate->transactions_after = lsn;
 
-		if (SnapBuildTxnIsRunning(snapstate, xid))
-		{
-			elog(LOG, "forced to assume catalog changes for xid %u because it was running to early", xid);
-			SnapBuildAddCommittedTxn(snapstate, xid);
-			forced_timetravel = true;
-		}
+		/*
+		 * we could avoid treating !SnapBuildTxnIsRunning transactions as
+		 * timetravel ones, but we want to be able to export a snapshot when we
+		 * reached consistency.
+		 */
+		SnapBuildAddCommittedTxn(snapstate, xid);
+		forced_timetravel = true;
+		elog(DEBUG1, "forced to assume catalog changes for xid %u because it was running to early", xid);
 	}
 
 	for (nxact = 0; nxact < nsubxacts; nxact++)
@@ -1251,13 +1254,17 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 		 */
 		SnapBuildEndTxn(snapstate, subxid);
 
+		/*
+		 * If we're forcing timetravel we also need accurate subtransaction
+		 * status.
+		 */
 		if (forced_timetravel)
 		{
 			SnapBuildAddCommittedTxn(snapstate, subxid);
 		}
 		/*
-		 * add subtransaction to base snapshot, we don't distinguish after
-		 * that
+		 * add subtransaction to base snapshot, we don't distinguish to
+		 * toplevel transactions there.
 		 */
 		else if (ReorderBufferXidDoesTimetravel(reorder, subxid))
 		{
