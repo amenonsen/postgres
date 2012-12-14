@@ -22,6 +22,7 @@
 
 typedef struct ReorderBuffer ReorderBuffer;
 
+/* types of the change passed to a 'change' callback */
 enum ReorderBufferChangeType
 {
 	REORDER_BUFFER_CHANGE_INSERT,
@@ -34,6 +35,7 @@ typedef struct ReorderBufferTupleBuf
 	/* position in preallocated list */
 	slist_node node;
 
+	/* tuple, stored sequentially */
 	HeapTupleData tuple;
 	HeapTupleHeaderData header;
 	char		data[MaxHeapTupleSize];
@@ -43,19 +45,36 @@ typedef struct ReorderBufferChange
 {
 	XLogRecPtr	lsn;
 
+	/* type of change */
 	union {
 		enum ReorderBufferChangeType action;
 		/* do not leak internal enum values to the outside */
 		int action_internal;
 	};
 
-	RelFileNode relnode;
-
+	/*
+	 * Context data for the change, which part of the union is valid depends on
+	 * action/action_internal.
+	 */
 	union
 	{
-		ReorderBufferTupleBuf *newtuple;
+		/* old, new tuples when action == *_INSERT|UPDATE|DELETE */
+		struct {
+			/* relation that has been changed */
+			RelFileNode relnode;
+			/* valid for DELETE || UPDATE */
+			ReorderBufferTupleBuf *oldtuple;
+			/* valid for INSERT || UPDATE */
+			ReorderBufferTupleBuf *newtuple;
+		};
+
+		/* new snapshot */
 		Snapshot	snapshot;
+
+		/* new command id for existing snapshot in a catalog changing tx */
 		CommandId	command_id;
+
+		/* new cid mapping for catalog changing transaction */
 		struct {
 			RelFileNode node;
 			ItemPointerData tid;
@@ -64,8 +83,6 @@ typedef struct ReorderBufferChange
 			CommandId	combocid;
 		} tuplecid;
 	};
-
-	ReorderBufferTupleBuf *oldtuple;
 
 	/*
 	 * While in use this is how a change is linked into a transactions,
@@ -76,19 +93,28 @@ typedef struct ReorderBufferChange
 
 typedef struct ReorderBufferTXN
 {
+	/*
+	 * The transactions transaction id, can be a toplevel or sub xid.
+	 */
 	TransactionId xid;
 
+	/*
+	 * LSN of the first wal record with knowledge about this xid.
+	 */
 	XLogRecPtr	lsn;
 
 	/* did the TX have catalog changes */
 	bool does_timetravel;
 
+	/*
+	 * Did we already get passed a base snapshot?
+	 */
 	bool has_base_snapshot;
 
 	/*
 	 * How many ReorderBufferChange's do we have in this txn.
 	 *
-	 * Subtransactions are *not* included.
+	 * Changes in subtransactions are *not* included but tracked separately.
 	 */
 	Size		nentries;
 
@@ -99,18 +125,20 @@ typedef struct ReorderBufferTXN
 	Size		nentries_mem;
 
 	/*
-	 * List of actual changes, those include new Snapshots and new CommandIds
+	 * List of ReorderBufferChange structs, including new Snapshots and new
+	 * CommandIds
 	 */
 	dlist_head changes;
 
 	/*
-	 * List of cmin/cmax pairs for catalog tuples
+	 * List of (relation, ctid) => (cmin, cmax) mappings for catalog
+	 * tuples. Those are always assigned to the toplevel transaction.
 	 */
 	dlist_head tuplecids;
 
 	/*
-	 * Numer of stored cmin/cmax pairs. Used to create the tuplecid_hash with
-	 * the correct size.
+	 * Numer of stored mappings in ->tuplecids. Used to create the
+	 * tuplecid_hash with the correct size.
 	 */
 	Size       ntuplecids;
 
@@ -120,7 +148,8 @@ typedef struct ReorderBufferTXN
 	HTAB	   *tuplecid_hash;
 
 	/*
-	 * non-hierarchical list of subtransactions that are *not* aborted
+	 * non-hierarchical list of subtransactions that are *not* aborted. Only
+	 * used in toplevel transactions.
 	 */
 	dlist_head subtxns;
 	Size nsubtxns;
@@ -145,139 +174,102 @@ typedef struct ReorderBufferTXN
 } ReorderBufferTXN;
 
 
-/* XXX: were currently passing the originating subtxn. Not sure thats necessary */
+/* change callback signature */
 typedef void (*ReorderBufferApplyChangeCB) (
 	ReorderBuffer *cache,
 	ReorderBufferTXN *txn,
 	ReorderBufferChange *change);
 
+/* begin callback signature */
 typedef void (*ReorderBufferBeginCB) (
 	ReorderBuffer *cache,
 	ReorderBufferTXN *txn);
 
+/* commit callback signature */
 typedef void (*ReorderBufferCommitCB) (
 	ReorderBuffer *cache,
 	ReorderBufferTXN *txn,
 	XLogRecPtr commit_lsn);
 
-/*
- * max number of concurrent top-level transactions or transaction where we
- * don't know if they are top-level can be calculated by:
- * (max_connections + max_prepared_xactx + ?)  * PGPROC_MAX_CACHED_SUBXIDS
- */
 struct ReorderBuffer
 {
 	/*
-	 * Should snapshots for decoding be collected. If many catalog changes
-	 * happen this can be considerably expensive.
+	 * xid => ReorderBufferTXN lookup table
 	 */
-	bool		build_snapshots;
-
-	TransactionId last_txn;
-	ReorderBufferTXN *last_txn_cache;
 	HTAB	   *by_txn;
 
+	/*
+	 * one-entry sized cache for by_txn. Very frequently the same txn gets
+	 * looked up over and over again.
+	 */
+	TransactionId by_txn_last_xid;
+	ReorderBufferTXN *by_txn_last_txn;
+
+	/*
+	 * Callacks to be called when a transactions commits.
+	 */
 	ReorderBufferBeginCB begin;
 	ReorderBufferApplyChangeCB apply_change;
 	ReorderBufferCommitCB commit;
 
+	/*
+	 * Pointer that will be passed untouched to the callbacks.
+	 */
 	void	   *private_data;
 
+	/*
+	 * Private memory context.
+	 */
 	MemoryContext context;
 
 	/*
-	 * we don't want to repeatedly (de-)allocated those structs, so cache them
-	 * for reusage.
+	 * Datastructructure slab cache.
+	 *
+	 * We allocate/deallocate some structures very frequently, to avoid bigger
+	 * overhead we cache some unused ones here.
+	 *
+	 * The maximum number of cached entries is controlled by const variables
+	 * ontop of reorderbuffer.c
 	 */
+
+	/* cached ReorderBufferTXNs */
 	dlist_head cached_transactions;
 	Size		nr_cached_transactions;
 
+	/* cached ReorderBufferChanges */
 	dlist_head cached_changes;
 	Size		nr_cached_changes;
 
+	/* cached ReorderBufferTupleBufs */
 	slist_head cached_tuplebufs;
 	Size		nr_cached_tuplebufs;
 };
 
 
 ReorderBuffer *ReorderBufferAllocate(void);
-
 void ReorderBufferFree(ReorderBuffer *);
 
 ReorderBufferTupleBuf *ReorderBufferGetTupleBuf(ReorderBuffer *);
-
 void ReorderBufferReturnTupleBuf(ReorderBuffer *cache, ReorderBufferTupleBuf * tuple);
-
-/*
- * Returns a (potentically preallocated) change struct. Its lifetime is managed
- * by the reorderbuffer module.
- *
- * If not added to a transaction with ReorderBufferAddChange it needs to be
- * returned via ReorderBufferReturnChange
- *
- * FIXME: better name
- */
-ReorderBufferChange *
-			ReorderBufferGetChange(ReorderBuffer *);
-
-/*
- * Return an unused ReorderBufferChange struct
- */
+ReorderBufferChange *ReorderBufferGetChange(ReorderBuffer *);
 void ReorderBufferReturnChange(ReorderBuffer *, ReorderBufferChange *);
 
-
-/*
- * record the transaction as in-progress if not already done, add the current
- * change.
- *
- * We have a one-entry cache for lookin up the current ReorderBufferTXN so we
- * don't need to do a full hash-lookup if the same xid is used
- * sequentially. Them being used multiple times that way is rather frequent.
- */
 void ReorderBufferAddChange(ReorderBuffer *, TransactionId, XLogRecPtr lsn, ReorderBufferChange *);
-
-/*
- *
- */
 void ReorderBufferCommit(ReorderBuffer *, TransactionId, XLogRecPtr lsn);
-
 void ReorderBufferCommitChild(ReorderBuffer *, TransactionId, TransactionId, XLogRecPtr lsn);
-
 void ReorderBufferAbort(ReorderBuffer *, TransactionId, XLogRecPtr lsn);
 
-/*
- * if lsn == InvalidXLogRecPtr this is the first snap for the transaction
- *
- * most callers don't need snapshot.h, so we use struct SnapshotData instead
- */
 void ReorderBufferAddBaseSnapshot(ReorderBuffer *, TransactionId, XLogRecPtr lsn, struct SnapshotData *snap);
-
-/*
- * Will only be called for command ids > 1
- */
 void ReorderBufferAddNewCommandId(ReorderBuffer *, TransactionId, XLogRecPtr lsn,
 								  CommandId cid);
-
 void ReorderBufferAddNewTupleCids(ReorderBuffer *, TransactionId, XLogRecPtr lsn,
 								  RelFileNode node, ItemPointerData pt,
 								  CommandId cmin, CommandId cmax, CommandId combocid);
-
 void ReorderBufferAddInvalidations(ReorderBuffer *, TransactionId, XLogRecPtr lsn,
 								   Size nmsgs, SharedInvalidationMessage* msgs);
-
 bool ReorderBufferIsXidKnown(ReorderBuffer *cache, TransactionId xid);
-
-/*
- * Announce that tx does timetravel. Relevant for the whole toplevel/subtxn
- * tree.
- */
 void ReorderBufferXidSetTimetravel(ReorderBuffer *cache, TransactionId xid);
-
-/*
- * Does the transaction indicated by 'xid' do timetravel?
- */
 bool ReorderBufferXidDoesTimetravel(ReorderBuffer *cache, TransactionId xid);
-
 bool ReorderBufferXidHasBaseSnapshot(ReorderBuffer *cache, TransactionId xid);
 
 #endif

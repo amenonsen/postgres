@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/heapam.h"
+#include "access/transam.h"
 #include "access/xact.h"
 
 #include "catalog/pg_class.h"
@@ -39,30 +40,9 @@
 
 const Size max_memtries = 1 << 16;
 
-const size_t max_cached_changes = 1024;
-const size_t max_cached_tuplebufs = 1024; /* ~8MB */
-const size_t max_cached_transactions = 512;
-
-/* entry for a hash table we use to map from xid to our transaction state */
-typedef struct ReorderBufferTXNByIdEnt
-{
-	TransactionId xid;
-	ReorderBufferTXN *txn;
-}  ReorderBufferTXNByIdEnt;
-
-typedef struct ReorderBufferTupleCidKey
-{
-	RelFileNode relnode;
-	ItemPointerData tid;
-} ReorderBufferTupleCidKey;
-
-typedef struct ReorderBufferTupleCidEnt
-{
-	ReorderBufferTupleCidKey key;
-	CommandId cmin;
-	CommandId cmax;
-	CommandId combocid;
-} ReorderBufferTupleCidEnt;
+const Size max_cached_changes = 1024;
+const Size max_cached_tuplebufs = 1024; /* ~8MB */
+const Size max_cached_transactions = 512;
 
 /*
  * For efficiency and simplicity reasons we want to keep Snapshots, CommandIds
@@ -84,25 +64,32 @@ enum ReorderBufferChangeTypeInternal
 	REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID
 };
 
-/* Get an unused, but potentially cached, ReorderBufferTXN entry */
-static ReorderBufferTXN *ReorderBufferGetTXN(ReorderBuffer *cache);
 
-/* Return an unused ReorderBufferTXN entry */
-static void ReorderBufferReturnTXN(ReorderBuffer *cache, ReorderBufferTXN *txn);
+/* entry for a hash table we use to map from xid to our transaction state */
+typedef struct ReorderBufferTXNByIdEnt
+{
+	TransactionId xid;
+	ReorderBufferTXN *txn;
+}  ReorderBufferTXNByIdEnt;
 
-static ReorderBufferTXN *ReorderBufferTXNByXid(ReorderBuffer *cache, TransactionId xid,
-                                         bool create, bool *is_new);
+
+/* data structures for (relfilenode, ctid) => (cmin, cmax) mapping */
+typedef struct ReorderBufferTupleCidKey
+{
+	RelFileNode relnode;
+	ItemPointerData tid;
+} ReorderBufferTupleCidKey;
+
+typedef struct ReorderBufferTupleCidEnt
+{
+	ReorderBufferTupleCidKey key;
+	CommandId cmin;
+	CommandId cmax;
+	CommandId combocid; /* just for debugging */
+} ReorderBufferTupleCidEnt;
 
 
-/*
- * support functions for lsn-order iterating over the ->changes of a
- * transaction and its subtransactions
- */
-
-/*
- * used for iteration over the k-way heap merge of a transaction and its
- * subtransactions
- */
+/* k-way in-order change iteration support structures */
 typedef struct ReorderBufferIterTXNEntry
 {
 	XLogRecPtr lsn;
@@ -116,36 +103,47 @@ typedef struct ReorderBufferIterTXNState
 	ReorderBufferIterTXNEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } ReorderBufferIterTXNState;
 
-/* allocate & initialize an iterator */
+
+/* primary reorderbuffer support routines */
+static ReorderBufferTXN *ReorderBufferGetTXN(ReorderBuffer *cache);
+static void ReorderBufferReturnTXN(ReorderBuffer *cache, ReorderBufferTXN *txn);
+static ReorderBufferTXN *ReorderBufferTXNByXid(ReorderBuffer *cache, TransactionId xid,
+                                         bool create, bool *is_new);
+
+
+
+/*
+ * support functions for lsn-order iterating over the ->changes of a
+ * transaction and its subtransactions
+ *
+ * used for iteration over the k-way heap merge of a transaction and its
+ * subtransactions
+ */
+
 static ReorderBufferIterTXNState *
 ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn);
-
-/* get the next change */
 static ReorderBufferChange *
 ReorderBufferIterTXNNext(ReorderBuffer *cache, ReorderBufferIterTXNState *state);
+static void ReorderBufferIterTXNFinish(ReorderBuffer *cache,
+									   ReorderBufferIterTXNState *state);
+static void ReorderBufferExecuteInvalidations(ReorderBuffer *cache, ReorderBufferTXN *txn);
 
-/* deallocate iterator */
-static void
-ReorderBufferIterTXNFinish(ReorderBuffer *cache, ReorderBufferIterTXNState *state);
-
-/* where to put this? */
-static void
-ReorderBufferProcessInvalidations(ReorderBuffer *cache, ReorderBufferTXN *txn);
-
+/*
+ * Allocate a new ReorderBuffer
+ */
 ReorderBuffer *
 ReorderBufferAllocate(void)
 {
-	ReorderBuffer *cache = (ReorderBuffer *) malloc(sizeof(ReorderBuffer));
+	ReorderBuffer *cache;
 	HASHCTL hash_ctl;
 
 	StaticAssertExpr((int)REORDER_BUFFER_CHANGE_INTERNAL_INSERT == (int)REORDER_BUFFER_CHANGE_INSERT, "out of sync enums");
 	StaticAssertExpr((int)REORDER_BUFFER_CHANGE_INTERNAL_UPDATE == (int)REORDER_BUFFER_CHANGE_UPDATE, "out of sync enums");
 	StaticAssertExpr((int)REORDER_BUFFER_CHANGE_INTERNAL_DELETE == (int)REORDER_BUFFER_CHANGE_DELETE, "out of sync enums");
 
+	cache = (ReorderBuffer *) malloc(sizeof(ReorderBuffer));
 	if (!cache)
 		elog(ERROR, "Could not allocate the ReorderBuffer");
-
-	cache->build_snapshots = true;
 
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 
@@ -162,6 +160,9 @@ ReorderBufferAllocate(void)
 
 	cache->by_txn = hash_create("ReorderBufferByXid", 1000, &hash_ctl,
 	                            HASH_ELEM | HASH_FUNCTION | HASH_CONTEXT);
+
+	cache->by_txn_last_xid = InvalidTransactionId;
+	cache->by_txn_last_txn = NULL;
 
 	cache->nr_cached_transactions = 0;
 	cache->nr_cached_changes = 0;
@@ -227,6 +228,13 @@ ReorderBufferGetTXN(ReorderBuffer *cache)
 void
 ReorderBufferReturnTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
 {
+	/* clean the lookup cache if we were cached (quite likely) */
+	if (cache->by_txn_last_xid == txn->xid)
+	{
+		cache->by_txn_last_xid = InvalidTransactionId;
+		cache->by_txn_last_txn = NULL;
+	}
+
 	if (txn->tuplecid_hash != NULL)
 	{
 		hash_destroy(txn->tuplecid_hash);
@@ -288,7 +296,9 @@ ReorderBufferReturnChange(ReorderBuffer *cache, ReorderBufferChange *change)
 	switch ((enum ReorderBufferChangeTypeInternal)change->action_internal)
 	{
 		case REORDER_BUFFER_CHANGE_INTERNAL_INSERT:
+		/* fall through */
 		case REORDER_BUFFER_CHANGE_INTERNAL_UPDATE:
+		/* fall through */
 		case REORDER_BUFFER_CHANGE_INTERNAL_DELETE:
 			if (change->newtuple)
 			{
@@ -308,6 +318,7 @@ ReorderBufferReturnChange(ReorderBuffer *cache, ReorderBufferChange *change)
 				SnapBuildSnapDecRefcount(change->snapshot);
 				change->snapshot = NULL;
 			}
+			break;
 		case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
 			break;
 		case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
@@ -374,48 +385,65 @@ ReorderBufferReturnTupleBuf(ReorderBuffer *cache, ReorderBufferTupleBuf *tuple)
  * Access the transactions being processed via xid. Optionally create a new
  * entry.
  */
-static
-ReorderBufferTXN *
+static ReorderBufferTXN *
 ReorderBufferTXNByXid(ReorderBuffer *cache, TransactionId xid, bool create, bool *is_new)
 {
-	ReorderBufferTXNByIdEnt *ent;
-	bool found;
+	ReorderBufferTXN *txn = NULL;
+	ReorderBufferTXNByIdEnt *ent = NULL;
+	bool found = false;
+	bool cached = false;
 
-	/* FIXME: add one entry fast-path cache */
-
-	ent = (ReorderBufferTXNByIdEnt *)
-		hash_search(cache->by_txn,
-		            (void *)&xid,
-		            (create ? HASH_ENTER : HASH_FIND),
-		            &found);
-
-	if (found)
+	/*
+	 * check the one-entry lookup cache first
+	 */
+	if (TransactionIdIsValid(cache->by_txn_last_xid) &&
+		cache->by_txn_last_xid == xid)
 	{
-#ifdef VERBOSE_DEBUG
-		elog(LOG, "found cache entry for %u at %p", xid, ent);
-#endif
-	}
-	else
-	{
-#ifdef VERBOSE_DEBUG
-		elog(LOG, "didn't find cache entry for %u in %p at %p, creating %u",
-		     xid, cache, ent, create);
-#endif
+		found = cache->by_txn_last_txn != NULL;
+		txn = cache->by_txn_last_txn;
+
+		cached = true;
 	}
 
+	/*
+	 * If the cache wasn't hit or it yielded an "does-not-exist" and we want to
+	 * create an entry.
+	 */
+	if (!cached || create)
+	{
+		/* search the lookup table */
+		ent = (ReorderBufferTXNByIdEnt *)
+			hash_search(cache->by_txn,
+						(void *)&xid,
+						(create ? HASH_ENTER : HASH_FIND),
+						&found);
+
+		if (found)
+			txn = ent->txn;
+	}
+
+	/* don't do anything if were not creating new entries */
 	if (!found && !create)
-		return NULL;
-
-	if (!found)
+		;
+	/* add new entry */
+	else if (!found)
 	{
+		Assert(ent != NULL);
+
 		ent->txn = ReorderBufferGetTXN(cache);
 		ent->txn->xid = xid;
+		txn = ent->txn;
 	}
+
+	/* update cache */
+	cache->by_txn_last_xid = xid;
+	cache->by_txn_last_txn = txn;
 
 	if (is_new)
 		*is_new = !found;
 
-	return ent->txn;
+	Assert(!create || !!txn);
+	return txn;
 }
 
 /*
@@ -493,13 +521,13 @@ ReorderBufferIterCompare(Datum a, Datum b, void *arg)
 }
 
 /*
- * Initialize an iterator which iterates in lsn order over a transaction and
- * all its subtransactions.
+ * Allocate & initialize an iterator which iterates in lsn order over a
+ * transaction and all its subtransactions.
  */
 static ReorderBufferIterTXNState *
 ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 {
-	size_t nr_txns = 0; /* main txn */
+	Size nr_txns = 0;
 	ReorderBufferIterTXNState *state;
 	dlist_iter cur_txn_i;
 	ReorderBufferTXN *cur_txn;
@@ -519,7 +547,7 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	}
 
 	/*
-	 * FIXME: Add fastpath for the rather common nr_txns=1 case, no need to
+	 * XXX: Add fastpath for the rather common nr_txns=1 case, no need to
 	 * allocate/build a heap in that case.
 	 */
 
@@ -575,6 +603,8 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 /*
  * Return the next change when iterating over a transaction and its
  * subtransaction.
+ *
+ * Returns NULL when no further changes exist.
  */
 static ReorderBufferChange *
 ReorderBufferIterTXNNext(ReorderBuffer *cache, ReorderBufferIterTXNState *state)
@@ -676,12 +706,13 @@ ReorderBufferCleanupTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	            &found);
 	Assert(found);
 
+	/* deallocate */
 	ReorderBufferReturnTXN(cache, txn);
 }
 
 /*
- * Build a hash with a (relfilenode, itempoint) -> (cmin, cmax) mapping for use
- * by tqual.c's HeapTupleSatisfiesMVCCDuringDecoding.
+ * Build a hash with a (relfilenode, ctid) -> (cmin, cmax) mapping for use by
+ * tqual.c's HeapTupleSatisfiesMVCCDuringDecoding.
  */
 static void
 ReorderBufferBuildTupleCidHash(ReorderBuffer *cache, ReorderBufferTXN *txn)
@@ -838,6 +869,7 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 	Snapshot snapshot_now = NULL;
 	bool snapshot_copied = false;
 
+	/* empty transaction */
 	if (!txn)
 		return;
 
@@ -909,7 +941,7 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 					 * everytime the CommandId is incremented, we could see new
 					 * catalog contents
 					 */
-					ReorderBufferProcessInvalidations(cache, txn);
+					ReorderBufferExecuteInvalidations(cache, txn);
 
 					break;
 
@@ -921,13 +953,14 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 
 		ReorderBufferIterTXNFinish(cache, iterstate);
 
+		/* call commit callback */
 		cache->commit(cache, txn, lsn);
 
+		/* cleanup */
 		RevertFromDecodingSnapshots();
-		ReorderBufferProcessInvalidations(cache, txn);
+		ReorderBufferExecuteInvalidations(cache, txn);
 
 		ReorderBufferCleanupTXN(cache, txn);
-
 
 		if (snapshot_copied)
 		{
@@ -945,7 +978,7 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 		 */
 
 		RevertFromDecodingSnapshots();
-		ReorderBufferProcessInvalidations(cache, txn);
+		ReorderBufferExecuteInvalidations(cache, txn);
 
 		if (snapshot_copied)
 		{
@@ -978,20 +1011,16 @@ ReorderBufferAbort(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 bool
 ReorderBufferIsXidKnown(ReorderBuffer *cache, TransactionId xid)
 {
-	bool is_new;
-	/*
-	 * FIXME: for efficiency reasons we create the xid here, that doesn't seem
-	 * like a good idea though
-	 */
-	ReorderBufferTXNByXid(cache, xid, true, &is_new);
+	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, false, NULL);
 
-	/* no changes in this commit */
-	return !is_new;
+	return txn != NULL;
 }
 
 /*
  * Add a new snapshot to this transaction which is the "base" of snapshots we
  * modify if this is a catalog modifying transaction.
+ *
+ * FIXME: Split into ReorderBufferSetBaseSnapshot & ReorderBufferAddSnapshot
  */
 void
 ReorderBufferAddBaseSnapshot(ReorderBuffer *cache, TransactionId xid,
@@ -1011,6 +1040,8 @@ ReorderBufferAddBaseSnapshot(ReorderBuffer *cache, TransactionId xid,
 
 /*
  * Access the catalog with this CommandId at this point in the changestream.
+ *
+ * May only be called for command ids > 1
  */
 void
 ReorderBufferAddNewCommandId(ReorderBuffer *cache, TransactionId xid,
@@ -1043,6 +1074,7 @@ ReorderBufferAddNewTupleCids(ReorderBuffer *cache, TransactionId xid, XLogRecPtr
 	change->tuplecid.combocid = combocid;
 	change->lsn = lsn;
 	change->action_internal = REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID;
+
 	dlist_push_tail(&txn->tuplecids, &change->node);
 	txn->ntuplecids++;
 }
@@ -1060,7 +1092,7 @@ ReorderBufferAddInvalidations(ReorderBuffer *cache, TransactionId xid, XLogRecPt
 
 	if (txn->ninvalidations)
 		elog(ERROR, "only ever add one set of invalidations");
-	/* FIXME: free */
+
 	txn->invalidations = malloc(sizeof(SharedInvalidationMessage) * nmsgs);
 
 	if (!txn->invalidations)
@@ -1075,7 +1107,7 @@ ReorderBufferAddInvalidations(ReorderBuffer *cache, TransactionId xid, XLogRecPt
  * in the changestream but we don't know which those are.
  */
 static void
-ReorderBufferProcessInvalidations(ReorderBuffer *cache, ReorderBufferTXN *txn)
+ReorderBufferExecuteInvalidations(ReorderBuffer *cache, ReorderBufferTXN *txn)
 {
 	int i;
 	for (i = 0; i < txn->ninvalidations; i++)
@@ -1095,13 +1127,15 @@ ReorderBufferXidSetTimetravel(ReorderBuffer *cache, TransactionId xid)
 }
 
 /*
- * Query whether a transaction is *known* to be doing timetravel. This can be
- * wrong until directly before the commit!
+ * Query whether a transaction is already *known* to be doing timetravel. This
+ * can be wrong until directly before the commit!
  */
 bool
 ReorderBufferXidDoesTimetravel(ReorderBuffer *cache, TransactionId xid)
 {
-	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, true, NULL);
+	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, false, NULL);
+	if (!txn)
+		return false;
 	return txn->does_timetravel;
 }
 
@@ -1111,7 +1145,9 @@ ReorderBufferXidDoesTimetravel(ReorderBuffer *cache, TransactionId xid)
 bool
 ReorderBufferXidHasBaseSnapshot(ReorderBuffer *cache, TransactionId xid)
 {
-	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, true, NULL);
+	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, false, NULL);
+	if (!txn)
+		return false;
 	return txn->has_base_snapshot;
 }
 
