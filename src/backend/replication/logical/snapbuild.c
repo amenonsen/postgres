@@ -86,10 +86,13 @@
 #include "utils/memutils.h"
 #include "utils/relmapper.h"
 #include "utils/snapshot.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/tqual.h"
 
 #include "storage/block.h" /* debugging output */
+#include "storage/proc.h"
+#include "storage/procarray.h"
 #include "storage/standby.h"
 #include "storage/sinval.h"
 
@@ -366,6 +369,121 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 	snapshot->regd_count = 0;
 
 	return snapshot;
+}
+
+
+ResourceOwner SavedResourceOwnerDuringExport = NULL;
+
+/*
+ * Export a snapshot so it can be set in another session with SET TRANSACTION
+ * SNAPSHOT.
+ *
+ * For that we need to start a transaction in the current backend as the
+ * importing side checks whether the source transaction is still open to make
+ * sure the xmin horizon hasn't advanced since then.
+ *
+ * After that we convert a locally built snapshot into the normal variant
+ * understood by HeapTupleSatisfiesMVCC et al.
+ */
+const char*
+SnapBuildExportSnapshot(Snapstate *snapstate)
+{
+	Snapshot snap;
+	char *snapname;
+	TransactionId xid;
+	TransactionId* newxip;
+	int newxcnt = 0;
+
+	elog(LOG, "building snapshot");
+
+	/* so we don't overwrite the existing value */
+	if (TransactionIdIsValid(MyPgXact->xmin))
+		elog(ERROR, "cannot export a transaction when MyPgXact->xmin already is valid");
+
+	if (SavedResourceOwnerDuringExport)
+		elog(ERROR, "can only export one snapshot at a time");
+
+	SavedResourceOwnerDuringExport = CurrentResourceOwner;
+
+	StartTransactionCommand();
+
+	Assert(!FirstSnapshotSet);
+
+	/* There doesn't seem to a nice API to set these */
+	XactIsoLevel = XACT_REPEATABLE_READ;
+	XactReadOnly = true;
+
+	snap = SnapBuildBuildSnapshot(snapstate,
+								  GetTopTransactionId());
+
+	/*
+	 * We know that snap->xmin is alive, enforced by the logical xmin
+	 * mechanism. Due to that we can do this without locks, were only changing
+	 * our own value.
+	 */
+	MyPgXact->xmin = snap->xmin;
+
+	/* allocate in transaction context */
+	newxip = (TransactionId*)
+		palloc(sizeof(TransactionId) * GetMaxSnapshotXidCount());
+
+	/*
+	 * snapbuild.c builds transactions in an "inverted" manner, which means it
+	 * stores committed transactions in ->xip, not ones in progress. Build a
+	 * classical snapshot by marking all non-committed transactions as
+	 * in-progress.
+	 */
+	for (xid = snap->xmin; NormalTransactionIdPrecedes(xid, snap->xmax);)
+	{
+		void *test;
+
+		/*
+		 * check whether transaction committed using the timetravel meaning of
+		 * ->xip
+		 */
+		test = bsearch(&xid, snap->xip, snap->xcnt,
+					   sizeof(TransactionId), xidComparator);
+
+		elog(DEBUG2, "checking xid %u.. %d (xmin %u, xmax %u)", xid, test == NULL,
+			 snap->xmin, snap->xmax);
+
+		if (test == NULL)
+		{
+			if (newxcnt == GetMaxSnapshotXidCount())
+				elog(ERROR, "too large snapshot");
+
+			newxip[newxcnt++] = xid;
+
+			elog(DEBUG2, "treat %u as in-progress", xid);
+		}
+		TransactionIdAdvance(xid);
+	}
+	snap->xcnt = newxcnt;
+	snap->xip = newxip;
+
+	snapname = ExportSnapshot(snap);
+
+	elog(LOG, "exported snapbuild snapshot: %s xcnt %u", snapname, snap->xcnt);
+
+	return snapname;
+}
+
+/*
+ * Reset a previously SnapBuildExportSnapshot'ed snapshot if there is
+ * any. Aborts the previously started transaction and resets the resource owner
+ * back to the previous value.
+ */
+void
+SnapBuildClearExportedSnapshot()
+{
+	/* nothing exported, thats the usual case*/
+	if (SavedResourceOwnerDuringExport == NULL)
+		return;
+
+	AbortCurrentTransaction();
+
+	CurrentResourceOwner = SavedResourceOwnerDuringExport;
+	SavedResourceOwnerDuringExport = NULL;
 }
 
 /*

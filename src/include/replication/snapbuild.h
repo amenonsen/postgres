@@ -126,4 +126,7 @@ extern bool SnapBuildHasCatalogChanges(Snapstate *snapstate, TransactionId xid,
 
 extern void SnapBuildSnapDecRefcount(Snapshot snap);
 
+extern const char *SnapBuildExportSnapshot(Snapstate *snapstate);
+extern void SnapBuildClearExportedSnapshot(void);
+
 #endif   /* SNAPBUILD_H */

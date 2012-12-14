@@ -50,6 +50,7 @@
 #include "replication/basebackup.h"
 #include "replication/decode.h"
 #include "replication/logicalfuncs.h"
+#include "replication/snapbuild.h"
 #include "replication/syncrep.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
@@ -490,6 +491,7 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	char *slot_name;
 	StringInfoData buf;
 	char		xpos[MAXFNAMELEN];
+	const char *snapshot_name = NULL;
 
 	elog(WARNING, "Initiating logical rep");
 
@@ -562,6 +564,9 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	logical_reader = initial_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint,
 											 walsnd->xmin);
 
+	MemoryContextSwitchTo(old_decoding_ctx);
+	TopTransactionContext = NULL;
+
 	/* Lets start with enough information if we can */
 	if (!RecoveryInProgress())
 		LogStandbySnapshot();
@@ -588,7 +593,10 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 		DecodeRecordIntoReorderBuffer(logical_reader, apply_state, &buf);
 
 		if (initial_snapshot_ready(logical_reader))
+		{
+			snapshot_name = SnapBuildExportSnapshot(apply_state->snapstate);
 			break;
+		}
 	}
 
 	walsnd->confirmed_flush = logical_reader->EndRecPtr;
@@ -647,8 +655,8 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	pq_sendbytes(&buf, xpos, strlen(xpos));
 
 	/* snapshot name */
-	pq_sendint(&buf, strlen("0xDEADBEEF"), 4); /* col3 len */
-	pq_sendbytes(&buf, "0xDEADBEEF", strlen("0xDEADBEEF"));
+	pq_sendint(&buf, strlen(snapshot_name), 4); /* col3 len */
+	pq_sendbytes(&buf, snapshot_name, strlen(snapshot_name));
 
 	/* plugin */
 	pq_sendint(&buf, strlen(cmd->plugin), 4); /* col4 len */
@@ -663,9 +671,6 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	walsnd->active = false;
 	MyLogicalWalSnd = NULL;
 	SpinLockRelease(&walsnd->mutex);
-
-	MemoryContextSwitchTo(old_decoding_ctx);
-	TopTransactionContext = NULL;
 }
 
 /*
@@ -921,6 +926,12 @@ exec_replication_command(const char *cmd_string)
 	Node	   *cmd_node;
 	MemoryContext cmd_context;
 	MemoryContext old_context;
+
+	/*
+	 * INIT_LOGICAL_REPLICATION exports a snapshot until the next command
+	 * arrives. Clear up the old stuff if there's anything.
+	 */
+	SnapBuildClearExportedSnapshot();
 
 	elog(DEBUG1, "received replication command: %s", cmd_string);
 
