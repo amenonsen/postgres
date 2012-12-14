@@ -51,7 +51,11 @@ typedef enum
 
 typedef struct Snapstate
 {
+	/* how far are we along building our first full snapshot */
 	SnapBuildState state;
+
+	/* private memory context used to allocate memory for this module. */
+	MemoryContext context;
 
 	/* all transactions smaller than this have committed/aborted */
 	TransactionId xmin;
@@ -60,58 +64,76 @@ typedef struct Snapstate
 	TransactionId xmax;
 
 	/*
-	 * All transactions in this window have to be checked via the running
-	 * array. This will only be used initially till we are past xmax_running.
+	 * Information about initially running transactions
 	 *
-	 * Note that we initially assume treat already running transactions to
-	 * have catalog modifications because we don't have enough information
-	 * about them to properly judge that.
+	 * When we start building a snapshot there already may be transactions in
+	 * progress. We don't have enough information about those to decode their
+	 * contents, so until they are finished we cannot switch to a CONSISTENT
+	 * state.
 	 */
-	TransactionId xmin_running;
-	TransactionId xmax_running;
+	struct
+	{
+		/*
+		 * As long as running.xcnt all XIDs < running.xmin and > running.xmax
+		 * have to be checked whether they still are running.
+		 */
+		TransactionId xmin;
+		TransactionId xmax;
+
+		/*
+		 * how many transactions are still running. When this reaches zero we
+		 * can switch to a consistent state.
+		 */
+		size_t		xcnt;
+
+		/*
+		 * we need to keep track of the amount of tracked transactions
+		 * separately from nrrunning_space as nrunning_initial gives the range
+		 * of valid xids in the array so a bsearch() can work.
+		 */
+		size_t		xcnt_space;
+
+		/*
+		 * xidComparator sorted array of running transactions.
+		 */
+		TransactionId *xip;
+	} running;
 
 	/*
-	 * array of running transactions.
-	 *
-	 * Kept in xidComparator order so it can be searched with bsearch().
+	 * Array of transactions which could have catalog changes that committed
+	 * between xmin and xmax
 	 */
-	TransactionId *running;
-	/* how many transactions are still running */
-	size_t		nrrunning;
+	struct
+	{
+		/* number of committed transactions */
+		size_t		xcnt;
+		/* available space for committed transactions */
+		size_t		xcnt_space;
+		/*
+		 * Array of committed transactions that have modified the catalog.
+		 *
+		 * As this array is frequently modified we do *not* keep it in
+		 * xidComparator order. Instead we sort the array when building &
+		 * distributing a snapshot.
+		 */
+		TransactionId *xip;
+	} committed;
 
 	/*
-	 * we need to keep track of the amount of tracked transactions separately
-	 * from nrrunning_space as nrunning_initial gives the range of valid xids
-	 * in the array so bsearch() can work.
+	 * Don't replay commits from an LSN <= this LSN. This can be set externally
+	 * but it will also be advanced (never reatreat) from within snapbuild.c.
 	 */
-	size_t		nrrunning_initial;
-
 	XLogRecPtr transactions_after;
+
+	/*
+	 * Don't start decoding WAL until the "xl_running_xacts" information
+	 * indicates there are no running xids with a xid smaller than this.
+	 */
 	TransactionId initial_xmin_horizon;
 
 	/*
-	 * Transactions which could have catalog changes that committed between
-	 * xmin and xmax
-	 */
-	size_t		nrcommitted;
-	size_t		nrcommitted_space;
-	/*
-	 * Array of committed transactions that have modified the catalog.
-	 *
-	 * As this array is frequently modified we do *not* keep it in
-	 * xidComparator order. Instead we sort the array when building &
-	 * distributing a snapshot.
-	 */
-	TransactionId *committed;
-
-	/*
-	 * private memory context used to allocate memory for this module.
-	 */
-	MemoryContext context;
-
-	/*
-	 * Snapshot thats valid to see all committed transactions that see catalog
-	 * modifications.
+	 * Snapshot thats valid to see all currently committed transactions that
+	 * see catalog modifications.
 	 */
 	Snapshot snapshot;
 }	Snapstate;

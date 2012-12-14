@@ -113,7 +113,6 @@ static bool SnapBuildTxnIsRunning(Snapstate *snapstate, TransactionId xid);
 static void SnapBuildPurgeCommittedTxn(Snapstate *snapstate);
 
 /* snapshot building/manipulation/distribution functions */
-/* XXX */
 static Snapshot SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid);
 
 static void	SnapBuildFreeSnapshot(Snapshot snap);
@@ -227,15 +226,14 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder)
 
 	snapstate->state = SNAPBUILD_START;
 
-	snapstate->nrrunning = 0;
-	snapstate->nrrunning_initial = 0;
-	snapstate->running = NULL;
+	snapstate->running.xcnt = 0;
+	snapstate->running.xip = NULL;
 
-	snapstate->nrcommitted = 0;
-	snapstate->nrcommitted_space = 128; /* arbitrary number */
-	snapstate->committed = MemoryContextAlloc(context,
-											  snapstate->nrcommitted_space
-											  * sizeof(TransactionId));
+	snapstate->committed.xcnt = 0;
+	snapstate->committed.xcnt_space = 128; /* arbitrary number */
+	snapstate->committed.xip = MemoryContextAlloc(context,
+												  snapstate->committed.xcnt_space
+												  * sizeof(TransactionId));
 	snapstate->transactions_after = InvalidXLogRecPtr;
 
 	snapstate->snapshot = NULL;
@@ -254,11 +252,11 @@ FreeSnapshotBuilder(Snapstate *snapstate)
 	if (snapstate->snapshot)
 		SnapBuildFreeSnapshot(snapstate->snapshot);
 
-	if (snapstate->committed)
-		pfree(snapstate->committed);
+	if (snapstate->committed.xip)
+		pfree(snapstate->committed.xip);
 
-	if (snapstate->running)
-		pfree(snapstate->running);
+	if (snapstate->running.xip)
+		pfree(snapstate->running.xip);
 
 	pfree(snapstate);
 
@@ -348,7 +346,7 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 
 	snapshot = MemoryContextAllocZero(snapstate->context,
 									  sizeof(SnapshotData)
-									  + sizeof(TransactionId) * snapstate->nrcommitted
+									  + sizeof(TransactionId) * snapstate->committed.xcnt
 									  + sizeof(TransactionId) * 1 /* toplevel xid */);
 
 	snapshot->satisfies = HeapTupleSatisfiesMVCCDuringDecoding;
@@ -368,9 +366,9 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 
 	/* store all transaction to be treated as committed */
 	snapshot->xip = (TransactionId *) ((char *) snapshot + sizeof(SnapshotData));
-	snapshot->xcnt = snapstate->nrcommitted;
-	memcpy(snapshot->xip, snapstate->committed,
-	       snapstate->nrcommitted * sizeof(TransactionId));
+	snapshot->xcnt = snapstate->committed.xcnt;
+	memcpy(snapshot->xip, snapstate->committed.xip,
+		   snapstate->committed.xcnt * sizeof(TransactionId));
 	/* sort so we can bsearch() */
 	qsort(snapshot->xip, snapshot->xcnt, sizeof(TransactionId), xidComparator);
 
@@ -618,9 +616,9 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 				Assert(TransactionIdIsNormal(snapstate->xmin));
 				Assert(TransactionIdIsNormal(snapstate->xmax));
 
-				snapstate->nrrunning = 0;
-				snapstate->xmin_running = InvalidTransactionId;
-				snapstate->xmax_running = InvalidTransactionId;
+				snapstate->running.xcnt = 0;
+				snapstate->running.xmin = InvalidTransactionId;
+				snapstate->running.xmax = InvalidTransactionId;
 
 				/*
 				 * FIXME: abort everything we have stored about running
@@ -632,7 +630,7 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 					 snapstate->xmin);
 			}
 			/* first encounter of a xl_running_xacts record */
-			else if (!snapstate->nrrunning)
+			else if (!snapstate->running.xcnt)
 			{
 				/*
 				 * We only care about toplevel xids as those are the ones we
@@ -647,31 +645,31 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 				Assert(TransactionIdIsNormal(snapstate->xmin));
 				Assert(TransactionIdIsNormal(snapstate->xmax));
 
-				snapstate->nrrunning = running->xcnt;
-				snapstate->nrrunning_initial = running->xcnt;
+				snapstate->running.xcnt = running->xcnt;
+				snapstate->running.xcnt_space = running->xcnt;
 
-				snapstate->running =
+				snapstate->running.xip =
 					MemoryContextAlloc(snapstate->context,
-									   snapstate->nrrunning  * sizeof(TransactionId));
+									   snapstate->running.xcnt * sizeof(TransactionId));
 
-				memcpy(snapstate->running, running->xids,
-					   snapstate->nrrunning_initial * sizeof(TransactionId));
+				memcpy(snapstate->running.xip, running->xids,
+					   snapstate->running.xcnt * sizeof(TransactionId));
 
 				/* sort so we can do a binary search */
-				qsort(snapstate->running, snapstate->nrrunning_initial,
+				qsort(snapstate->running.xip, snapstate->running.xcnt,
 					  sizeof(TransactionId), xidComparator);
 
-				snapstate->xmin_running = snapstate->running[0];
-				snapstate->xmax_running = snapstate->running[running->xcnt - 1];
+				snapstate->running.xmin = snapstate->running.xip[0];
+				snapstate->running.xmax = snapstate->running.xip[running->xcnt - 1];
 
 				/* makes comparisons cheaper later */
-				TransactionIdRetreat(snapstate->xmin_running);
-				TransactionIdAdvance(snapstate->xmax_running);
+				TransactionIdRetreat(snapstate->running.xmin);
+				TransactionIdAdvance(snapstate->running.xmax);
 
 				snapstate->state = SNAPBUILD_FULL_SNAPSHOT;
 
 				elog(LOG, "found initial snapshot (xmin %u) due to running xacts, %u xacts need to finish",
-					 snapstate->xmin, (uint32)snapstate->nrrunning);
+					 snapstate->xmin, (uint32)snapstate->running.xcnt);
 			}
 		}
 		else if (r->xl_rmid == RM_XLOG_ID &&
@@ -1041,15 +1039,15 @@ static bool
 SnapBuildTxnIsRunning(Snapstate *snapstate, TransactionId xid)
 {
 	Assert(snapstate->state < SNAPBUILD_CONSISTENT);
-	Assert(TransactionIdIsValid(snapstate->xmin_running));
-	Assert(TransactionIdIsValid(snapstate->xmax_running));
+	Assert(TransactionIdIsValid(snapstate->running.xmin));
+	Assert(TransactionIdIsValid(snapstate->running.xmax));
 
-	if (snapstate->nrrunning &&
-		NormalTransactionIdFollows(xid, snapstate->xmin_running) &&
-		NormalTransactionIdPrecedes(xid, snapstate->xmax_running))
+	if (snapstate->running.xcnt &&
+		NormalTransactionIdFollows(xid, snapstate->running.xmin) &&
+		NormalTransactionIdPrecedes(xid, snapstate->running.xmax))
 	{
 		TransactionId *search =
-			bsearch(&xid, snapstate->running, snapstate->nrrunning_initial,
+			bsearch(&xid, snapstate->running.xip, snapstate->running.xcnt_space,
 					sizeof(TransactionId), xidComparator);
 
 		if (search != NULL)
@@ -1111,19 +1109,17 @@ SnapBuildAddCommittedTxn(Snapstate *snapstate, TransactionId xid)
 {
 	Assert(TransactionIdIsValid(xid));
 
-	if (snapstate->nrcommitted == snapstate->nrcommitted_space)
+	if (snapstate->committed.xcnt == snapstate->committed.xcnt_space)
 	{
-		snapstate->nrcommitted_space *= 2;
+		snapstate->committed.xcnt_space *= 2;
 
 		elog(WARNING, "increasing space for committed transactions to " INT64_FORMAT,
-			 snapstate->nrcommitted_space);
+			 snapstate->committed.xcnt_space);
 
-		snapstate->committed = realloc(snapstate->committed,
-									   snapstate->nrcommitted_space * sizeof(TransactionId));
-		if (!snapstate->committed)
-			elog(ERROR, "couldn't enlarge space for committed transactions");
+		snapstate->committed.xip = repalloc(snapstate->committed.xip,
+											snapstate->committed.xcnt_space * sizeof(TransactionId));
 	}
-	snapstate->committed[snapstate->nrcommitted++] = xid;
+	snapstate->committed.xip[snapstate->committed.xcnt++] = xid;
 }
 
 /*
@@ -1144,22 +1140,22 @@ SnapBuildPurgeCommittedTxn(Snapstate *snapstate)
 	/* XXX: Neater algorithm? */
 	workspace =
 		MemoryContextAlloc(snapstate->context,
-						   snapstate->nrcommitted * sizeof(TransactionId));
+						   snapstate->committed.xcnt * sizeof(TransactionId));
 
 
-	for (off = 0; off < snapstate->nrcommitted; off++)
+	for (off = 0; off < snapstate->committed.xcnt; off++)
 	{
-		if (NormalTransactionIdFollows(snapstate->committed[off], snapstate->xmin))
-			workspace[surviving_xids++] = snapstate->committed[off];
+		if (NormalTransactionIdFollows(snapstate->committed.xip[off], snapstate->xmin))
+			workspace[surviving_xids++] = snapstate->committed.xip[off];
 	}
 
-	memcpy(snapstate->committed, workspace,
+	memcpy(snapstate->committed.xip, workspace,
 		   surviving_xids * sizeof(TransactionId));
 
 	elog(LOG, "purged committed transactions from %u to %u, xmin: %u, xmax: %u",
-		 (uint32)snapstate->nrcommitted, (uint32)surviving_xids,
+		 (uint32)snapstate->committed.xcnt, (uint32)surviving_xids,
 		 snapstate->xmin, snapstate->xmax);
-	snapstate->nrcommitted = surviving_xids;
+	snapstate->committed.xcnt = surviving_xids;
 
 	pfree(workspace);
 }
@@ -1176,7 +1172,7 @@ SnapBuildEndTxn(Snapstate *snapstate, TransactionId xid)
 
 	if (SnapBuildTxnIsRunning(snapstate, xid))
 	{
-		if (!--snapstate->nrrunning)
+		if (!--snapstate->running.xcnt)
 		{
 			/*
 			 * none of the originally running transaction is running
