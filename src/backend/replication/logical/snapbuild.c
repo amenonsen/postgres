@@ -130,40 +130,40 @@ static void SnapBuildDistributeSnapshotNow(Snapstate *snapstate, ReorderBuffer *
  * The result of this function needs to be released from the syscache.
  */
 HeapTuple
-LookupTableByRelFileNode(RelFileNode *relfilenode)
+LookupRelationByRelFileNode(RelFileNode *relfilenode)
 {
-	Oid spc;
 	HeapTuple tuple;
-	Oid heaprel;
+	Oid heaprel = InvalidOid;
 
-	/*
-	 * relations in the default tablespace are stored with a reltablespace = 0
-	 * for some reason.
-	 */
-	spc = relfilenode->spcNode == DEFAULTTABLESPACE_OID ?
-		InvalidOid : relfilenode->spcNode;
-
-	tuple = SearchSysCache2(RELFILENODE,
-							spc,
-							relfilenode->relNode);
-
-	if (!HeapTupleIsValid(tuple))
+	if (relfilenode->spcNode == GLOBALTABLESPACE_OID)
 	{
-		if (relfilenode->spcNode == GLOBALTABLESPACE_OID)
-		{
-			heaprel = RelationMapFilenodeToOid(relfilenode->relNode, true);
-		}
-		else
-		{
-			heaprel = RelationMapFilenodeToOid(relfilenode->relNode, false);
-		}
-
-		if (heaprel != InvalidOid)
-		{
-			tuple = SearchSysCache1(RELOID,
-									heaprel);
-		}
+		heaprel = RelationMapFilenodeToOid(relfilenode->relNode, true);
 	}
+	else
+	{
+		Oid spc;
+
+		/*
+		 * relations in the default tablespace are stored with a reltablespace = 0
+		 * for some reason.
+		 */
+		spc = relfilenode->spcNode == DEFAULTTABLESPACE_OID ?
+			InvalidOid : relfilenode->spcNode;
+
+
+		tuple = SearchSysCache2(RELFILENODE,
+								spc,
+								relfilenode->relNode);
+
+		/* has to be nonexistant or a nailed table */
+		if (!HeapTupleIsValid(tuple))
+			heaprel = RelationMapFilenodeToOid(relfilenode->relNode, false);
+	}
+
+	/* shared or nailed table */
+	if (heaprel != InvalidOid)
+		tuple = SearchSysCache1(RELOID, heaprel);
+
 	return tuple;
 }
 
@@ -185,7 +185,7 @@ SnapBuildHasCatalogChanges(Snapstate *snapstate, TransactionId xid, RelFileNode 
 		return true;
 
 
-	table = LookupTableByRelFileNode(relfilenode);
+	table = LookupRelationByRelFileNode(relfilenode);
 
 	/*
 	 * tables in the default tablespace are stored in pg_class with 0 as their

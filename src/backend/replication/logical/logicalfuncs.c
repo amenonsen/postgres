@@ -104,7 +104,7 @@ change_wrapper(ReorderBuffer* cache, ReorderBufferTXN* txn, ReorderBufferChange*
 	resetStringInfo(state->out);
 	WalSndPrepareWrite(state->out, change->lsn);
 
-	table = LookupTableByRelFileNode(&change->relnode);
+	table = LookupRelationByRelFileNode(&change->relnode);
 	Assert(table);
 	reloid = HeapTupleHeaderGetOid(table->t_data);
 	ReleaseSysCache(table);

@@ -146,7 +146,7 @@ struct XLogRecordBuffer;
 
 extern SnapBuildAction SnapBuildDecodeCallback(ReorderBuffer *cache, Snapstate *snapstate, struct XLogRecordBuffer *buf);
 
-extern HeapTuple LookupTableByRelFileNode(RelFileNode *r);
+extern HeapTuple LookupRelationByRelFileNode(RelFileNode *r);
 
 extern bool SnapBuildHasCatalogChanges(Snapstate *snapstate, TransactionId xid,
                                        RelFileNode *relfilenode);
