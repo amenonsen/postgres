@@ -212,7 +212,18 @@ SnapBuildHasCatalogChanges(Snapstate *snapstate, TransactionId xid, RelFileNode 
 Snapstate *
 AllocateSnapshotBuilder(ReorderBuffer *reorder)
 {
-	Snapstate *snapstate = malloc(sizeof(Snapstate));
+	MemoryContext context;
+	Snapstate *snapstate;
+
+	context = AllocSetContextCreate(TopMemoryContext,
+									"snapshot builder context",
+									ALLOCSET_DEFAULT_MINSIZE,
+									ALLOCSET_DEFAULT_INITSIZE,
+									ALLOCSET_DEFAULT_MAXSIZE);
+
+	snapstate = MemoryContextAllocZero(context, sizeof(Snapstate));
+
+	snapstate->context = context;
 
 	snapstate->state = SNAPBUILD_START;
 
@@ -222,11 +233,10 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder)
 
 	snapstate->nrcommitted = 0;
 	snapstate->nrcommitted_space = 128; /* arbitrary number */
-	snapstate->committed = malloc(snapstate->nrcommitted_space * sizeof(TransactionId));
+	snapstate->committed = MemoryContextAlloc(context,
+											  snapstate->nrcommitted_space
+											  * sizeof(TransactionId));
 	snapstate->transactions_after = InvalidXLogRecPtr;
-
-	if (!snapstate->committed)
-		elog(ERROR, "could not allocate memory for snapstate->committed");
 
 	snapstate->snapshot = NULL;
 
@@ -239,16 +249,20 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder)
 void
 FreeSnapshotBuilder(Snapstate *snapstate)
 {
+	MemoryContext context = snapstate->context;
+
 	if (snapstate->snapshot)
 		SnapBuildFreeSnapshot(snapstate->snapshot);
 
 	if (snapstate->committed)
-		free(snapstate->committed);
+		pfree(snapstate->committed);
 
 	if (snapstate->running)
-		free(snapstate->running);
+		pfree(snapstate->running);
 
-	free(snapstate);
+	pfree(snapstate);
+
+	MemoryContextDelete(context);
 }
 
 /*
@@ -273,7 +287,7 @@ SnapBuildFreeSnapshot(Snapshot snap)
 	if (snap->active_count)
 		elog(ERROR, "freeing active snapshot");
 
-	free(snap);
+	pfree(snap);
 }
 
 /*
@@ -328,11 +342,14 @@ SnapBuildSnapDecRefcount(Snapshot snap)
 static Snapshot
 SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 {
-	Snapshot snapshot = malloc(sizeof(SnapshotData) +
-							   sizeof(TransactionId) * snapstate->nrcommitted +
-							   sizeof(TransactionId) * 1 /* toplevel xid */);
+	Snapshot snapshot;
 
 	Assert(snapstate->state >= SNAPBUILD_FULL_SNAPSHOT);
+
+	snapshot = MemoryContextAllocZero(snapstate->context,
+									  sizeof(SnapshotData)
+									  + sizeof(TransactionId) * snapstate->nrcommitted
+									  + sizeof(TransactionId) * 1 /* toplevel xid */);
 
 	snapshot->satisfies = HeapTupleSatisfiesMVCCDuringDecoding;
 	/*
@@ -633,8 +650,9 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 				snapstate->nrrunning = running->xcnt;
 				snapstate->nrrunning_initial = running->xcnt;
 
-				snapstate->running = malloc(snapstate->nrrunning
-											* sizeof(TransactionId));
+				snapstate->running =
+					MemoryContextAlloc(snapstate->context,
+									   snapstate->nrrunning  * sizeof(TransactionId));
 
 				memcpy(snapstate->running, running->xids,
 					   snapstate->nrrunning_initial * sizeof(TransactionId));
@@ -1119,15 +1137,15 @@ SnapBuildPurgeCommittedTxn(Snapstate *snapstate)
 	TransactionId *workspace;
 	int surviving_xids = 0;
 
-	/* XXX: Neater algorithm? */
-	workspace = malloc(snapstate->nrcommitted * sizeof(TransactionId));
-
-	if (!workspace)
-		elog(ERROR, "could not allocate memory for workspace during xmin purging");
-
 	/* not ready yet */
 	if (!TransactionIdIsNormal(snapstate->xmin))
 		return;
+
+	/* XXX: Neater algorithm? */
+	workspace =
+		MemoryContextAlloc(snapstate->context,
+						   snapstate->nrcommitted * sizeof(TransactionId));
+
 
 	for (off = 0; off < snapstate->nrcommitted; off++)
 	{
@@ -1142,7 +1160,8 @@ SnapBuildPurgeCommittedTxn(Snapstate *snapstate)
 		 (uint32)snapstate->nrcommitted, (uint32)surviving_xids,
 		 snapstate->xmin, snapstate->xmax);
 	snapstate->nrcommitted = surviving_xids;
-	free(workspace);
+
+	pfree(workspace);
 }
 
 /*

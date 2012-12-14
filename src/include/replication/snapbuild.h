@@ -105,6 +105,11 @@ typedef struct Snapstate
 	TransactionId *committed;
 
 	/*
+	 * private memory context used to allocate memory for this module.
+	 */
+	MemoryContext context;
+
+	/*
 	 * Snapshot thats valid to see all committed transactions that see catalog
 	 * modifications.
 	 */
