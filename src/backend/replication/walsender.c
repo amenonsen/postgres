@@ -541,17 +541,22 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	SpinLockRelease(&walsnd->mutex);
 
 	/*
-	 * Loop until we've found an xmin and set it locally without the global
-	 * value being changed in that time. Once we achieved that the global value
-	 * cannot go backwards anymore, as ComputeLogicalXmin() nails the value
-	 * down.
+	 * Acquire the current global xmin value and directly set the logical xmin
+	 * before releasing the lock if necessary. We do this so wal decoding is
+	 * guaranteed to have all catalog rows produced by xacts with an xid >
+	 * walsnd->xmin available.
 	 *
-	 * FIXME: this should probably be in procarray.c?
+	 * We can't use ComputeLogicalXmin here as that acquires ProcArrayLock
+	 * separately which would open a short window for the global xmin to
+	 * advance above walsnd->xmin.
 	 */
-	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
 	walsnd->xmin = GetOldestXminNoLock(true, true);
+
+	if (!TransactionIdIsValid(WalSndCtl->logical_xmin) ||
+		NormalTransactionIdPrecedes(walsnd->xmin, WalSndCtl->logical_xmin))
+		WalSndCtl->logical_xmin = walsnd->xmin;
 	LWLockRelease(ProcArrayLock);
-	ComputeLogicalXmin();
 
 	decoding_ctx = AllocSetContextCreate(TopMemoryContext,
 										 "decoding context",
