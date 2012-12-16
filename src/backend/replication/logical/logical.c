@@ -126,7 +126,7 @@ ComputeLogicalXmin(void)
 	TransactionId xmin = InvalidTransactionId;
 	LogicalDecodingSlot *slot;
 
-	Assert(!LogicalDecodingCtl);
+	Assert(LogicalDecodingCtl);
 
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 
