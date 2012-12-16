@@ -38,6 +38,9 @@ LogicalDecodingShmemSize(void)
 {
 	Size		size = 0;
 
+	if (max_logical_slots == 0)
+		return size;
+
 	size = offsetof(LogicalDecodingCtlData, logical_slots);
 	size = add_size(size,
 					mul_size(max_logical_slots, sizeof(LogicalDecodingSlot)));
@@ -50,6 +53,9 @@ void
 LogicalDecodingShmemInit(void)
 {
 	bool		found;
+
+	if (max_logical_slots == 0)
+		return;
 
 	LogicalDecodingCtl = (LogicalDecodingCtlData *)
 		ShmemInitStruct("Logical Decoding Ctl", LogicalDecodingShmemSize(),
@@ -123,6 +129,8 @@ ComputeLogicalXmin(void)
 	TransactionId xmin = InvalidTransactionId;
 	LogicalDecodingSlot *slot;
 
+	Assert(!LogicalDecodingCtl);
+
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 
 	for (i = 0; i < max_logical_slots; i++)
@@ -166,6 +174,8 @@ void LogicalDecodingAcquireFreeSlot()
 	char	   *slot_name;
 
 	Assert(!MyLogicalDecodingSlot);
+
+	CheckLogicalReplicationRequirements();
 
 	for (i = 0; i < max_logical_slots; i++)
 	{
@@ -223,6 +233,8 @@ void LogicalDecodingReAcquireSlot(const char *name)
 	LogicalDecodingSlot *slot;
 	int i;
 
+	CheckLogicalReplicationRequirements();
+
 	Assert(!MyLogicalDecodingSlot);
 
 	for (i = 0; i < max_logical_slots; i++)
@@ -269,7 +281,12 @@ void LogicalDecodingReAcquireSlot(const char *name)
 void
 LogicalDecodingReleaseSlot(void)
 {
-	LogicalDecodingSlot *slot = MyLogicalDecodingSlot;
+	LogicalDecodingSlot *slot;
+
+	CheckLogicalReplicationRequirements();
+
+	slot = MyLogicalDecodingSlot;
+
 	Assert(slot != NULL);
 
 	SpinLockAcquire(&slot->mutex);
