@@ -1528,7 +1528,8 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 		CommandId cmax = HeapTupleHeaderGetRawCommandId(tuple);
 
 		/* Lookup actual cmin/cmax values */
-		if (tuple->t_infomask & HEAP_COMBOCID){
+		if (tuple->t_infomask & HEAP_COMBOCID)
+		{
 			bool resolved;
 
 			resolved = ResolveCminCmaxDuringDecoding(tuplecid_data, htup,
@@ -1543,9 +1544,6 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 		else
 			return false;	/* deleted before scan started */
 	}
-	/* we cannot possibly see the deleting transaction */
-	else if (TransactionIdFollowsOrEquals(xmax, snapshot->xmax))
-		return true;
 	/* normal transaction state is valid */
 	else if (TransactionIdPrecedes(xmax, snapshot->xmin))
 	{
@@ -1555,8 +1553,11 @@ HeapTupleSatisfiesMVCCDuringDecoding(HeapTuple htup, Snapshot snapshot,
 		if (tuple->t_infomask & HEAP_XMAX_COMMITTED)
 			return false;
 
-		return TransactionIdDidCommit(xmax);
+		return !TransactionIdDidCommit(xmax);
 	}
+	/* we cannot possibly see the deleting transaction */
+	else if (TransactionIdFollowsOrEquals(xmax, snapshot->xmax))
+		return true;
 	/* do we know that the deleting txn is valid? */
 	else if (TransactionIdInArray(xmax, snapshot->xip, snapshot->xcnt))
 		return false;
