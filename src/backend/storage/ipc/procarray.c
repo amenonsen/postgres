@@ -51,6 +51,7 @@
 #include "access/xact.h"
 #include "access/twophase.h"
 #include "miscadmin.h"
+#include "replication/logical.h"
 #include "replication/walsender.h"
 #include "replication/walsender_private.h"
 #include "storage/proc.h"
@@ -1178,10 +1179,10 @@ GetOldestXminNoLock(bool allDbs, bool ignoreVacuum)
 	}
 
 	if (max_logical_slots > 0 &&
-		TransactionIdIsValid(WalSndCtl->logical_xmin) &&
-		NormalTransactionIdPrecedes(WalSndCtl->logical_xmin, result))
+		TransactionIdIsValid(LogicalDecodingCtl->xmin) &&
+		NormalTransactionIdPrecedes(LogicalDecodingCtl->xmin, result))
 	{
-		result = WalSndCtl->logical_xmin;
+		result = LogicalDecodingCtl->xmin;
 	}
 
 
@@ -1465,9 +1466,12 @@ GetSnapshotData(Snapshot snapshot)
 	}
 
 	/* FIXME: comment & concurrency */
-	if (TransactionIdIsValid(WalSndCtl->logical_xmin) &&
-		NormalTransactionIdPrecedes(WalSndCtl->logical_xmin, globalxmin))
-		globalxmin = WalSndCtl->logical_xmin;
+	if (max_logical_slots > 0 &&
+		TransactionIdIsValid(LogicalDecodingCtl->xmin) &&
+		NormalTransactionIdPrecedes(LogicalDecodingCtl->xmin, globalxmin))
+	{
+		globalxmin = LogicalDecodingCtl->xmin;
+	}
 
 	if (!TransactionIdIsValid(MyPgXact->xmin))
 		MyPgXact->xmin = TransactionXmin = xmin;

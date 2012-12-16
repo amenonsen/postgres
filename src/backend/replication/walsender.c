@@ -50,12 +50,12 @@
 #include "replication/basebackup.h"
 #include "replication/decode.h"
 #include "replication/logicalfuncs.h"
+#include "replication/logical.h"
 #include "replication/snapbuild.h"
 #include "replication/syncrep.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
 #include "replication/walsender_private.h"
-
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
@@ -87,9 +87,6 @@ WalSndCtlData *WalSndCtl = NULL;
 /* My slot in the shared memory array */
 WalSnd	   *MyWalSnd = NULL;
 
-/* My slot for logical rep in the shared memory array */
-LogicalWalSnd *MyLogicalWalSnd = NULL;
-
 /* Global state */
 bool		am_walsender = false;		/* Am I a walsender process ? */
 bool		am_cascading_walsender = false;		/* Am I cascading WAL to
@@ -99,7 +96,6 @@ static bool	replication_started = false; /* Started streaming yet? */
 
 /* User-settable parameters for walsender */
 int			max_wal_senders = 0;	/* the maximum number of concurrent walsenders */
-int			max_logical_slots = 0;	/* the maximum number of logical slots */
 int			wal_sender_timeout = 60 * 1000;	/* maximum time to send one
 												 * WAL data message */
 /*
@@ -143,7 +139,6 @@ static MemoryContext old_decoding_ctx = NULL;
 
 static XLogReaderState *logical_reader = NULL;
 
-
 /* Signal handlers */
 static void WalSndSigHupHandler(SIGNAL_ARGS);
 static void WalSndXLogSendHandler(SIGNAL_ARGS);
@@ -158,10 +153,8 @@ static void XLogSendPhysical(bool *caughtup);
 static void XLogSendLogical(bool *caughtup);
 static void IdentifySystem(void);
 static void StartReplication(StartReplicationCmd *cmd);
-static void CheckLogicalReplicationRequirements(void);
 static void InitLogicalReplication(InitLogicalReplicationCmd *cmd);
 static void StartLogicalReplication(StartLogicalReplicationCmd *cmd);
-static void ComputeLogicalXmin(void);
 static void ProcessStandbyMessage(void);
 static void ProcessStandbyReplyMessage(void);
 static void ProcessStandbyHSFeedbackMessage(void);
@@ -211,66 +204,6 @@ WalSndErrorCleanup()
 	 */
 	if (replication_started)
 		proc_exit(0);
-}
-
-/*
- * Set the xmin required for catalog timetravel for the specific decoding slot.
- */
-extern void
-IncreaseLogicalXminForSlot(XLogRecPtr lsn, TransactionId xmin)
-{
-	Assert(MyLogicalWalSnd != NULL);
-
-	SpinLockAcquire(&MyLogicalWalSnd->mutex);
-	/*
-	 * Only increase if the previous value has been applied...
-	 */
-	if (!TransactionIdIsValid(MyLogicalWalSnd->candidate_xmin))
-	{
-		MyLogicalWalSnd->candidate_xmin_after = lsn;
-		MyLogicalWalSnd->candidate_xmin = xmin;
-		elog(LOG, "got new xmin %u at %X/%X", xmin,
-			 (uint32)(lsn >> 32), (uint32)lsn); /* FIXME: log level */
-	}
-	SpinLockRelease(&MyLogicalWalSnd->mutex);
-}
-
-/*
- * Compute the xmin between all of the decoding slots and store it in
- * WalSndCtlData.
- */
-static void
-ComputeLogicalXmin(void)
-{
-	int slot;
-	TransactionId xmin = InvalidTransactionId;
-	LogicalWalSnd *logical_base;
-	LogicalWalSnd *walsnd;
-
-	logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
-
-	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-
-	for (slot = 0; slot < max_logical_slots; slot++)
-	{
-		walsnd = &logical_base[slot];
-
-		SpinLockAcquire(&walsnd->mutex);
-		if (walsnd->in_use &&
-			TransactionIdIsValid(walsnd->xmin) && (
-				!TransactionIdIsValid(xmin) ||
-				TransactionIdPrecedes(walsnd->xmin, xmin))
-			)
-		{
-			xmin = walsnd->xmin;
-		}
-		SpinLockRelease(&walsnd->mutex);
-	}
-	WalSndCtl->logical_xmin = xmin;
-	LWLockRelease(ProcArrayLock);
-
-	elog(LOG, "computed new global xmin for decoding: %u", xmin);
-
 }
 
 /*
@@ -465,19 +398,6 @@ StartReplication(StartReplicationCmd *cmd)
 	WalSndLoop(XLogSendPhysical);
 }
 
-static void
-CheckLogicalReplicationRequirements(void)
-{
-	if (wal_level < WAL_LEVEL_LOGICAL)
-		ereport(ERROR, (errmsg("logical replication requires wal_level=logical")));
-
-	if (MyDatabaseId == InvalidOid)
-		ereport(ERROR, (errmsg("logical replication requires to be connected to a database")));
-
-	if (max_logical_slots == 0)
-		ereport(ERROR, (errmsg("logical replication requires needs max_logical_slots > 0")));
-}
-
 /*
  * Initialize logical replication and wait for an initial consistent point to
  * start sending changes from.
@@ -485,10 +405,7 @@ CheckLogicalReplicationRequirements(void)
 static void
 InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 {
-	int			slot;
-	LogicalWalSnd *logical_base;
-	LogicalWalSnd *walsnd;
-	char	   *slot_name;
+	const char *slot_name;
 	StringInfoData buf;
 	char		xpos[MAXFNAMELEN];
 	const char *snapshot_name = NULL;
@@ -497,66 +414,13 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 
 	CheckLogicalReplicationRequirements();
 
-	logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
+	Assert(!MyLogicalDecodingSlot);
 
-	Assert(!MyLogicalWalSnd);
+	LogicalDecodingAcquireFreeSlot();
 
-	/* find free logical slot */
-	for (slot = 0; slot < max_logical_slots; slot++)
-	{
-		walsnd = &logical_base[slot];
+	Assert(MyLogicalDecodingSlot);
 
-		SpinLockAcquire(&walsnd->mutex);
-		if (!walsnd->in_use)
-		{
-			Assert(!walsnd->active);
-			/* NOT releasing the lock yet */
-			break;
-		}
-		SpinLockRelease(&walsnd->mutex);
-		walsnd = NULL;
-	}
-
-	if (!walsnd)
-	{
-		elog(ERROR, "couldn't find free logical slot. free one or increase max_logical_slots");
-	}
-
-	/* so we get reset on exit/failure */
-	MyLogicalWalSnd = walsnd;
-	MyLogicalWalSnd->last_required_checkpoint = GetRedoRecPtr();
-
-	walsnd->in_use = true;
-	/* mark slot as active till we build the base snapshot */
-	walsnd->active = true;
-	walsnd->database = MyDatabaseId;
-
-	strcpy(NameStr(walsnd->plugin), cmd->plugin);
-
-	/* FIXME: permanent name allocation scheme */
-	slot_name = NameStr(walsnd->name);
-	sprintf(slot_name, "id-%d", slot);
-
-	/* release spinlock, so this slot can be examined  */
-	SpinLockRelease(&walsnd->mutex);
-
-	/*
-	 * Acquire the current global xmin value and directly set the logical xmin
-	 * before releasing the lock if necessary. We do this so wal decoding is
-	 * guaranteed to have all catalog rows produced by xacts with an xid >
-	 * walsnd->xmin available.
-	 *
-	 * We can't use ComputeLogicalXmin here as that acquires ProcArrayLock
-	 * separately which would open a short window for the global xmin to
-	 * advance above walsnd->xmin.
-	 */
-	LWLockAcquire(ProcArrayLock, LW_SHARED);
-	walsnd->xmin = GetOldestXminNoLock(true, true);
-
-	if (!TransactionIdIsValid(WalSndCtl->logical_xmin) ||
-		NormalTransactionIdPrecedes(walsnd->xmin, WalSndCtl->logical_xmin))
-		WalSndCtl->logical_xmin = walsnd->xmin;
-	LWLockRelease(ProcArrayLock);
+	strcpy(NameStr(MyLogicalDecodingSlot->plugin), cmd->plugin);
 
 	decoding_ctx = AllocSetContextCreate(TopMemoryContext,
 										 "decoding context",
@@ -566,8 +430,8 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	old_decoding_ctx = MemoryContextSwitchTo(decoding_ctx);
 	TopTransactionContext = decoding_ctx;
 
-	logical_reader = initial_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint,
-											 walsnd->xmin);
+	logical_reader = initial_snapshot_reader(MyLogicalDecodingSlot->last_required_checkpoint,
+											 MyLogicalDecodingSlot->xmin);
 
 	MemoryContextSwitchTo(old_decoding_ctx);
 	TopTransactionContext = NULL;
@@ -604,10 +468,11 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 		}
 	}
 
-	walsnd->confirmed_flush = logical_reader->EndRecPtr;
-
+	MyLogicalDecodingSlot->confirmed_flush = logical_reader->EndRecPtr;
+	slot_name = NameStr(MyLogicalDecodingSlot->name);
 	snprintf(xpos, sizeof(xpos), "%X/%X",
-			 (uint32) (walsnd->confirmed_flush >> 32), (uint32) walsnd->confirmed_flush);
+			 (uint32) (MyLogicalDecodingSlot->confirmed_flush >> 32),
+			 (uint32) MyLogicalDecodingSlot->confirmed_flush);
 
 	pq_beginmessage(&buf, 'T');
 	pq_sendint(&buf, 4, 2);		/* 4 fields */
@@ -670,12 +535,9 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	pq_endmessage(&buf);
 
 	/*
-	 * release active status again, START_LOGICAL_REPLICATION will do so again
+	 * release active status again, START_LOGICAL_REPLICATION will reacquire it
 	 */
-	SpinLockAcquire(&walsnd->mutex);
-	walsnd->active = false;
-	MyLogicalWalSnd = NULL;
-	SpinLockRelease(&walsnd->mutex);
+	LogicalDecodingReleaseSlot();
 }
 
 /*
@@ -687,54 +549,14 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 {
 	StringInfoData buf;
 
-	int slot;
-	LogicalWalSnd *logical_base;
-	logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
-
 	elog(WARNING, "Starting logical replication");
-
-	Assert(!MyLogicalWalSnd);
 
 	/* make sure that our requirements are still fulfilled */
 	CheckLogicalReplicationRequirements();
 
-	for (slot = 0; slot < max_logical_slots; slot++)
-	{
-		LogicalWalSnd   *walsnd = &logical_base[slot];
+	Assert(!MyLogicalDecodingSlot);
 
-		SpinLockAcquire(&walsnd->mutex);
-		if (walsnd->in_use && strcmp(cmd->name, NameStr(walsnd->name)) == 0)
-		{
-			MyLogicalWalSnd = walsnd;
-			/* NOT releasing the lock yet */
-			break;
-		}
-		SpinLockRelease(&walsnd->mutex);
-	}
-
-	if (!MyLogicalWalSnd)
-		elog(ERROR, "couldn't find logical slot for \"%s\"",
-		     cmd->name);
-
-	if (MyLogicalWalSnd->active)
-	{
-		SpinLockRelease(&MyLogicalWalSnd->mutex);
-		elog(ERROR, "slot already active");
-	}
-
-	MyLogicalWalSnd->active = true;
-	/* now that we've marked it as active, we release our lock */
-	SpinLockRelease(&MyLogicalWalSnd->mutex);
-
-	/* Don't let the user switch the database... */
-	if (MyLogicalWalSnd->database != MyDatabaseId)
-	{
-		SpinLockAcquire(&MyLogicalWalSnd->mutex);
-		MyLogicalWalSnd->active = false;
-		SpinLockRelease(&MyLogicalWalSnd->mutex);
-
-		ereport(ERROR, (errmsg("START_LOGICAL_REPLICATION needs to be run in the same database as INIT_LOGICAL_REPLICATION")));
-	}
+	LogicalDecodingReAcquireSlot(cmd->name);
 
 	MarkPostmasterChildWalSender();
 	SendPostmasterSignal(PMSIGNAL_ADVANCE_STATE_MACHINE);
@@ -761,7 +583,7 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 	 * Initialize position to the received one, then the xlog records begin to
 	 * be shipped from that position
 	 */
-	sentPtr = MyLogicalWalSnd->last_required_checkpoint;
+	sentPtr = MyLogicalDecodingSlot->last_required_checkpoint;
 
 	/* Also update the start position status in shared memory */
 	{
@@ -769,15 +591,15 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 		volatile WalSnd *walsnd = MyWalSnd;
 
 		SpinLockAcquire(&walsnd->mutex);
-		walsnd->sentPtr = MyLogicalWalSnd->last_required_checkpoint;
+		walsnd->sentPtr = MyLogicalDecodingSlot->last_required_checkpoint;
 		SpinLockRelease(&walsnd->mutex);
 	}
 
 	SyncRepInitConfig();
 
-	logical_reader = normal_snapshot_reader(MyLogicalWalSnd->last_required_checkpoint,
-											MyLogicalWalSnd->xmin,
-											NameStr(MyLogicalWalSnd->plugin),
+	logical_reader = normal_snapshot_reader(MyLogicalDecodingSlot->last_required_checkpoint,
+											MyLogicalDecodingSlot->xmin,
+											NameStr(MyLogicalDecodingSlot->plugin),
 											cmd->startpoint);
 
 	/* Main loop of walsender */
@@ -1158,33 +980,32 @@ ProcessStandbyReplyMessage(void)
 	}
 
 	/*
-	 * Advance our local xmin horizin when the client confirmed a flush.
+	 * Advance our local xmin horizon when the client confirmed a flush.
 	 */
-
 	/* Do an unlocked check for candidate_xmin first.*/
-	if (MyLogicalWalSnd &&
-		TransactionIdIsValid(MyLogicalWalSnd->candidate_xmin))
+	if (MyLogicalDecodingSlot &&
+		TransactionIdIsValid(MyLogicalDecodingSlot->candidate_xmin))
 	{
 		bool updated_xmin = false;
 
 		/* use volatile pointer to prevent code rearrangement */
-		volatile LogicalWalSnd *walsnd = MyLogicalWalSnd;
+		volatile LogicalDecodingSlot *slot = MyLogicalDecodingSlot;
 
-		SpinLockAcquire(&walsnd->mutex);
+		SpinLockAcquire(&slot->mutex);
 
 		/* if were past the location required for bumping xmin, do so */
-		if (TransactionIdIsValid(walsnd->candidate_xmin) &&
+		if (TransactionIdIsValid(slot->candidate_xmin) &&
 			flushPtr != InvalidXLogRecPtr &&
-			XLByteLE(walsnd->candidate_xmin_after, flushPtr)
+			flushPtr > slot->candidate_xmin_after
 			)
 		{
-			walsnd->xmin = walsnd->candidate_xmin;
-			walsnd->candidate_xmin = InvalidTransactionId;
-			walsnd->candidate_xmin_after = InvalidXLogRecPtr;
+			slot->xmin = slot->candidate_xmin;
+			slot->candidate_xmin = InvalidTransactionId;
+			slot->candidate_xmin_after = InvalidXLogRecPtr;
 			updated_xmin = true;
 		}
 
-		SpinLockRelease(&walsnd->mutex);
+		SpinLockRelease(&slot->mutex);
 
 		if (updated_xmin)
 			ComputeLogicalXmin();
@@ -1519,13 +1340,6 @@ WalSndKill(int code, Datum arg)
 	 * for this.
 	 */
 	MyWalSnd->pid = 0;
-
-	/* LOCK? */
-	if(MyLogicalWalSnd && MyLogicalWalSnd->active)
-	{
-		MyLogicalWalSnd->active = false;
-	}
-
 	DisownLatch(&MyWalSnd->latch);
 
 	/* WalSnd struct isn't mine anymore */
@@ -1996,8 +1810,6 @@ WalSndShmemSize(void)
 	size = offsetof(WalSndCtlData, walsnds);
 	size = add_size(size, mul_size(max_wal_senders, sizeof(WalSnd)));
 
-	size = add_size(size, mul_size(max_logical_slots, sizeof(LogicalWalSnd)));
-
 	return size;
 }
 
@@ -2025,21 +1837,6 @@ WalSndShmemInit(void)
 
 			SpinLockInit(&walsnd->mutex);
 			InitSharedLatch(&walsnd->latch);
-		}
-
-		WalSndCtl->logical_xmin = InvalidTransactionId;
-
-		if (max_logical_slots > 0)
-		{
-			LogicalWalSnd *logical_base;
-			logical_base = (LogicalWalSnd*)&WalSndCtl->walsnds[max_wal_senders];
-
-			for (i = 0; i < max_logical_slots; i++)
-			{
-				LogicalWalSnd   *walsnd = &logical_base[i];
-				walsnd->xmin = InvalidTransactionId;
-				SpinLockInit(&walsnd->mutex);
-			}
 		}
 	}
 }

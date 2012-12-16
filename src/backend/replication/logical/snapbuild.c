@@ -79,7 +79,7 @@
 
 #include "replication/reorderbuffer.h"
 #include "replication/snapbuild.h"
-#include "replication/walsender_private.h"
+#include "replication/logical.h"
 
 #include "utils/builtins.h"
 #include "utils/catcache.h"
