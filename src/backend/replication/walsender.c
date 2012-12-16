@@ -814,10 +814,16 @@ WalSndWriteData(StringInfo data)
 
 	pq_putmessage_noblock('d', data->data, data->len);
 
+	/* fast path */
+	/* Try to flush pending output to the client */
+	if (pq_flush_if_writable() != 0)
+		return;
+
+	if (!pq_is_send_pending())
+		return;
+
 	for (;;)
 	{
-		if (!pq_is_send_pending())
-			return;
 
 		/*
 		 * Emergency bailout if postmaster has died.  This is to avoid the
@@ -847,7 +853,7 @@ WalSndWriteData(StringInfo data)
 			break;
 
 		if (!pq_is_send_pending())
-			return;
+			break;
 
 		/* FIXME: wal_sender_timeout integration */
 		wakeEvents = WL_LATCH_SET | WL_POSTMASTER_DEATH |
@@ -910,7 +916,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 		/* check whether we're done */
 		flushptr = GetFlushRecPtr();
 		if (XLByteLE(loc, flushptr))
-			goto out;
+			break;
 
 		/* FIXME: wal_sender_timeout integration */
 		wakeEvents = WL_LATCH_SET | WL_POSTMASTER_DEATH |
@@ -923,7 +929,6 @@ WalSndWaitForWal(XLogRecPtr loc)
 		ImmediateInterruptOK = false;
 	}
 
-out:
 	/* reactivate latch so WalSndLoop knows to continue */
 	SetLatch(&MyWalSnd->latch);
 	return flushptr;
