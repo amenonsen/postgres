@@ -1153,7 +1153,9 @@ SnapBuildPurgeCommittedTxn(Snapstate *snapstate)
 
 	for (off = 0; off < snapstate->committed.xcnt; off++)
 	{
-		if (NormalTransactionIdFollows(snapstate->committed.xip[off], snapstate->xmin))
+		if (NormalTransactionIdPrecedes(snapstate->committed.xip[off], snapstate->xmin))
+			;/* remove */
+		else
 			workspace[surviving_xids++] = snapstate->committed.xip[off];
 	}
 
@@ -1220,6 +1222,8 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 	bool sub_does_timetravel = false;
 	bool top_does_timetravel = false;
 
+	TransactionId xmax = xid;
+
 	/*
 	 * If we couldn't observe every change of a transaction because it was
 	 * already running at the point we started to observe we have to assume it
@@ -1261,6 +1265,8 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 		if (forced_timetravel)
 		{
 			SnapBuildAddCommittedTxn(snapstate, subxid);
+			if (NormalTransactionIdFollows(subxid, xmax))
+				xmax = subxid;
 		}
 		/*
 		 * add subtransaction to base snapshot, we don't distinguish to
@@ -1274,7 +1280,11 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 				 xid, subxid);
 
 			SnapBuildAddCommittedTxn(snapstate, subxid);
+
+			if (NormalTransactionIdFollows(subxid, xmax))
+				xmax = subxid;
 		}
+
 	}
 
 	/*
@@ -1305,9 +1315,9 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 	if (forced_timetravel || top_does_timetravel || sub_does_timetravel)
 	{
 		if (!TransactionIdIsValid(snapstate->xmax) ||
-			TransactionIdFollowsOrEquals(xid, snapstate->xmax))
+			TransactionIdFollowsOrEquals(xmax, snapstate->xmax))
 		{
-			snapstate->xmax = xid;
+			snapstate->xmax = xmax;
 			TransactionIdAdvance(snapstate->xmax);
 		}
 
