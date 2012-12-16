@@ -232,7 +232,7 @@ void DecodeRecordIntoReorderBuffer(XLogReaderState *reader,
 						break;
 					case XLOG_XACT_PREPARE:
 						/*
-						 * FXIME: we should replay the transaction and prepare
+						 * FIXME: we should replay the transaction and prepare
 						 * it as well.
 						 */
 						break;

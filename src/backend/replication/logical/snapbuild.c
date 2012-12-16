@@ -34,7 +34,9 @@
  * Classic SnapshotNow behaviour - which is mainly used for efficiency, not for
  * correctness - is not actually required by any of the routines that we need
  * during decoding and is hard to emulate fully. Instead we build snapshots
- * with MVCC behaviour that are updated whenever another transaction commits.
+ * with MVCC behaviour that are updated whenever another transaction
+ * commits. That gives behaviour consistent with a SnapshotNow behaviour
+ * happening in exactly that instant without other transactions interfering.
  *
  * One additional complexity of doing this is that to handle mixed DDL/DML
  * transactions we need Snapshots that see intermediate states in a
@@ -1338,7 +1340,7 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 	}
 	else
 	{
-		/* record that we cannot export a general snapshot anymorer */
+		/* record that we cannot export a general snapshot anymore */
 		snapstate->committed.includes_all_transactions = false;
 	}
 }

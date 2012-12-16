@@ -485,10 +485,10 @@ CheckLogicalReplicationRequirements(void)
 static void
 InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 {
-	int slot;
+	int			slot;
 	LogicalWalSnd *logical_base;
 	LogicalWalSnd *walsnd;
-	char *slot_name;
+	char	   *slot_name;
 	StringInfoData buf;
 	char		xpos[MAXFNAMELEN];
 	const char *snapshot_name = NULL;
@@ -695,7 +695,7 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 
 	Assert(!MyLogicalWalSnd);
 
-	/* make sure that our requirements are still fullfilled */
+	/* make sure that our requirements are still fulfilled */
 	CheckLogicalReplicationRequirements();
 
 	for (slot = 0; slot < max_logical_slots; slot++)
@@ -723,6 +723,7 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 	}
 
 	MyLogicalWalSnd->active = true;
+	/* now that we've marked it as active, we release our lock */
 	SpinLockRelease(&MyLogicalWalSnd->mutex);
 
 	/* Don't let the user switch the database... */
@@ -862,6 +863,9 @@ WalSndWriteData(StringInfo data)
 	SetLatch(&MyWalSnd->latch);
 }
 
+/*
+ * Wait till WAL < loc is flushed to disk so it can be safely read.
+ */
 XLogRecPtr
 WalSndWaitForWal(XLogRecPtr loc)
 {
@@ -870,6 +874,10 @@ WalSndWaitForWal(XLogRecPtr loc)
 	XLogRecPtr  flushptr;
 
 	/* fast path if everything is there already */
+	/*
+	 * XXX: introduce RecentFlushPtr to avoid acquiring the spinlock in the
+	 * fast path case where we already know we have enough WAL available.
+	 */
 	flushptr = GetFlushRecPtr();
 	if (XLByteLE(loc, flushptr))
 		return flushptr;
@@ -934,7 +942,7 @@ exec_replication_command(const char *cmd_string)
 
 	/*
 	 * INIT_LOGICAL_REPLICATION exports a snapshot until the next command
-	 * arrives. Clear up the old stuff if there's anything.
+	 * arrives. Clean up the old stuff if there's anything.
 	 */
 	SnapBuildClearExportedSnapshot();
 
