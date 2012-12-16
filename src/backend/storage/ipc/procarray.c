@@ -1179,7 +1179,7 @@ GetOldestXminNoLock(bool allDbs, bool ignoreVacuum)
 
 	if (max_logical_slots > 0 &&
 		TransactionIdIsValid(WalSndCtl->logical_xmin) &&
-		TransactionIdPrecedes(WalSndCtl->logical_xmin, result))
+		NormalTransactionIdPrecedes(WalSndCtl->logical_xmin, result))
 	{
 		result = WalSndCtl->logical_xmin;
 	}
@@ -1466,8 +1466,8 @@ GetSnapshotData(Snapshot snapshot)
 
 	/* FIXME: comment & concurrency */
 	if (TransactionIdIsValid(WalSndCtl->logical_xmin) &&
-		TransactionIdPrecedes(WalSndCtl->logical_xmin, xmin))
-		xmin = WalSndCtl->logical_xmin;
+		NormalTransactionIdPrecedes(WalSndCtl->logical_xmin, globalxmin))
+		globalxmin = WalSndCtl->logical_xmin;
 
 	if (!TransactionIdIsValid(MyPgXact->xmin))
 		MyPgXact->xmin = TransactionXmin = xmin;
