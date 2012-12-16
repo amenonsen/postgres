@@ -80,9 +80,6 @@ LogicalDecodingShmemInit(void)
 			}
 		}
 	}
-
-	/* Arrange to clean up at exit */
-	on_shmem_exit(LogicalSlotKill, 0);
 }
 
 static void
@@ -203,6 +200,9 @@ void LogicalDecodingAcquireFreeSlot()
 	slot->active = true;
 	slot->database = MyDatabaseId;
 
+	/* Arrange to clean up at exit */
+	on_shmem_exit(LogicalSlotKill, 0);
+
 	slot_name = NameStr(slot->name);
 	sprintf(slot_name, "id-%d", i);
 
@@ -276,6 +276,9 @@ void LogicalDecodingReAcquireSlot(const char *name)
 
 		ereport(ERROR, (errmsg("START_LOGICAL_REPLICATION needs to be run in the same database as INIT_LOGICAL_REPLICATION")));
 	}
+
+	/* Arrange to clean up at exit */
+	on_shmem_exit(LogicalSlotKill, 0);
 }
 
 void
