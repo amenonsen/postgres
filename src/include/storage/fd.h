@@ -46,7 +46,7 @@
  * FileSeek uses the standard UNIX lseek(2) flags.
  */
 
-typedef char *FileName;
+typedef const char *FileName;
 
 typedef int File;
 

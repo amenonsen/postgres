@@ -26,19 +26,17 @@ smgr_desc(StringInfo buf, uint8 xl_info, char *rec)
 	if (info == XLOG_SMGR_CREATE)
 	{
 		xl_smgr_create *xlrec = (xl_smgr_create *) rec;
-		char	   *path = relpathperm(xlrec->rnode, xlrec->forkNum);
+		const char *path = relpathperm(xlrec->rnode, xlrec->forkNum);
 
 		appendStringInfo(buf, "file create: %s", path);
-		pfree(path);
 	}
 	else if (info == XLOG_SMGR_TRUNCATE)
 	{
 		xl_smgr_truncate *xlrec = (xl_smgr_truncate *) rec;
-		char	   *path = relpathperm(xlrec->rnode, MAIN_FORKNUM);
+		const char *path = relpathperm(xlrec->rnode, MAIN_FORKNUM);
 
 		appendStringInfo(buf, "file truncate: %s to %u blocks", path,
 						 xlrec->blkno);
-		pfree(path);
 	}
 	else
 		appendStringInfo(buf, "UNKNOWN");

@@ -265,7 +265,7 @@ static int64
 calculate_relation_size(RelFileNode *rfn, BackendId backend, ForkNumber forknum)
 {
 	int64		totalsize = 0;
-	char	   *relationpath;
+	const char *relationpath;
 	char		pathname[MAXPGPATH];
 	unsigned int segcount = 0;
 
@@ -753,7 +753,7 @@ pg_relation_filepath(PG_FUNCTION_ARGS)
 	Form_pg_class relform;
 	RelFileNode rnode;
 	BackendId	backend;
-	char	   *path;
+	const char *path;
 
 	tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(tuple))

@@ -112,54 +112,45 @@ forkname_chars(const char *str, ForkNumber *fork)
 /*
  * relpathbackend - construct path to a relation's file
  *
- * Result is a palloc'd string.
+ * Result is a pointer to a statically allocated string.
  */
-char *
+const char *
 relpathbackend(RelFileNode rnode, BackendId backend, ForkNumber forknum)
 {
-	int			pathlen;
-	char	   *path;
+	static char path[MAXPGPATH];
 
 	if (rnode.spcNode == GLOBALTABLESPACE_OID)
 	{
 		/* Shared system relations live in {datadir}/global */
 		Assert(rnode.dbNode == 0);
 		Assert(backend == InvalidBackendId);
-		pathlen = 7 + OIDCHARS + 1 + FORKNAMECHARS + 1;
-		path = (char *) palloc(pathlen);
 		if (forknum != MAIN_FORKNUM)
-			snprintf(path, pathlen, "global/%u_%s",
+			snprintf(path, MAXPGPATH, "global/%u_%s",
 					 rnode.relNode, forkNames[forknum]);
 		else
-			snprintf(path, pathlen, "global/%u", rnode.relNode);
+			snprintf(path, MAXPGPATH, "global/%u", rnode.relNode);
 	}
 	else if (rnode.spcNode == DEFAULTTABLESPACE_OID)
 	{
 		/* The default tablespace is {datadir}/base */
 		if (backend == InvalidBackendId)
 		{
-			pathlen = 5 + OIDCHARS + 1 + OIDCHARS + 1 + FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
 			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "base/%u/%u_%s",
+				snprintf(path, MAXPGPATH, "base/%u/%u_%s",
 						 rnode.dbNode, rnode.relNode,
 						 forkNames[forknum]);
 			else
-				snprintf(path, pathlen, "base/%u/%u",
+				snprintf(path, MAXPGPATH, "base/%u/%u",
 						 rnode.dbNode, rnode.relNode);
 		}
 		else
 		{
-			/* OIDCHARS will suffice for an integer, too */
-			pathlen = 5 + OIDCHARS + 2 + OIDCHARS + 1 + OIDCHARS + 1
-				+ FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
 			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "base/%u/t%d_%u_%s",
+				snprintf(path, MAXPGPATH, "base/%u/t%d_%u_%s",
 						 rnode.dbNode, backend, rnode.relNode,
 						 forkNames[forknum]);
 			else
-				snprintf(path, pathlen, "base/%u/t%d_%u",
+				snprintf(path, MAXPGPATH, "base/%u/t%d_%u",
 						 rnode.dbNode, backend, rnode.relNode);
 		}
 	}
@@ -168,38 +159,31 @@ relpathbackend(RelFileNode rnode, BackendId backend, ForkNumber forknum)
 		/* All other tablespaces are accessed via symlinks */
 		if (backend == InvalidBackendId)
 		{
-			pathlen = 9 + 1 + OIDCHARS + 1
-				+ strlen(TABLESPACE_VERSION_DIRECTORY) + 1 + OIDCHARS + 1
-				+ OIDCHARS + 1 + FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
 			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/%u_%s",
+				snprintf(path, MAXPGPATH, "pg_tblspc/%u/%s/%u/%u_%s",
 						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
 						 rnode.dbNode, rnode.relNode,
 						 forkNames[forknum]);
 			else
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/%u",
+				snprintf(path, MAXPGPATH, "pg_tblspc/%u/%s/%u/%u",
 						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
 						 rnode.dbNode, rnode.relNode);
 		}
 		else
 		{
 			/* OIDCHARS will suffice for an integer, too */
-			pathlen = 9 + 1 + OIDCHARS + 1
-				+ strlen(TABLESPACE_VERSION_DIRECTORY) + 1 + OIDCHARS + 2
-				+ OIDCHARS + 1 + OIDCHARS + 1 + FORKNAMECHARS + 1;
-			path = (char *) palloc(pathlen);
 			if (forknum != MAIN_FORKNUM)
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/t%d_%u_%s",
+				snprintf(path, MAXPGPATH, "pg_tblspc/%u/%s/%u/t%d_%u_%s",
 						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
 						 rnode.dbNode, backend, rnode.relNode,
 						 forkNames[forknum]);
 			else
-				snprintf(path, pathlen, "pg_tblspc/%u/%s/%u/t%d_%u",
+				snprintf(path, MAXPGPATH, "pg_tblspc/%u/%s/%u/t%d_%u",
 						 rnode.spcNode, TABLESPACE_VERSION_DIRECTORY,
 						 rnode.dbNode, backend, rnode.relNode);
 		}
 	}
+
 	return path;
 }
 
@@ -534,7 +518,7 @@ Oid
 GetNewRelFileNode(Oid reltablespace, Relation pg_class, char relpersistence)
 {
 	RelFileNodeBackend rnode;
-	char	   *rpath;
+	const char *rpath;
 	int			fd;
 	bool		collides;
 	BackendId	backend;
@@ -599,8 +583,6 @@ GetNewRelFileNode(Oid reltablespace, Relation pg_class, char relpersistence)
 			 */
 			collides = false;
 		}
-
-		pfree(rpath);
 	} while (collides);
 
 	return rnode.node.relNode;

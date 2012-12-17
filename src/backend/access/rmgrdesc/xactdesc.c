@@ -35,10 +35,9 @@ xact_desc_commit(StringInfo buf, xl_xact_commit *xlrec)
 		appendStringInfo(buf, "; rels:");
 		for (i = 0; i < xlrec->nrels; i++)
 		{
-			char	   *path = relpathperm(xlrec->xnodes[i], MAIN_FORKNUM);
+			const char *path = relpathperm(xlrec->xnodes[i], MAIN_FORKNUM);
 
 			appendStringInfo(buf, " %s", path);
-			pfree(path);
 		}
 	}
 	if (xlrec->nsubxacts > 0)
@@ -105,10 +104,9 @@ xact_desc_abort(StringInfo buf, xl_xact_abort *xlrec)
 		appendStringInfo(buf, "; rels:");
 		for (i = 0; i < xlrec->nrels; i++)
 		{
-			char	   *path = relpathperm(xlrec->xnodes[i], MAIN_FORKNUM);
+			const char *path = relpathperm(xlrec->xnodes[i], MAIN_FORKNUM);
 
 			appendStringInfo(buf, " %s", path);
-			pfree(path);
 		}
 	}
 	if (xlrec->nsubxacts > 0)

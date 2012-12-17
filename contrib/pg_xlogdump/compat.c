@@ -28,21 +28,16 @@
 bool assert_enabled = false;
 #endif
 
-void
-pfree(void *a)
-{
-}
-
 const char *
 timestamptz_to_str(TimestampTz t)
 {
 	return "";
 }
 
-char *
+const char *
 relpathbackend(RelFileNode rnode, BackendId backend, ForkNumber forknum)
 {
-	return NULL;
+	return "";
 }
 
 void
