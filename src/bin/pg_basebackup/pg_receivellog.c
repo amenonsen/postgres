@@ -40,12 +40,16 @@
 #define RECONNECT_SLEEP_TIME 5
 
 /* Global options */
-char	   *outfile = NULL;
-int	        outfd = -1;
-int			verbose = 0;
-int			noloop = 0;
-int			standby_message_timeout = 10 * 1000;		/* 10 sec = default */
-volatile bool time_to_abort = false;
+static char	   *outfile = NULL;
+static int	        outfd = -1;
+static int			verbose = 0;
+static int			noloop = 0;
+static int			standby_message_timeout = 10 * 1000;		/* 10 sec = default */
+static volatile bool time_to_abort = false;
+static const char *plugin = "test_decoding";
+static const char *slot = NULL;
+static const char *free_slot = NULL;
+static XLogRecPtr	startpos;
 
 
 static void usage(void);
@@ -59,20 +63,25 @@ usage(void)
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
 	printf(_("\nOptions:\n"));
-	printf(_("  -f, --file=FILE        receive log into this file\n"));
+	printf(_("  -f, --file=FILE        receive log into this file. - for stdout\n"));
 	printf(_("  -n, --no-loop          do not loop on connection lost\n"));
 	printf(_("  -v, --verbose          output verbose messages\n"));
 	printf(_("  -V, --version          output version information, then exit\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
 	printf(_("\nConnection options:\n"));
+	printf(_("  -d, --database=DBNAME  database to connect to\n"));
 	printf(_("  -h, --host=HOSTNAME    database server host or socket directory\n"));
 	printf(_("  -p, --port=PORT        database server port number\n"));
-	printf(_("  -d, --database=DBNAME  database to connect to\n"));
-	printf(_("  -s, --status-interval=INTERVAL\n"
-			 "                         time between status packets sent to server (in seconds)\n"));
 	printf(_("  -U, --username=NAME    connect as specified database user\n"));
 	printf(_("  -w, --no-password      never prompt for password\n"));
 	printf(_("  -W, --password         force password prompt (should happen automatically)\n"));
+	printf(_("\nReplication options:\n"));
+	printf(_("  -P, --plugin=PLUGIN    use output plugin PLUGIN (defaults to test_decoding)\n"));
+	printf(_("  -s, --status-interval=INTERVAL\n"
+			 "                         time between status packets sent to server (in seconds)\n"));
+	printf(_("  -S, --slot=SLOT        use existing replication slot SLOT instead of starting a new one\n"));
+	printf(_("  -F, --free-slot=SLOT   free existing replication slot then exit\n"));
+
 	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }
 
@@ -214,9 +223,7 @@ static void
 StreamLog(void)
 {
 	PGresult   *res;
-	char		query[128];
-	XLogRecPtr	startpos;
-	char       *id;
+	char		query[256];
 	uint32		hi,
 				lo;
 	char	   *copybuf = NULL;
@@ -260,27 +267,39 @@ StreamLog(void)
 				_("%s: init replication slot\n"),
 				progname);
 
-	res = PQexec(conn, "INIT_LOGICAL_REPLICATION 'test_decoding'");
-
-	if (PQntuples(res) != 1 || PQnfields(res) != 4)
+	if (slot == NULL)
 	{
-		fprintf(stderr,
-				_("%s: could not init logical rep: got %d rows and %d fields, expected %d rows and %d fields\n"),
-				progname, PQntuples(res), PQnfields(res), 1, 4);
-		goto error;
-	}
+		snprintf(query, sizeof(query), "INIT_LOGICAL_REPLICATION '%s'",
+				 plugin);
 
-	if (sscanf(PQgetvalue(res, 0, 1), "%X/%X", &hi, &lo) != 2)
-	{
-		fprintf(stderr,
-				_("%s: could not parse log location \"%s\"\n"),
-				progname, PQgetvalue(res, 0, 1));
-		goto error;
-	}
-	startpos = ((uint64) hi) << 32 | lo;
+		res = PQexec(conn, query);
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		{
+			fprintf(stderr, _("%s: could not send replication command \"%s\": %s"),
+				progname, query, PQerrorMessage(conn));
+			goto error;
+		}
 
-	id = strdup(PQgetvalue(res, 0, 0));
-	PQclear(res);
+		if (PQntuples(res) != 1 || PQnfields(res) != 4)
+		{
+			fprintf(stderr,
+					_("%s: could not init logical rep: got %d rows and %d fields, expected %d rows and %d fields\n"),
+					progname, PQntuples(res), PQnfields(res), 1, 4);
+			goto error;
+		}
+
+		if (sscanf(PQgetvalue(res, 0, 1), "%X/%X", &hi, &lo) != 2)
+		{
+			fprintf(stderr,
+					_("%s: could not parse log location \"%s\"\n"),
+					progname, PQgetvalue(res, 0, 1));
+			goto error;
+		}
+		startpos = ((uint64) hi) << 32 | lo;
+
+		slot = strdup(PQgetvalue(res, 0, 0));
+		PQclear(res);
+	}
 
 	/*
 	 * Start the replication
@@ -289,16 +308,16 @@ StreamLog(void)
 		fprintf(stderr,
 				_("%s: starting log streaming at %X/%X (slot %s)\n"),
 				progname, (uint32) (startpos >> 32), (uint32) startpos,
-				id);
+				slot);
 
 	/* Initiate the replication stream at specified location */
 	snprintf(query, sizeof(query), "START_LOGICAL_REPLICATION '%s' %X/%X",
-			 id, (uint32) (startpos >> 32), (uint32) startpos);
+			 slot, (uint32) (startpos >> 32), (uint32) startpos);
 	res = PQexec(conn, query);
 	if (PQresultStatus(res) != PGRES_COPY_BOTH)
 	{
 		fprintf(stderr, _("%s: could not send replication command \"%s\": %s\n"),
-				progname, "START_LOGICAL_REPLICATION", PQresultErrorMessage(res));
+				progname, query, PQresultErrorMessage(res));
 		PQclear(res);
 		goto error;
 	}
@@ -473,7 +492,11 @@ StreamLog(void)
 			logoff = Max(temp, logoff);
 		}
 
-		if (outfd == -1 )
+		if (outfd == -1 && strcmp(outfile, "-") == 0)
+		{
+			outfd = 1;
+		}
+		else if (outfd == -1)
 		{
 			outfd = open(outfile, O_CREAT|O_APPEND|O_WRONLY|PG_BINARY,
 						 S_IRUSR | S_IWUSR);
@@ -560,22 +583,30 @@ int
 main(int argc, char **argv)
 {
 	static struct option long_options[] = {
-		{"help", no_argument, NULL, '?'},
-		{"version", no_argument, NULL, 'V'},
+/* general options */
 		{"file", required_argument, NULL, 'f'},
+		{"no-loop", no_argument, NULL, 'n'},
+		{"verbose", no_argument, NULL, 'v'},
+		{"version", no_argument, NULL, 'V'},
+		{"help", no_argument, NULL, '?'},
+/* connnection options */
+		{"database", required_argument, NULL, 'd'},
 		{"host", required_argument, NULL, 'h'},
 		{"port", required_argument, NULL, 'p'},
-		{"database", required_argument, NULL, 'd'},
 		{"username", required_argument, NULL, 'U'},
-		{"no-loop", no_argument, NULL, 'n'},
 		{"no-password", no_argument, NULL, 'w'},
 		{"password", no_argument, NULL, 'W'},
+/* replication options */
+		{"free-slot", required_argument, NULL, 'F'},
+		{"plugin", required_argument, NULL, 'P'},
 		{"status-interval", required_argument, NULL, 's'},
-		{"verbose", no_argument, NULL, 'v'},
+		{"slot", required_argument, NULL, 'S'},
+		{"startpos", required_argument, NULL, 'I'},
 		{NULL, 0, NULL, 0}
 	};
 	int			c;
 	int			option_index;
+	uint32		hi, lo;
 
 	progname = get_progname(argv[0]);
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_receivellog"));
@@ -595,19 +626,27 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "f:h:p:d:U:s:nwWv",
+	while ((c = getopt_long(argc, argv, "f:nvd:h:p:U:wWP:s:S:F:",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{
+/* general options */
 			case 'f':
 				outfile = pg_strdup(optarg);
 				break;
-			case 'h':
-				dbhost = pg_strdup(optarg);
+			case 'n':
+				noloop = 1;
 				break;
+			case 'v':
+				verbose++;
+				break;
+/* connnection options */
 			case 'd':
 				dbname = pg_strdup(optarg);
+				break;
+			case 'h':
+				dbhost = pg_strdup(optarg);
 				break;
 			case 'p':
 				if (atoi(optarg) <= 0)
@@ -627,6 +666,13 @@ main(int argc, char **argv)
 			case 'W':
 				dbgetpassword = 1;
 				break;
+/* replication options */
+			case 'F':
+				free_slot = pg_strdup(optarg);
+				break;
+			case 'P':
+				plugin = pg_strdup(optarg);
+				break;
 			case 's':
 				standby_message_timeout = atoi(optarg) * 1000;
 				if (standby_message_timeout < 0)
@@ -636,14 +682,20 @@ main(int argc, char **argv)
 					exit(1);
 				}
 				break;
-			case 'n':
-				noloop = 1;
+			case 'S':
+				slot = pg_strdup(optarg);
 				break;
-			case 'v':
-				verbose++;
+			case 'I':
+				if (sscanf(optarg, "%X/%X", &hi, &lo) != 2)
+				{
+					fprintf(stderr,
+							_("%s: could not parse start position \"%s\"\n"),
+							progname, optarg);
+					exit(1);
+				}
+				startpos = ((uint64) hi) << 32 | lo;
 				break;
 			default:
-
 				/*
 				 * getopt_long already emitted a complaint
 				 */
@@ -669,7 +721,7 @@ main(int argc, char **argv)
 	/*
 	 * Required arguments
 	 */
-	if (outfile == NULL)
+	if (free_slot == NULL && outfile == NULL)
 	{
 		fprintf(stderr, _("%s: no target file specified\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
@@ -677,7 +729,7 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	if (dbname == NULL)
+	if (free_slot == NULL && dbname == NULL)
 	{
 		fprintf(stderr, _("%s: no database specified\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
@@ -685,9 +737,49 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
+	if ((slot != NULL && startpos == InvalidXLogRecPtr) ||
+		(slot == NULL && startpos != InvalidXLogRecPtr))
+	{
+		fprintf(stderr, _("%s: --slot and --startpos need to be specified together\n"), progname);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+				progname);
+	}
 #ifndef WIN32
 	pqsignal(SIGINT, sigint_handler);
 #endif
+
+	if (free_slot != NULL)
+	{
+		PGresult   *res;
+		char		query[256];
+
+		conn = GetConnection();
+		if (!conn)
+			/* Error message already written in GetConnection() */
+			exit(1);
+
+		snprintf(query, sizeof(query), "STOP_LOGICAL_REPLICATION '%s'",
+				 free_slot);
+		res = PQexec(conn, query);
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		{
+			fprintf(stderr, _("%s: could not send replication command \"%s\": %s"),
+				progname, query, PQerrorMessage(conn));
+			exit(1);
+		}
+
+		if (PQntuples(res) != 0 || PQnfields(res) != 0)
+		{
+			fprintf(stderr,
+					_("%s: could not stop logical rep: got %d rows and %d fields, expected %d rows and %d fields\n"),
+					progname, PQntuples(res), PQnfields(res), 0, 0);
+			exit(1);
+		}
+
+		PQclear(res);
+		PQfinish(conn);
+		exit(0);
+	}
 
 	while (true)
 	{
