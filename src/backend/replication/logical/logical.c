@@ -151,6 +151,10 @@ ComputeLogicalXmin(void)
 	elog(LOG, "computed new global xmin for decoding: %u", xmin);
 }
 
+/*
+ * Make sure the current settings & environment is capable of doing logical
+ * replication.
+ */
 void
 CheckLogicalReplicationRequirements(void)
 {
@@ -164,6 +168,10 @@ CheckLogicalReplicationRequirements(void)
 		ereport(ERROR, (errmsg("logical replication requires needs max_logical_slots > 0")));
 }
 
+/*
+ * Search for a free slot, mark it as used and acquire a valid xmin horizon
+ * value.
+ */
 void LogicalDecodingAcquireFreeSlot(const char *plugin)
 {
 	LogicalDecodingSlot *slot = NULL;
@@ -203,7 +211,7 @@ void LogicalDecodingAcquireFreeSlot(const char *plugin)
 	strncpy(NameStr(slot->plugin), plugin, NAMEDATALEN);
 	NameStr(slot->plugin)[NAMEDATALEN-1] = '\0';
 
-	/* Arrange to clean up at exit */
+	/* Arrange to clean up at exit/error */
 	on_shmem_exit(LogicalSlotKill, 0);
 
 	slot_name = NameStr(slot->name);
@@ -233,6 +241,9 @@ void LogicalDecodingAcquireFreeSlot(const char *plugin)
 	LWLockRelease(ProcArrayLock);
 }
 
+/*
+ * Find an previously initiated slot and mark it as used again.
+ */
 void LogicalDecodingReAcquireSlot(const char *name)
 {
 	LogicalDecodingSlot *slot;
@@ -295,7 +306,7 @@ LogicalDecodingReleaseSlot(void)
 
 	slot = MyLogicalDecodingSlot;
 
-	Assert(slot != NULL);
+	Assert(slot != NULL && slot->active);
 
 	SpinLockAcquire(&slot->mutex);
 	slot->active = false;
