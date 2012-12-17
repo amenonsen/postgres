@@ -427,6 +427,13 @@
     <tbody>
 
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>amname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -683,6 +690,13 @@
     <tbody>
 
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>amopfamily</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-opfamily"><structname>pg_opfamily</structname></link>.oid</literal></entry>
@@ -819,6 +833,13 @@
     <tbody>
 
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>amprocfamily</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-opfamily"><structname>pg_opfamily</structname></link>.oid</literal></entry>
@@ -901,6 +922,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>adrelid</structfield></entry>
       <entry><type>oid</type></entry>
@@ -1257,6 +1285,13 @@
     </thead>
 
     <tbody>
+
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>rolname</structfield></entry>
       <entry><type>name</type></entry>
@@ -1462,6 +1497,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>castsource</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-type"><structname>pg_type</structname></link>.oid</literal></entry>
@@ -1576,6 +1618,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>relname</structfield></entry>
       <entry><type>name</type></entry>
@@ -1984,6 +2033,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>conname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -2250,6 +2306,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>collname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -2350,6 +2413,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>conname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -2442,6 +2512,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>datname</structfield></entry>
       <entry><type>name</type></entry>
@@ -2651,6 +2728,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>defaclrole</structfield></entry>
       <entry><type>oid</type></entry>
@@ -3006,6 +3090,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>enumtypid</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-type"><structname>pg_type</structname></link>.oid</literal></entry>
@@ -3078,6 +3169,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>extname</structfield></entry>
       <entry><type>name</type></entry>
@@ -3175,6 +3273,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>fdwname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -3266,6 +3371,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>srvname</structfield></entry>
       <entry><type>name</type></entry>
@@ -3686,6 +3798,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>lanname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -3886,6 +4005,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>lomowner</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-authid"><structname>pg_authid</structname></link>.oid</literal></entry>
@@ -3937,6 +4063,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>nspname</structfield></entry>
       <entry><type>name</type></entry>
@@ -4004,6 +4137,13 @@
      </row>
     </thead>
     <tbody>
+
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
 
      <row>
       <entry><structfield>opcmethod</structfield></entry>
@@ -4103,6 +4243,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>oprname</structfield></entry>
       <entry><type>name</type></entry>
@@ -4252,6 +4399,13 @@
      </row>
     </thead>
     <tbody>
+
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
 
      <row>
       <entry><structfield>opfmethod</structfield></entry>
@@ -4437,6 +4591,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>proname</structfield></entry>
       <entry><type>name</type></entry>
@@ -4829,6 +4990,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>rulename</structfield></entry>
       <entry><type>name</type></entry>
@@ -5499,6 +5667,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>spcname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -5566,6 +5741,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>tgrelid</structfield></entry>
       <entry><type>oid</type></entry>
@@ -5752,6 +5934,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>cfgname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -5891,6 +6080,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>dictname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -5966,6 +6162,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>prsname</structfield></entry>
       <entry><type>name</type></entry>
@@ -6057,6 +6260,13 @@
 
     <tbody>
      <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
+     <row>
       <entry><structfield>tmplname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
@@ -6123,6 +6333,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>typname</structfield></entry>
       <entry><type>name</type></entry>
@@ -6628,6 +6845,13 @@
     </thead>
 
     <tbody>
+     <row>
+      <entry><structfield>oid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry></entry>
+      <entry>Row identifier (hidden attribute; must be explicitly selected)</entry>
+     </row>
+
      <row>
       <entry><structfield>umuser</structfield></entry>
       <entry><type>oid</type></entry>

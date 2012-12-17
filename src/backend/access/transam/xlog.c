@@ -154,6 +154,7 @@ static XLogRecPtr LastRec;
 
 /* Local copy of WalRcv->receivedUpto */
 static XLogRecPtr receivedUpto = 0;
+static TimeLineID receiveTLI = 0;
 
 /*
  * During recovery, lastFullPageWrites keeps track of full_page_writes that
@@ -5832,6 +5833,12 @@ StartupXLOG(void)
 		xlogctl->SharedRecoveryInProgress = false;
 		SpinLockRelease(&xlogctl->info_lck);
 	}
+
+	/*
+	 * If there were cascading standby servers connected to us, nudge any
+	 * wal sender processes to notice that we've been promoted.
+	 */
+	WalSndWakeup();
 }
 
 /*
@@ -7092,7 +7099,7 @@ CreateRestartPoint(int flags)
 		XLogRecPtr	endptr;
 
 		/* Get the current (or recent) end of xlog */
-		endptr = GetStandbyFlushRecPtr(NULL);
+		endptr = GetStandbyFlushRecPtr();
 
 		KeepLogSeg(endptr, &_logSegNo);
 		_logSegNo--;
@@ -8553,13 +8560,10 @@ do_pg_abort_backup(void)
 /*
  * Get latest redo apply position.
  *
- * Optionally, returns the current recovery target timeline. Callers not
- * interested in that may pass NULL for targetTLI.
- *
  * Exported to allow WALReceiver to read the pointer directly.
  */
 XLogRecPtr
-GetXLogReplayRecPtr(TimeLineID *targetTLI)
+GetXLogReplayRecPtr(void)
 {
 	/* use volatile pointer to prevent code rearrangement */
 	volatile XLogCtlData *xlogctl = XLogCtl;
@@ -8567,8 +8571,6 @@ GetXLogReplayRecPtr(TimeLineID *targetTLI)
 
 	SpinLockAcquire(&xlogctl->info_lck);
 	recptr = xlogctl->lastReplayedEndRecPtr;
-	if (targetTLI)
-		*targetTLI = xlogctl->RecoveryTargetTLI;
 	SpinLockRelease(&xlogctl->info_lck);
 
 	return recptr;
@@ -8577,18 +8579,15 @@ GetXLogReplayRecPtr(TimeLineID *targetTLI)
 /*
  * Get current standby flush position, ie, the last WAL position
  * known to be fsync'd to disk in standby.
- *
- * If 'targetTLI' is not NULL, it's set to the current recovery target
- * timeline.
  */
 XLogRecPtr
-GetStandbyFlushRecPtr(TimeLineID *targetTLI)
+GetStandbyFlushRecPtr(void)
 {
 	XLogRecPtr	receivePtr;
 	XLogRecPtr	replayPtr;
 
-	receivePtr = GetWalRcvWriteRecPtr(NULL);
-	replayPtr = GetXLogReplayRecPtr(targetTLI);
+	receivePtr = GetWalRcvWriteRecPtr(NULL, NULL);
+	replayPtr = GetXLogReplayRecPtr();
 
 	if (XLByteLT(receivePtr, replayPtr))
 		return replayPtr;
@@ -9042,7 +9041,10 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					 * archive and pg_xlog before failover.
 					 */
 					if (CheckForStandbyTrigger())
+					{
+						ShutdownWalRcv();
 						return false;
+					}
 
 					/*
 					 * If primary_conninfo is set, launch walreceiver to try to
@@ -9057,8 +9059,14 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					if (PrimaryConnInfo)
 					{
 						XLogRecPtr ptr = fetching_ckpt ? RedoStartLSN : RecPtr;
+						TimeLineID tli = tliOfPointInHistory(ptr, expectedTLEs);
 
-						RequestXLogStreaming(ptr, PrimaryConnInfo);
+						if (curFileTLI > 0 && tli < curFileTLI)
+							elog(ERROR, "according to history file, WAL location %X/%X belongs to timeline %u, but previous recovered WAL file came from timeline %u",
+								 (uint32) (ptr >> 32), (uint32) ptr,
+								 tli, curFileTLI);
+						curFileTLI = tli;
+						RequestXLogStreaming(curFileTLI, ptr, PrimaryConnInfo);
 					}
 					/*
 					 * Move to XLOG_FROM_STREAM state in either case. We'll get
@@ -9084,10 +9092,10 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					 */
 					/*
 					 * Before we leave XLOG_FROM_STREAM state, make sure that
-					 * walreceiver is not running, so that it won't overwrite
-					 * any WAL that we restore from archive.
+					 * walreceiver is not active, so that it won't overwrite
+					 * WAL that we restore from archive.
 					 */
-					if (WalRcvInProgress())
+					if (WalRcvStreaming())
 						ShutdownWalRcv();
 
 					/*
@@ -9180,7 +9188,7 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 				/*
 				 * Check if WAL receiver is still active.
 				 */
-				if (!WalRcvInProgress())
+				if (!WalRcvStreaming())
 				{
 					lastSourceFailed = true;
 					break;
@@ -9203,8 +9211,8 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 				{
 					XLogRecPtr	latestChunkStart;
 
-					receivedUpto = GetWalRcvWriteRecPtr(&latestChunkStart);
-					if (XLByteLT(RecPtr, receivedUpto))
+					receivedUpto = GetWalRcvWriteRecPtr(&latestChunkStart, &receiveTLI);
+					if (XLByteLT(RecPtr, receivedUpto) && receiveTLI == curFileTLI)
 					{
 						havedata = true;
 						if (!XLByteLT(RecPtr, latestChunkStart))
@@ -9319,8 +9327,7 @@ emode_for_corrupt_record(int emode, XLogRecPtr RecPtr)
 
 /*
  * Check to see whether the user-specified trigger file exists and whether a
- * promote request has arrived.  If either condition holds, request postmaster
- * to shut down walreceiver, wait for it to exit, and return true.
+ * promote request has arrived.  If either condition holds, return true.
  */
 static bool
 CheckForStandbyTrigger(void)
@@ -9335,7 +9342,6 @@ CheckForStandbyTrigger(void)
 	{
 		ereport(LOG,
 				(errmsg("received promote request")));
-		ShutdownWalRcv();
 		ResetPromoteTriggered();
 		triggered = true;
 		return true;
@@ -9348,7 +9354,6 @@ CheckForStandbyTrigger(void)
 	{
 		ereport(LOG,
 				(errmsg("trigger file found: %s", TriggerFile)));
-		ShutdownWalRcv();
 		unlink(TriggerFile);
 		triggered = true;
 		return true;
