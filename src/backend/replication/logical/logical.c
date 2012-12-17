@@ -213,6 +213,8 @@ void LogicalDecodingAcquireFreeSlot(const char *plugin)
 	/* release slot so it can be examined by others */
 	SpinLockRelease(&slot->mutex);
 
+	/* verify that the specified plugin is valid */
+
 	/*
 	 * Acquire the current global xmin value and directly set the logical xmin
 	 * before releasing the lock if necessary. We do this so wal decoding is

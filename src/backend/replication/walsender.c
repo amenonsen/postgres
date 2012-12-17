@@ -429,7 +429,8 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 	TopTransactionContext = decoding_ctx;
 
 	logical_reader = initial_snapshot_reader(MyLogicalDecodingSlot->last_required_checkpoint,
-											 MyLogicalDecodingSlot->xmin);
+											 MyLogicalDecodingSlot->xmin,
+											 NameStr(MyLogicalDecodingSlot->plugin));
 
 	MemoryContextSwitchTo(old_decoding_ctx);
 	TopTransactionContext = NULL;

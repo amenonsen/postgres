@@ -124,7 +124,7 @@ change_wrapper(ReorderBuffer* cache, ReorderBufferTXN* txn, ReorderBufferChange*
  * state.
  */
 XLogReaderState *
-initial_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin)
+initial_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin, char *plugin)
 {
 	XLogReaderState *xlogreader;
 	ReaderApplyState *apply_state;
@@ -149,33 +149,15 @@ initial_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin)
 	apply_state->stop_after_consistent = true;
 	apply_state->snapstate = AllocateSnapshotBuilder(reorder);
 	apply_state->snapstate->initial_xmin_horizon = xmin;
-	return xlogreader;
-}
 
-/*
- * Build a snapshot reader with callbacks found in the shared library "plugin"
- * under the symbol names found in output_plugin.h.
- * It wraps those callbacks so they send out their changes via an logical
- * walsender.
- */
-XLogReaderState *
-normal_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin,
-					   char *plugin, XLogRecPtr valid_after)
-{
-	/* to simplify things we reuse initial_snapshot_reader */
-	XLogReaderState *xlogreader = initial_snapshot_reader(startpoint, xmin);
-	ReaderApplyState *apply_state = (ReaderApplyState *)xlogreader->private_data;
-	ReorderBuffer *reorder = apply_state->reorderbuffer;
 
-	apply_state->stop_after_consistent = false;
-
-	apply_state->snapstate->transactions_after = valid_after;
-
-	reorder->begin = begin_txn_wrapper;
-	reorder->apply_change = change_wrapper;
-	reorder->commit = commit_txn_wrapper;
 
 	/* lookup symbols in the shared libarary */
+
+	/*
+	 * we do that even for the initial snapshot reader so we can be sure the
+	 * plugin is loadable in INIT_LOGICAL_REPLICATION
+	 */
 
 	/* optional */
 	apply_state->init_cb = (LogicalDecodeInitCB)
@@ -198,6 +180,32 @@ normal_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin,
 		load_external_function(plugin, "pg_decode_clean", false, NULL);
 
 	reorder->private_data = xlogreader->private_data;
+
+	return xlogreader;
+}
+
+/*
+ * Build a snapshot reader with callbacks found in the shared library "plugin"
+ * under the symbol names found in output_plugin.h.
+ * It wraps those callbacks so they send out their changes via an logical
+ * walsender.
+ */
+XLogReaderState *
+normal_snapshot_reader(XLogRecPtr startpoint, TransactionId xmin,
+					   char *plugin, XLogRecPtr valid_after)
+{
+	/* to simplify things we reuse initial_snapshot_reader */
+	XLogReaderState *xlogreader = initial_snapshot_reader(startpoint, xmin, plugin);
+	ReaderApplyState *apply_state = (ReaderApplyState *)xlogreader->private_data;
+	ReorderBuffer *reorder = apply_state->reorderbuffer;
+
+	apply_state->stop_after_consistent = false;
+
+	apply_state->snapstate->transactions_after = valid_after;
+
+	reorder->begin = begin_txn_wrapper;
+	reorder->apply_change = change_wrapper;
+	reorder->commit = commit_txn_wrapper;
 
 	apply_state->out = makeStringInfo();
 
