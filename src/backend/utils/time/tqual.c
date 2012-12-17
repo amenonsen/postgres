@@ -1581,7 +1581,7 @@ SetupDecodingSnapshots(Snapshot snapshot_now, HTAB *tuplecids)
 	/* make sure normal snapshots aren't used*/
 	SnapshotSelfData.satisfies = FailsSatisfies;
 	SnapshotAnyData.satisfies = FailsSatisfies;
-	SnapshotToastData.satisfies = FailsSatisfies;
+	/* don't overwrite SnapshotToastData, we want that to behave normally */
 
 	/* setup the timetravel snapshot */
 	SnapshotNowDecoding = snapshot_now;
@@ -1604,7 +1604,6 @@ RevertFromDecodingSnapshots(void)
 	SnapshotNowData.satisfies = HeapTupleSatisfiesNow;
 	SnapshotSelfData.satisfies = HeapTupleSatisfiesSelf;
 	SnapshotAnyData.satisfies = HeapTupleSatisfiesAny;
-	SnapshotToastData.satisfies = HeapTupleSatisfiesToast;
 }
 
 /*
