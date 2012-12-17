@@ -1591,9 +1591,11 @@ ProcArrayInstallImportedXmin(TransactionId xmin, TransactionId sourcexid)
  * Similar to GetSnapshotData but returns more information. We include
  * all PGXACTs with an assigned TransactionId, even VACUUM processes.
  *
- * We acquire XidGenLock, but the caller is responsible for releasing it.
- * This ensures that no new XIDs enter the proc array until the caller has
- * WAL-logged this snapshot, and releases the lock.
+ * We acquire XidGenLock and ProcArrayLock, but the caller is responsible for
+ * releasing them. Acquiring XidGenLock ensures that no new XIDs enter the proc
+ * array until the caller has WAL-logged this snapshot, and releases the
+ * lock. Acquiring ProcArrayLock ensures that no transactions commit until the
+ * lock is released.
  *
  * The returned data structure is statically allocated; caller should not
  * modify it, and must not assume it is valid past the next call.
@@ -1741,12 +1743,11 @@ GetRunningTransactionData(void)
 	CurrentRunningXacts->oldestRunningXid = oldestRunningXid;
 	CurrentRunningXacts->latestCompletedXid = latestCompletedXid;
 
-	/* We don't release XidGenLock here, the caller is responsible for that */
-	LWLockRelease(ProcArrayLock);
-
 	Assert(TransactionIdIsValid(CurrentRunningXacts->nextXid));
 	Assert(TransactionIdIsValid(CurrentRunningXacts->oldestRunningXid));
 	Assert(TransactionIdIsNormal(CurrentRunningXacts->latestCompletedXid));
+
+	/* We don't release the locks here, the caller is responsible for that */
 
 	return CurrentRunningXacts;
 }
