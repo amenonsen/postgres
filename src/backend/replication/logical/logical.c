@@ -164,7 +164,6 @@ CheckLogicalReplicationRequirements(void)
 		ereport(ERROR, (errmsg("logical replication requires needs max_logical_slots > 0")));
 }
 
-void LogicalDecodingAcquireFreeSlot()
 void LogicalDecodingAcquireFreeSlot(const char *plugin)
 {
 	LogicalDecodingSlot *slot = NULL;
