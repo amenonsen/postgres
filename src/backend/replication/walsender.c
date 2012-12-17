@@ -416,11 +416,9 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 
 	Assert(!MyLogicalDecodingSlot);
 
-	LogicalDecodingAcquireFreeSlot();
+	LogicalDecodingAcquireFreeSlot(cmd->plugin);
 
 	Assert(MyLogicalDecodingSlot);
-
-	strcpy(NameStr(MyLogicalDecodingSlot->plugin), cmd->plugin);
 
 	decoding_ctx = AllocSetContextCreate(TopMemoryContext,
 										 "decoding context",

@@ -165,6 +165,7 @@ CheckLogicalReplicationRequirements(void)
 }
 
 void LogicalDecodingAcquireFreeSlot()
+void LogicalDecodingAcquireFreeSlot(const char *plugin)
 {
 	LogicalDecodingSlot *slot = NULL;
 	int i;
@@ -199,12 +200,15 @@ void LogicalDecodingAcquireFreeSlot()
 	slot->in_use = true;
 	slot->active = true;
 	slot->database = MyDatabaseId;
+	/* XXX: do we want to use truncate identifier instead? */
+	strncpy(NameStr(slot->plugin), plugin, NAMEDATALEN);
+	NameStr(slot->plugin)[NAMEDATALEN-1] = '\0';
 
 	/* Arrange to clean up at exit */
 	on_shmem_exit(LogicalSlotKill, 0);
 
 	slot_name = NameStr(slot->name);
-	sprintf(slot_name, "id-%d", i);
+	sprintf(slot_name, "id-%d-%d", MyDatabaseId, i);
 
 	/* release slot so it can be examined by others */
 	SpinLockRelease(&slot->mutex);

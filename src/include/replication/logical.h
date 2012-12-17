@@ -58,7 +58,7 @@ extern int	max_logical_slots;
 extern Size LogicalDecodingShmemSize(void);
 extern void LogicalDecodingShmemInit(void);
 
-extern void LogicalDecodingAcquireFreeSlot(void);
+extern void LogicalDecodingAcquireFreeSlot(const char *plugin);
 extern void LogicalDecodingReleaseSlot(void);
 extern void LogicalDecodingReAcquireSlot(const char *name);
 
