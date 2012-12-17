@@ -326,7 +326,7 @@ GetReplicationApplyDelay(void)
 
 	replayPtr = GetXLogReplayRecPtr();
 
-	if (XLByteEQ(receivePtr, replayPtr))
+	if (receivePtr == replayPtr)
 		return 0;
 
 	TimestampDifference(GetCurrentChunkReplayStartTime(),
