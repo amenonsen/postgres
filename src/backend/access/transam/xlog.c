@@ -5976,8 +5976,8 @@ StartupXLOG(void)
 
 					LWLockAcquire(ControlFileLock, LW_EXCLUSIVE);
 
-					MemSet(&ControlFile->backupStartPoint, 0, sizeof(XLogRecPtr));
-					MemSet(&ControlFile->backupEndPoint, 0, sizeof(XLogRecPtr));
+					ControlFile->backupStartPoint = InvalidXLogRecPtr;
+					ControlFile->backupEndPoint = InvalidXLogRecPtr;
 					ControlFile->backupEndRequired = false;
 					UpdateControlFile();
 
@@ -7336,7 +7336,7 @@ CreateCheckPoint(int flags)
 	ControlFile->checkPointCopy = checkPoint;
 	ControlFile->time = (pg_time_t) time(NULL);
 	/* crash recovery should always recover to the end of WAL */
-	MemSet(&ControlFile->minRecoveryPoint, 0, sizeof(XLogRecPtr));
+	ControlFile->minRecoveryPoint = InvalidXLogRecPtr;
 	ControlFile->minRecoveryPointTLI = 0;
 	UpdateControlFile();
 	LWLockRelease(ControlFileLock);
@@ -8148,7 +8148,7 @@ xlog_redo(XLogRecPtr lsn, XLogRecord *record)
 				ControlFile->minRecoveryPoint = lsn;
 				ControlFile->minRecoveryPointTLI = ThisTimeLineID;
 			}
-			MemSet(&ControlFile->backupStartPoint, 0, sizeof(XLogRecPtr));
+			ControlFile->backupStartPoint = InvalidXLogRecPtr;
 			ControlFile->backupEndRequired = false;
 			UpdateControlFile();
 
