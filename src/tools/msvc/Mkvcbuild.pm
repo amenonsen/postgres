@@ -415,7 +415,7 @@ sub mkvcbuild
 	$pgxlogdump->AddFiles('contrib\pg_xlogdump',
 		'compat.c', 'pg_xlogdump.c', 'tables.c');
 	$pgxlogdump->AddFile('src\backend\access\transam\xlogreader.c');
-	$pgxlogdump->AddFiles('src\backend\access\transam\rmgrdesc',
+	$pgxlogdump->AddFiles('src\backend\access\rmgrdesc',
 		'clogdesc.c', 'dbasedesc.c', 'gindesc.c', 'gistdesc.c', 'hashdesc.c',
 		'heapdesc.c', 'mxactdesc.c', 'nbtdesc.c', 'relmapdesc.c', 'seqdesc.c',
 		'smgrdesc.c', 'spgdesc.c', 'standbydesc.c', 'tblspcdesc.c',
