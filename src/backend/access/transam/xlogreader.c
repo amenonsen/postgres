@@ -346,7 +346,7 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 		do
 		{
 			/* Calculate pointer to beginning of next page */
-			XLByteAdvance(targetPagePtr, XLOG_BLCKSZ);
+			targetPagePtr += XLOG_BLCKSZ;
 
 			/* Wait for the next page to become available */
 			readOff = ReadPageInternal(state, targetPagePtr,
@@ -620,7 +620,7 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 		 * We can't exactly verify the prev-link, but surely it should be less
 		 * than the record's own address.
 		 */
-		if (!XLByteLT(record->xl_prev, RecPtr))
+		if (!(record->xl_prev < RecPtr))
 		{
 			report_invalid_record(state,
 								  "record with incorrect prev-link %X/%X at %X/%X",
@@ -637,7 +637,7 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 		 * check guards against torn WAL pages where a stale but valid-looking
 		 * WAL record starts on a sector boundary.
 		 */
-		if (!XLByteEQ(record->xl_prev, PrevRecPtr))
+		if (record->xl_prev != PrevRecPtr)
 		{
 			report_invalid_record(state,
 								  "record with incorrect prev-link %X/%X at %X/%X",
@@ -841,7 +841,7 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 		return false;
 	}
 
-	if (!XLByteEQ(hdr->xlp_pageaddr, recaddr))
+	if (hdr->xlp_pageaddr != recaddr)
 	{
 		char		fname[MAXFNAMELEN];
 
