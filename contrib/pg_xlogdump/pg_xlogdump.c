@@ -135,7 +135,7 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 		}
 
 		/* Update state for read */
-		XLByteAdvance(recptr, readbytes);
+		recptr += readbytes;
 
 		sendOff += readbytes;
 		nbytes -= readbytes;
@@ -397,7 +397,7 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 	/* no file specified, but no range of of interesting data either */
-	else if (private.file == NULL && XLByteEQ(private.startptr, InvalidXLogRecPtr))
+	else if (private.file == NULL && XLogRecPtrIsInvalid(private.startptr))
 	{
 		fprintf(stderr, "%s: no -s given in range mode.\n", progname);
 		goto bad_argument;
@@ -420,7 +420,7 @@ main(int argc, char **argv)
 			XLogFromFileName(basename(private.file), &private.timeline, &segno);
 			private.inpath = strdup(dirname(private.file));
 
-			if (XLByteEQ(private.startptr, InvalidXLogRecPtr))
+			if (XLogRecPtrIsInvalid(private.startptr))
 				XLogSegNoOffsetToRecPtr(segno, 0, private.startptr);
 			else if (!XLByteInSeg(private.startptr, segno))
 			{
@@ -431,7 +431,7 @@ main(int argc, char **argv)
 				goto bad_argument;
 			}
 
-			if (XLByteEQ(private.endptr, InvalidXLogRecPtr))
+			if (XLogRecPtrIsInvalid(private.endptr))
 				XLogSegNoOffsetToRecPtr(segno + 1, 0, private.endptr);
 			else if (!XLByteInSeg(private.endptr, segno) &&
 					 private.endptr != (segno + 1) * XLogSegSize)
