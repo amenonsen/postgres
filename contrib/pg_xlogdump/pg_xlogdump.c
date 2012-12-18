@@ -242,7 +242,7 @@ XLogDumpDisplayRecord(XLogReaderState *state, XLogRecord *record)
 	/* the desc routine will printf the description directly to stdout */
 	rmgr->rm_desc(NULL, record->xl_info, XLogRecGetData(record));
 
-	puts("\n");
+	putchar('\n');
 
 	if (config->bkp_details)
 	{
