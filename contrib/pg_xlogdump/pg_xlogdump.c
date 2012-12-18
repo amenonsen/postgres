@@ -89,15 +89,82 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 
 			XLogFileName(fname, timeline_id, sendSegNo);
 
-			snprintf(fpath, MAXPGPATH, "%s/%s",
-					 (directory == NULL) ? XLOGDIR : directory, fname);
-
-			sendFile = open(fpath, O_RDONLY, 0);
-			if (sendFile < 0)
+			/*
+			 * Try to find the file in several places:
+			 * if directory == NULL:
+			 *   fname
+			 *   XLOGDIR / fname
+			 *   $DATADIR / XLOGDIR / fname
+			 * else
+			 *   directory / fname
+			 *   directory / XLOGDIR / fname
+			 */
+			if (directory == NULL)
 			{
-				fatal_error("could not open file \"%s\": %s",
-							fpath, strerror(errno));
+				const char* datadir;
+
+				/* fname */
+				sendFile = open(fname, O_RDONLY, 0);
+				if (sendFile < 0 && errno != ENOENT)
+					goto file_not_found;
+				else if (sendFile > 0)
+					goto file_found;
+
+				/* XLOGDIR / fname */
+				snprintf(fpath, MAXPGPATH, "%s/%s",
+				         XLOGDIR, fname);
+				sendFile = open(fpath, O_RDONLY, 0);
+				if (sendFile < 0 && errno != ENOENT)
+					goto file_not_found;
+				else if (sendFile > 0)
+					goto file_found;
+
+				datadir = getenv("DATADIR");
+				/* $DATADIR / XLOGDIR / fname */
+				if (datadir != NULL)
+				{
+					snprintf(fpath, MAXPGPATH, "%s/%s/%s",
+					         datadir, XLOGDIR, fname);
+					sendFile = open(fpath, O_RDONLY, 0);
+					if (sendFile < 0 && errno != ENOENT)
+						goto file_not_found;
+					else if (sendFile > 0)
+						goto file_found;
+				}
+
+
 			}
+			else
+			{
+				/* directory / fname */
+				snprintf(fpath, MAXPGPATH, "%s/%s",
+				         directory, fname);
+				sendFile = open(fpath, O_RDONLY, 0);
+				if (sendFile < 0 && errno != ENOENT)
+					goto file_not_found;
+				else if (sendFile > 0)
+					goto file_found;
+
+				/* directory / XLOGDIR / fname */
+				snprintf(fpath, MAXPGPATH, "%s/%s/%s",
+				         directory, XLOGDIR, fname);
+				sendFile = open(fpath, O_RDONLY, 0);
+				if (sendFile < 0 && errno != ENOENT)
+					goto file_not_found;
+				else if (sendFile > 0)
+					goto file_found;
+			}
+
+			if (sendFile < 0)
+				goto file_not_found;
+			else
+				goto file_found;
+
+		file_not_found:
+			fatal_error("could not find file \"%s\": %s",
+			            fname, strerror(errno));
+
+		file_found:
 			sendOff = 0;
 		}
 
@@ -404,11 +471,6 @@ main(int argc, char **argv)
 	/* everything ok, do some more setup */
 	else
 	{
-		/* default value */
-		if (private.file == NULL && private.inpath == NULL)
-			private.inpath = "pg_xlog";
-
-		/* default value */
 		if (private.file != NULL)
 		{
 			XLogSegNo segno;
@@ -427,7 +489,7 @@ main(int argc, char **argv)
 			/* local directory */
 			else
 			{
-				private.inpath = strdup(".");
+				private.inpath = NULL;
 				private.file = strdup(private.file);
 			}
 
