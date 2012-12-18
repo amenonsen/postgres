@@ -52,7 +52,7 @@ replay_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
 		count = flushptr - targetPagePtr;
 
 	/* FIXME: more sensible/efficient implementation */
-	XLogRead(cur_page, targetPagePtr, XLOG_BLCKSZ);
+	XLogRead(cur_page, ThisTimeLineID, targetPagePtr, XLOG_BLCKSZ);
 
 	return count;
 }

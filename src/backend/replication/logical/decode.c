@@ -271,7 +271,7 @@ DecodeCommit(ReaderApplyState *state, XLogRecordBuffer *buf, TransactionId xid,
 	int i;
 
 	/* not interested in that part of the stream */
-	if (XLByteLE(buf->origptr, state->snapstate->transactions_after))
+	if (buf->origptr <= state->snapstate->transactions_after)
 	{
 		DecodeAbort(state->reorderbuffer, buf->origptr, xid,
 					sub_xids, nsubxacts);

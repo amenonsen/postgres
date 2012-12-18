@@ -409,6 +409,7 @@ typedef enum NodeTag
 	T_StartReplicationCmd,
 	T_InitLogicalReplicationCmd,
 	T_StartLogicalReplicationCmd,
+	T_TimeLineHistoryCmd,
 
 	/*
 	 * TAGS FOR RANDOM OTHER STUFF

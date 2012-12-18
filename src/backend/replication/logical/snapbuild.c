@@ -1237,7 +1237,7 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 	if (snapstate->state < SNAPBUILD_CONSISTENT)
 	{
 		/* ensure that only commits after this are getting replayed */
-		if (XLByteLT(snapstate->transactions_after, lsn))
+		if (snapstate->transactions_after < lsn)
 			snapstate->transactions_after = lsn;
 
 		/*

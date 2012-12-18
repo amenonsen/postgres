@@ -264,7 +264,7 @@ mdexists(SMgrRelation reln, ForkNumber forkNum)
 void
 mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 {
-	char	   *path;
+	const char *path;
 	File		fd;
 
 	if (isRedo && reln->md_fd[forkNum] != NULL)
@@ -297,8 +297,6 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 					 errmsg("could not create file \"%s\": %m", path)));
 		}
 	}
-
-	pfree(path);
 
 	reln->md_fd[forkNum] = _fdvec_alloc();
 
@@ -380,7 +378,7 @@ mdunlink(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 static void
 mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 {
-	char	   *path;
+	const char *path;
 	int			ret;
 
 	path = relpath(rnode, forkNum);
@@ -449,8 +447,6 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 		}
 		pfree(segpath);
 	}
-
-	pfree(path);
 }
 
 /*
@@ -545,7 +541,7 @@ static MdfdVec *
 mdopen(SMgrRelation reln, ForkNumber forknum, ExtensionBehavior behavior)
 {
 	MdfdVec    *mdfd;
-	char	   *path;
+	const char *path;
 	File		fd;
 
 	/* No work if already open */
@@ -571,7 +567,6 @@ mdopen(SMgrRelation reln, ForkNumber forknum, ExtensionBehavior behavior)
 			if (behavior == EXTENSION_RETURN_NULL &&
 				FILE_POSSIBLY_DELETED(errno))
 			{
-				pfree(path);
 				return NULL;
 			}
 			ereport(ERROR,
@@ -579,8 +574,6 @@ mdopen(SMgrRelation reln, ForkNumber forknum, ExtensionBehavior behavior)
 					 errmsg("could not open file \"%s\": %m", path)));
 		}
 	}
-
-	pfree(path);
 
 	reln->md_fd[forknum] = mdfd = _fdvec_alloc();
 
@@ -1279,7 +1272,7 @@ mdpostckpt(void)
 	while (pendingUnlinks != NIL)
 	{
 		PendingUnlinkEntry *entry = (PendingUnlinkEntry *) linitial(pendingUnlinks);
-		char	   *path;
+		const char *path;
 
 		/*
 		 * New entries are appended to the end, so if the entry is new we've
@@ -1309,7 +1302,6 @@ mdpostckpt(void)
 						(errcode_for_file_access(),
 						 errmsg("could not remove file \"%s\": %m", path)));
 		}
-		pfree(path);
 
 		/* And remove the list entry */
 		pendingUnlinks = list_delete_first(pendingUnlinks);
@@ -1634,8 +1626,8 @@ _fdvec_alloc(void)
 static char *
 _mdfd_segpath(SMgrRelation reln, ForkNumber forknum, BlockNumber segno)
 {
-	char	   *path,
-			   *fullpath;
+	const char *path;
+	char	   *fullpath;
 
 	path = relpath(reln->smgr_rnode, forknum);
 
@@ -1644,10 +1636,9 @@ _mdfd_segpath(SMgrRelation reln, ForkNumber forknum, BlockNumber segno)
 		/* be sure we have enough space for the '.segno' */
 		fullpath = (char *) palloc(strlen(path) + 12);
 		sprintf(fullpath, "%s.%u", path, segno);
-		pfree(path);
 	}
 	else
-		fullpath = path;
+		fullpath = pstrdup(path);
 
 	return fullpath;
 }

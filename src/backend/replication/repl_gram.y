@@ -56,6 +56,7 @@ Node *replication_parse_result;
 %union {
 		char					*str;
 		bool					boolval;
+		int32					intval;
 
 		XLogRecPtr				recptr;
 		Node					*node;
@@ -65,24 +66,28 @@ Node *replication_parse_result;
 
 /* Non-keyword tokens */
 %token <str> SCONST
+%token <intval> ICONST
 %token <recptr> RECPTR
 
 /* Keyword tokens. */
 %token K_BASE_BACKUP
 %token K_IDENTIFY_SYSTEM
+%token K_START_REPLICATION
+%token K_INIT_LOGICAL_REPLICATION
+%token K_START_LOGICAL_REPLICATION
+%token K_TIMELINE_HISTORY
 %token K_LABEL
 %token K_PROGRESS
 %token K_FAST
 %token K_NOWAIT
 %token K_WAL
-%token K_START_REPLICATION
-%token K_INIT_LOGICAL_REPLICATION
-%token K_START_LOGICAL_REPLICATION
+%token K_TIMELINE
 
 %type <node>	command
-%type <node>	base_backup start_replication identify_system start_logical_replication init_logical_replication
+%type <node>	base_backup start_replication start_logical_replication init_logical_replication identify_system timeline_history
 %type <list>	base_backup_opt_list
 %type <defelt>	base_backup_opt
+%type <intval>	opt_timeline
 %%
 
 firstcmd: command opt_semicolon
@@ -101,6 +106,7 @@ command:
 			| start_replication
 			| init_logical_replication
 			| start_logical_replication
+			| timeline_history
 			;
 
 /*
@@ -157,18 +163,31 @@ base_backup_opt:
 			;
 
 /*
- * START_REPLICATION %X/%X
+ * START_REPLICATION %X/%X [TIMELINE %d]
  */
 start_replication:
-			K_START_REPLICATION RECPTR
+			K_START_REPLICATION RECPTR opt_timeline
 				{
 					StartReplicationCmd *cmd;
 
 					cmd = makeNode(StartReplicationCmd);
 					cmd->startpoint = $2;
+					cmd->timeline = $3;
 
 					$$ = (Node *) cmd;
 				}
+			;
+
+opt_timeline:
+			K_TIMELINE ICONST
+				{
+					if ($2 <= 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 (errmsg("invalid timeline %d", $2))));
+					$$ = $2;
+				}
+				| /* nothing */			{ $$ = 0; }
 			;
 
 /* FIXME: don't use SCONST */
@@ -191,6 +210,26 @@ start_logical_replication:
 					cmd = makeNode(StartLogicalReplicationCmd);
 					cmd->name = $2;
 					cmd->startpoint = $3;
+
+					$$ = (Node *) cmd;
+				}
+			;
+
+/*
+ * TIMELINE_HISTORY %d
+ */
+timeline_history:
+			K_TIMELINE_HISTORY ICONST
+				{
+					TimeLineHistoryCmd *cmd;
+
+					if ($2 <= 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 (errmsg("invalid timeline %d", $2))));
+
+					cmd = makeNode(TimeLineHistoryCmd);
+					cmd->timeline = $2;
 
 					$$ = (Node *) cmd;
 				}

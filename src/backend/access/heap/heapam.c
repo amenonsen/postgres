@@ -262,10 +262,23 @@ heapgetpage(HeapScanDesc scan, BlockNumber page)
 
 	/*
 	 * If the all-visible flag indicates that all tuples on the page are
-	 * visible to everyone, we can skip the per-tuple visibility tests. But
-	 * not in hot standby mode. A tuple that's already visible to all
+	 * visible to everyone, we can skip the per-tuple visibility tests.
+	 *
+	 * Note: In hot standby, a tuple that's already visible to all
 	 * transactions in the master might still be invisible to a read-only
-	 * transaction in the standby.
+	 * transaction in the standby. We partly handle this problem by tracking
+	 * the minimum xmin of visible tuples as the cut-off XID while marking a
+	 * page all-visible on master and WAL log that along with the visibility
+	 * map SET operation. In hot standby, we wait for (or abort) all
+	 * transactions that can potentially may not see one or more tuples on the
+	 * page. That's how index-only scans work fine in hot standby. A crucial
+	 * difference between index-only scans and heap scans is that the
+	 * index-only scan completely relies on the visibility map where as heap
+	 * scan looks at the page-level PD_ALL_VISIBLE flag. We are not sure if the
+	 * page-level flag can be trusted in the same way, because it might get
+	 * propagated somehow without being explicitly WAL-logged, e.g. via a full
+	 * page write. Until we can prove that beyond doubt, let's check each
+	 * tuple for visibility the hard way.
 	 */
 	all_visible = PageIsAllVisible(dp) && !snapshot->takenDuringRecovery;
 
@@ -2227,8 +2240,12 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 		/* NO EREPORT(ERROR) from here till changes are logged */
 		START_CRIT_SECTION();
 
-		/* Put as many tuples as fit on this page */
-		for (nthispage = 0; ndone + nthispage < ntuples; nthispage++)
+		/*
+		 * RelationGetBufferForTuple has ensured that the first tuple fits.
+		 * Put that on the page, and then as many other tuples as fit.
+		 */
+		RelationPutHeapTuple(relation, buffer, heaptuples[ndone]);
+		for (nthispage = 1; ndone + nthispage < ntuples; nthispage++)
 		{
 			HeapTuple	heaptup = heaptuples[ndone + nthispage];
 
@@ -4918,7 +4935,7 @@ heap_xlog_clean(XLogRecPtr lsn, XLogRecord *record)
 	LockBufferForCleanup(buffer);
 	page = (Page) BufferGetPage(buffer);
 
-	if (XLByteLE(lsn, PageGetLSN(page)))
+	if (lsn <= PageGetLSN(page))
 	{
 		UnlockReleaseBuffer(buffer);
 		return;
@@ -4988,7 +5005,7 @@ heap_xlog_freeze(XLogRecPtr lsn, XLogRecord *record)
 		return;
 	page = (Page) BufferGetPage(buffer);
 
-	if (XLByteLE(lsn, PageGetLSN(page)))
+	if (lsn <= PageGetLSN(page))
 	{
 		UnlockReleaseBuffer(buffer);
 		return;
@@ -5072,7 +5089,7 @@ heap_xlog_visible(XLogRecPtr lsn, XLogRecord *record)
 		 * XLOG record's LSN, we mustn't mark the page all-visible, because
 		 * the subsequent update won't be replayed to clear the flag.
 		 */
-		if (!XLByteLE(lsn, PageGetLSN(page)))
+		if (lsn > PageGetLSN(page))
 		{
 			PageSetAllVisible(page);
 			MarkBufferDirty(buffer);
@@ -5109,7 +5126,7 @@ heap_xlog_visible(XLogRecPtr lsn, XLogRecord *record)
 		 * we did for the heap page.  If this results in a dropped bit, no
 		 * real harm is done; and the next VACUUM will fix it.
 		 */
-		if (!XLByteLE(lsn, PageGetLSN(BufferGetPage(vmbuffer))))
+		if (lsn > PageGetLSN(BufferGetPage(vmbuffer)))
 			visibilitymap_set(reln, xlrec->block, lsn, vmbuffer,
 							  xlrec->cutoff_xid);
 
@@ -5195,7 +5212,7 @@ heap_xlog_delete(XLogRecPtr lsn, XLogRecord *record)
 		return;
 	page = (Page) BufferGetPage(buffer);
 
-	if (XLByteLE(lsn, PageGetLSN(page)))		/* changes are applied */
+	if (lsn <= PageGetLSN(page))		/* changes are applied */
 	{
 		UnlockReleaseBuffer(buffer);
 		return;
@@ -5290,7 +5307,7 @@ heap_xlog_insert(XLogRecPtr lsn, XLogRecord *record)
 			return;
 		page = (Page) BufferGetPage(buffer);
 
-		if (XLByteLE(lsn, PageGetLSN(page)))	/* changes are applied */
+		if (lsn <= PageGetLSN(page))	/* changes are applied */
 		{
 			UnlockReleaseBuffer(buffer);
 			return;
@@ -5425,7 +5442,7 @@ heap_xlog_multi_insert(XLogRecPtr lsn, XLogRecord *record)
 			return;
 		page = (Page) BufferGetPage(buffer);
 
-		if (XLByteLE(lsn, PageGetLSN(page)))	/* changes are applied */
+		if (lsn <= PageGetLSN(page))	/* changes are applied */
 		{
 			UnlockReleaseBuffer(buffer);
 			return;
@@ -5567,7 +5584,7 @@ heap_xlog_update(XLogRecPtr lsn, XLogRecord *record, bool hot_update)
 		goto newt;
 	page = (Page) BufferGetPage(obuffer);
 
-	if (XLByteLE(lsn, PageGetLSN(page)))		/* changes are applied */
+	if (lsn <= PageGetLSN(page))		/* changes are applied */
 	{
 		if (samepage)
 		{
@@ -5667,7 +5684,7 @@ newt:;
 			return;
 		page = (Page) BufferGetPage(nbuffer);
 
-		if (XLByteLE(lsn, PageGetLSN(page)))	/* changes are applied */
+		if (lsn <= PageGetLSN(page))	/* changes are applied */
 		{
 			UnlockReleaseBuffer(nbuffer);
 			if (BufferIsValid(obuffer))
@@ -5767,7 +5784,7 @@ heap_xlog_lock(XLogRecPtr lsn, XLogRecord *record)
 		return;
 	page = (Page) BufferGetPage(buffer);
 
-	if (XLByteLE(lsn, PageGetLSN(page)))		/* changes are applied */
+	if (lsn <= PageGetLSN(page))		/* changes are applied */
 	{
 		UnlockReleaseBuffer(buffer);
 		return;
@@ -5830,7 +5847,7 @@ heap_xlog_inplace(XLogRecPtr lsn, XLogRecord *record)
 		return;
 	page = (Page) BufferGetPage(buffer);
 
-	if (XLByteLE(lsn, PageGetLSN(page)))		/* changes are applied */
+	if (lsn <= PageGetLSN(page))		/* changes are applied */
 	{
 		UnlockReleaseBuffer(buffer);
 		return;

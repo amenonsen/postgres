@@ -5,7 +5,7 @@
  * Copyright (c) 2012, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  src/bin/pg_xlogdump/pg_xlogdump.c
+ *		  contrib/pg_xlogdump/pg_xlogdump.c
  *-------------------------------------------------------------------------
  */
 
@@ -16,11 +16,10 @@
 #include <unistd.h>
 #include <libgen.h>
 
+#include "access/xlog.h"
 #include "access/xlogreader.h"
 #include "access/rmgr.h"
 #include "catalog/catalog.h"
-#include "pg_config_manual.h"
-#include "utils/elog.h"
 
 #include "getopt_long.h"
 
@@ -29,7 +28,6 @@ static const char *progname;
 typedef struct XLogDumpPrivateData
 {
 	TimeLineID	timeline;
-	char	   *outpath;
 	char	   *inpath;
 	char	   *file;
 	XLogRecPtr	startptr;
@@ -53,10 +51,6 @@ static void fatal_error(const char *fmt, ...)
 	fprintf(stderr, "\n");
 	exit(1);
 }
-
-static void
-XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
-				 XLogRecPtr startptr, char *buf, Size count);
 
 /* this should probably be put in a general implementation */
 static void
@@ -102,17 +96,8 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 			sendFile = open(fpath, O_RDONLY, 0);
 			if (sendFile < 0)
 			{
-				/*
-				 * If the file is not found, assume it's because the standby
-				 * asked for a too old WAL segment that has already been
-				 * removed or recycled.
-				 */
-				if (errno == ENOENT)
-					fatal_error("requested WAL segment %s has already been removed",
-								fname);
-				else
-					fatal_error("could not open file \"%s\": %u",
-								fpath, errno);
+				fatal_error("could not open file \"%s\": %s",
+							fpath, strerror(errno));
 			}
 			sendOff = 0;
 		}
@@ -120,14 +105,14 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 		/* Need to seek in the file? */
 		if (sendOff != startoff)
 		{
-			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0){
-				char fname[MAXPGPATH];
+			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0)
+			{
+				int		err = errno;
+				char	fname[MAXPGPATH];
 				XLogFileName(fname, timeline_id, sendSegNo);
 
-				fatal_error("could not seek in log segment %s to offset %u: %d",
-							fname,
-							startoff,
-							errno);
+				fatal_error("could not seek in log segment %s to offset %u: %s",
+							fname, startoff, strerror(err));
 			}
 			sendOff = startoff;
 		}
@@ -141,16 +126,16 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 		readbytes = read(sendFile, p, segbytes);
 		if (readbytes <= 0)
 		{
-			char fname[MAXPGPATH];
+			int		err = errno;
+			char	fname[MAXPGPATH];
 			XLogFileName(fname, timeline_id, sendSegNo);
 
-			fatal_error("could not read from log segment %s, offset %u, length %lu: %d",
-						fname,
-						sendOff, (unsigned long) segbytes, errno);
+			fatal_error("could not read from log segment %s, offset %d, length %d: %s",
+						fname, sendOff, segbytes, strerror(err));
 		}
 
 		/* Update state for read */
-		XLByteAdvance(recptr, readbytes);
+		recptr += readbytes;
 
 		sendOff += readbytes;
 		nbytes -= readbytes;
@@ -159,7 +144,7 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 }
 
 static int
-XLogDumpReadPage(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
+XLogDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 				 char *readBuff, TimeLineID *curFileTLI)
 {
 	XLogDumpPrivateData *private = state->private_data;
@@ -180,13 +165,71 @@ XLogDumpReadPage(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
 	return count;
 }
 
-static void
-XLogDumpDisplayRecord(XLogReaderState* state, XLogRecord* record)
+
+/*
+ * Find the first record with at an lsn >= RecPtr.
+ *
+ * Useful for checking wether RecPtr is a valid xlog address for reading and to
+ * find the first valid address after some address when dumping records for
+ * debugging purposes.
+ */
+static XLogRecPtr
+FindFirstRecord(XLogDumpPrivateData *private, XLogRecPtr RecPtr)
 {
-	XLogDumpPrivateData *config = (XLogDumpPrivateData *)state->private_data;
+	XLogRecPtr	targetPagePtr;
+	XLogRecPtr	tmpRecPtr;
+	int			targetRecOff;
+	uint32		pageHeaderSize;
+	XLogPageHeader header;
+	char	   *buffer;
+
+	buffer = (char *) malloc(XLOG_BLCKSZ);
+	if (buffer == NULL)
+		fatal_error("out of memory");
+
+	targetRecOff = RecPtr % XLOG_BLCKSZ;
+
+	/* scroll back to page boundary */
+	targetPagePtr = RecPtr - targetRecOff;
+
+	/* Read the page containing the record */
+	XLogDumpXLogRead(private->inpath, private->timeline,
+					 targetPagePtr, buffer, XLOG_BLCKSZ);
+
+	header = (XLogPageHeader) buffer;
+
+	pageHeaderSize = XLogPageHeaderSize(header);
+
+	/* skip over potential continuation data */
+	if (header->xlp_info & XLP_FIRST_IS_CONTRECORD)
+	{
+		/* record headers are MAXALIGN'ed */
+		tmpRecPtr = targetPagePtr + pageHeaderSize
+			+ MAXALIGN(header->xlp_rem_len);
+	}
+	else
+	{
+		tmpRecPtr = targetPagePtr + pageHeaderSize;
+	}
+
+	/*
+	 * we know now that tmpRecPtr is an address pointing to a valid XLogRecord
+	 * because either were at the first record after the beginning of a page or
+	 * we just jumped over the remaining data of a continuation.
+	 *
+	 * FIXME: except if the continued record extends completely over this page,
+	 * onto the next page.
+	 */
+	return tmpRecPtr;
+}
+
+static void
+XLogDumpDisplayRecord(XLogReaderState *state, XLogRecord *record)
+{
+	XLogDumpPrivateData *config = (XLogDumpPrivateData *) state->private_data;
 	const RmgrData *rmgr = &RmgrTable[record->xl_rmid];
 
-	fprintf(stdout, "xlog record: rmgr: %-11s, record_len: %6u, tot_len: %6u, tx: %10u, lsn: %X/%08X, prev %X/%08X, bkp: %u%u%u%u, desc:",
+	printf("xlog record: rmgr: %-11s, record_len: %6u, tot_len: %6u, tx: %10u, lsn: %X/%08X, prev %X/%08X, bkp: %u%u%u%u, desc:",
 			rmgr->rm_name,
 			record->xl_len, record->xl_tot_len,
 			record->xl_xid,
@@ -200,12 +243,12 @@ XLogDumpDisplayRecord(XLogReaderState* state, XLogRecord* record)
 	/* the desc routine will printf the description directly to stdout */
 	rmgr->rm_desc(NULL, record->xl_info, XLogRecGetData(record));
 
-	fprintf(stdout, "\n");
+	puts("\n");
 
 	if (config->bkp_details)
 	{
-		int off;
-		char *blk = (char *) XLogRecGetData(record) + record->xl_len;
+		int		off;
+		char   *blk = (char *) XLogRecGetData(record) + record->xl_len;
 
 		for (off = 0; off < XLR_MAX_BKP_BLOCKS; off++)
 		{
@@ -217,29 +260,29 @@ XLogDumpDisplayRecord(XLogReaderState* state, XLogRecord* record)
 			memcpy(&bkpb, blk, sizeof(BkpBlock));
 			blk += sizeof(BkpBlock);
 
-			fprintf(stdout, "\tbackup bkp #%u; rel %u/%u/%u; fork: %s; block: %u; hole: offset: %u, length: %u\n",
-					off, bkpb.node.spcNode, bkpb.node.dbNode, bkpb.node.relNode,
-					forkNames[bkpb.fork], bkpb.block, bkpb.hole_offset, bkpb.hole_length);
+			printf("\tbackup bkp #%u; rel %u/%u/%u; fork: %s; block: %u; hole: offset: %u, length: %u\n",
+				   off, bkpb.node.spcNode, bkpb.node.dbNode, bkpb.node.relNode,
+				   forkNames[bkpb.fork], bkpb.block, bkpb.hole_offset, bkpb.hole_length);
 		}
 	}
 }
 
 static void
-usage(const char *progname)
+usage(void)
 {
-	printf(_("%s: reads/writes postgres transaction logs for debugging.\n\n"),
+	printf("%s: reads/writes postgres transaction logs for debugging.\n\n",
 		   progname);
-	printf(_("Usage:\n"));
-	printf(_("  %s [OPTION]...\n"), progname);
-	printf(_("\nOptions:\n"));
-	printf(_("  -b, --bkp-details      output detailed information about backup blocks\n"));
-	printf(_("  -e, --end RECPTR       read wal up to RECPTR\n"));
-	printf(_("  -f, --file FILE        wal file to parse, cannot be specified together with -p\n"));
-	printf(_("  -h, --help             show this help, then exit\n"));
-	printf(_("  -p, --path PATH        from where do we want to read? cwd/pg_xlog is the default\n"));
-	printf(_("  -s, --start RECPTR     read wal in directory indicated by -p starting at RECPTR\n"));
-	printf(_("  -t, --timeline TLI     which timeline do we want to read, defaults to 1\n"));
-	printf(_("  -v, --version          output version information, then exit\n"));
+	printf("Usage:\n");
+	printf("  %s [OPTION]...\n", progname);
+	printf("\nOptions:\n");
+	printf("  -b, --bkp-details      output detailed information about backup blocks\n");
+	printf("  -e, --end RECPTR       read wal up to RECPTR\n");
+	printf("  -f, --file FILE        wal file to parse, cannot be specified together with -p\n");
+	printf("  -h, --help             show this help, then exit\n");
+	printf("  -p, --path PATH        from where do we want to read? cwd/pg_xlog is the default\n");
+	printf("  -s, --start RECPTR     read wal in directory indicated by -p starting at RECPTR\n");
+	printf("  -t, --timeline TLI     which timeline do we want to read, defaults to 1\n");
+	printf("  -v, --version          output version information, then exit\n");
 }
 
 int
@@ -250,6 +293,8 @@ main(int argc, char **argv)
 	XLogReaderState *xlogreader_state;
 	XLogDumpPrivateData private;
 	XLogRecord *record;
+	XLogRecPtr	first_record;
+	char	   *errormsg;
 
 	static struct option long_options[] = {
 		{"bkp-details", no_argument, NULL, 'b'},
@@ -263,14 +308,10 @@ main(int argc, char **argv)
 		{NULL, 0, NULL, 0}
 	};
 
-	int			c;
-	int			option_index;
-
-
-	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_xlogdump"));
+	int			option;
+	int			optindex = 0;
 
 	progname = get_progname(argv[0]);
-
 
 	memset(&private, 0, sizeof(XLogDumpPrivateData));
 
@@ -281,14 +322,14 @@ main(int argc, char **argv)
 
 	if (argc <= 1)
 	{
-		fprintf(stderr, _("%s: no arguments specified\n"), progname);
+		fprintf(stderr, "%s: no arguments specified\n", progname);
 		goto bad_argument;
 	}
 
-	while ((c = getopt_long(argc, argv, "be:f:hp:s:t:V",
-							long_options, &option_index)) != -1)
+	while ((option = getopt_long(argc, argv, "be:f:hp:s:t:V",
+								 long_options, &optindex)) != -1)
 	{
-		switch (c)
+		switch (option)
 		{
 			case 'b':
 				private.bkp_details = true;
@@ -296,7 +337,7 @@ main(int argc, char **argv)
 			case 'e':
 				if (sscanf(optarg, "%X/%X", &xlogid, &xrecoff) != 2)
 				{
-					fprintf(stderr, _("%s: couldn't parse -e %s\n"),
+					fprintf(stderr, "%s: couldn't parse -e %s\n",
 							progname, optarg);
 					goto bad_argument;
 				}
@@ -307,7 +348,7 @@ main(int argc, char **argv)
 				private.file = strdup(optarg);
 				break;
 			case '?':
-				usage(progname);
+				usage();
 				exit(0);
 				break;
 			case 'p':
@@ -316,7 +357,7 @@ main(int argc, char **argv)
 			case 's':
 				if (sscanf(optarg, "%X/%X", &xlogid, &xrecoff) != 2)
 				{
-					fprintf(stderr, _("%s: couldn't parse -s %s\n"),
+					fprintf(stderr, "%s: couldn't parse -s %s\n",
 							progname, optarg);
 					goto bad_argument;
 				}
@@ -326,20 +367,17 @@ main(int argc, char **argv)
 			case 't':
 				if (sscanf(optarg, "%d", &private.timeline) != 1)
 				{
-					fprintf(stderr, _("%s: couldn't parse timeline -t %s\n"),
+					fprintf(stderr, "%s: couldn't parse timeline -t %s\n",
 							progname, optarg);
 					goto bad_argument;
 				}
 				break;
 			case 'V':
-				printf("%s: (PostgreSQL): %s\n", progname, PG_VERSION);
+				puts("pg_xlogdump (PostgreSQL) " PG_VERSION);
 				exit(0);
 				break;
 			default:
-				fprintf(stderr, _("%s: unknown argument -%c passed\n"),
-						progname, c);
 				goto bad_argument;
-				break;
 		}
 	}
 
@@ -347,23 +385,21 @@ main(int argc, char **argv)
 	if (optind < argc)
 	{
 		fprintf(stderr,
-				_("%s: too many command-line arguments (first is \"%s\")\n"),
+				"%s: too many command-line arguments (first is \"%s\")\n",
 				progname, argv[optind]);
 		goto bad_argument;
 	}
 	else if (private.inpath != NULL && private.file != NULL)
 	{
 		fprintf(stderr,
-				_("%s: only one of -p or -f can be specified\n"),
+				"%s: only one of -p or -f can be specified\n",
 				progname);
 		goto bad_argument;
 	}
 	/* no file specified, but no range of of interesting data either */
-	else if (private.file == NULL && XLByteEQ(private.startptr, InvalidXLogRecPtr))
+	else if (private.file == NULL && XLogRecPtrIsInvalid(private.startptr))
 	{
-		fprintf(stderr,
-				_("%s: no -s given in range mode.\n"),
-				progname);
+		fprintf(stderr, "%s: no -s given in range mode.\n", progname);
 		goto bad_argument;
 	}
 	/* everything ok, do some more setup */
@@ -384,72 +420,67 @@ main(int argc, char **argv)
 			XLogFromFileName(basename(private.file), &private.timeline, &segno);
 			private.inpath = strdup(dirname(private.file));
 
-			if (XLByteEQ(private.startptr, InvalidXLogRecPtr))
+			if (XLogRecPtrIsInvalid(private.startptr))
 				XLogSegNoOffsetToRecPtr(segno, 0, private.startptr);
 			else if (!XLByteInSeg(private.startptr, segno))
 			{
 				fprintf(stderr,
-						_("%s: -s does not lie inside file \"%s\"\n"),
+						"%s: -s does not lie inside file \"%s\"\n",
 						progname,
 						private.file);
 				goto bad_argument;
 			}
 
-			if (XLByteEQ(private.endptr, InvalidXLogRecPtr))
+			if (XLogRecPtrIsInvalid(private.endptr))
 				XLogSegNoOffsetToRecPtr(segno + 1, 0, private.endptr);
 			else if (!XLByteInSeg(private.endptr, segno) &&
 					 private.endptr != (segno + 1) * XLogSegSize)
 			{
 				fprintf(stderr,
-						_("%s: -e does not lie inside file \"%s\"\n"),
+						"%s: -e does not lie inside file \"%s\"\n",
 						progname, private.file);
 				goto bad_argument;
 			}
 		}
 	}
 
-	/* we have everything we need, continue */
+	/* we have everything we need, start reading */
+	xlogreader_state = XLogReaderAllocate(private.startptr,
+										  XLogDumpReadPage,
+										  &private);
+
+	/* first find a valid recptr to start from */
+	first_record = FindFirstRecord(&private, private.startptr);
+
+	if (first_record == InvalidXLogRecPtr)
+		fatal_error("Could not find a valid record after %X/%X",
+					(uint32) (private.startptr >> 32),
+					(uint32) private.startptr);
+
+	/*
+	 * Display a message that were skipping data if `from` wasn't a pointer
+	 * to the start of a record and also wasn't a pointer to the beginning
+	 * of a segment (e.g. we were used in file mode).
+	 */
+	if (first_record != private.startptr && (private.startptr % XLogSegSize) != 0)
+		printf("first record is after %X/%X, at %X/%X, skipping over %u bytes\n",
+			   (uint32) (private.startptr >> 32), (uint32) private.startptr,
+			   (uint32) (first_record >> 32), (uint32) first_record,
+			   (uint32) (first_record - private.endptr));
+
+	while ((record = XLogReadRecord(xlogreader_state, first_record, &errormsg)))
 	{
-		XLogRecPtr first_record;
-		char	*errormsg;
-
-		xlogreader_state = XLogReaderAllocate(private.startptr,
-											  XLogDumpReadPage,
-											  &private);
-
-		/* first find a valid recptr to start from */
-		first_record = XLogFindNextRecord(xlogreader_state, private.startptr);
-
-		if (first_record == InvalidXLogRecPtr)
-			fatal_error("Could not find a valid record after %X/%X",
-						(uint32) (private.startptr >> 32),
-						(uint32) private.startptr);
-
-		/*
-		 * Display a message that were skipping data if `from` wasn't a pointer
-		 * to the start of a record and also wasn't a pointer to the beginning
-		 * of a segment (e.g. we were used in file mode).
-		 */
-		if (first_record != private.startptr && (private.startptr % XLogSegSize) != 0)
-			fprintf(stdout, "first record is after %X/%X, at %X/%X, skipping over %u bytes\n",
-					(uint32) (private.startptr >> 32), (uint32) private.startptr,
-					(uint32) (first_record >> 32), (uint32) first_record,
-					(uint32) (first_record - private.endptr));
-
-		while ((record = XLogReadRecord(xlogreader_state, first_record, &errormsg)))
-		{
-			/* continue after the last record */
-			first_record = InvalidXLogRecPtr;
-			XLogDumpDisplayRecord(xlogreader_state, record);
-		}
-		if (errormsg)
-			fprintf(stderr, "error in WAL record: %s\n", errormsg);
-
-		XLogReaderFree(xlogreader_state);
+		/* continue after the last record */
+		first_record = InvalidXLogRecPtr;
+		XLogDumpDisplayRecord(xlogreader_state, record);
 	}
+	if (errormsg)
+		fprintf(stderr, "error in WAL record: %s\n", errormsg);
+
+	XLogReaderFree(xlogreader_state);
 
 	return 0;
 bad_argument:
-	fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+	fprintf(stderr, "Try \"%s --help\" for more information.\n", progname);
 	exit(1);
 }

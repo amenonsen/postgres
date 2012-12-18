@@ -11,14 +11,7 @@
  *		  src/bin/pg_basebackup/receivelog.c
  *-------------------------------------------------------------------------
  */
-
-/*
- * We have to use postgres.h not postgres_fe.h here, because there's so much
- * backend-only stuff in the XLOG include files we need.  But we need a
- * frontend-ish environment otherwise.	Hence this ugly hack.
- */
-#define FRONTEND 1
-#include "postgres.h"
+#include "postgres_fe.h"
 
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -30,8 +23,6 @@
 
 #include "libpq-fe.h"
 #include "access/xlog_internal.h"
-#include "utils/datetime.h"
-#include "utils/timestamp.h"
 
 #include "receivelog.h"
 #include "streamutil.h"
@@ -645,7 +636,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline,
 			/* Write was successful, advance our position */
 			bytes_written += bytes_to_write;
 			bytes_left -= bytes_to_write;
-			XLByteAdvance(blockpos, bytes_to_write);
+			blockpos += bytes_to_write;
 			xlogoff += bytes_to_write;
 
 			/* Did we reach the end of a WAL segment? */

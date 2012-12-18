@@ -20,8 +20,8 @@
 #ifndef XLOGREADER_H
 #define XLOGREADER_H
 
+#include "access/xlog.h"
 #include "access/xlog_internal.h"
-#include "nodes/pg_list.h"
 
 struct XLogReaderState;
 
@@ -65,13 +65,6 @@ typedef struct XLogReaderState
 	uint64		system_identifier;
 
 	/*
-	 * List of acceptable TLIs.
-	 *
-	 * Set to NIL (the default value) if this should not be checked.
-	 */
-	List	   *expectedTLEs;
-
-	/*
 	 * Opaque data for callbacks to use.  Not used by XLogReader.
 	 */
 	void	   *private_data;
@@ -81,6 +74,11 @@ typedef struct XLogReaderState
 	 */
 	XLogRecPtr	ReadRecPtr;		/* start of last record read */
 	XLogRecPtr	EndRecPtr;		/* end+1 of last record read */
+
+	/*
+	 * TLI of the current xlog page
+	 */
+	TimeLineID	ReadTimeLineID;
 
 	/* ----------------------------------------
 	 * private/internal state
@@ -96,9 +94,9 @@ typedef struct XLogReaderState
 	uint32      readLen;
 	TimeLineID  readPageTLI;
 
-	/* Highest TLI we have read so far  */
-	TimeLineID	latestReadTLI;
-	XLogRecPtr	latestReadPtr;
+	/* beginning of last page read, and its TLI  */
+	XLogRecPtr	latestPagePtr;
+	TimeLineID	latestPageTLI;
 
 	/* Buffer for current ReadRecord result (expandable) */
 	char	   *readRecordBuf;
@@ -133,12 +131,7 @@ extern void XLogReaderFree(XLogReaderState *state);
 /*
  * Read the next record from xlog. Returns NULL on end-of-WAL or on failure.
  */
-extern XLogRecord *XLogReadRecord(XLogReaderState *state, XLogRecPtr ptr,
+extern struct XLogRecord *XLogReadRecord(XLogReaderState *state, XLogRecPtr ptr,
 			   char **errormsg);
-
-/*
- * Find the address of the next record with a lsn >= RecPtr.
- */
-extern XLogRecPtr XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr);
 
 #endif   /* XLOGREADER_H */

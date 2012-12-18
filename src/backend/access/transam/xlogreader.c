@@ -18,8 +18,8 @@
 
 #include "postgres.h"
 
-#include "access/timeline.h"
 #include "access/transam.h"
+#include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogreader.h"
 #include "catalog/pg_control.h"
@@ -50,6 +50,9 @@ static void
 report_invalid_record(XLogReaderState *state, const char *fmt, ...)
 {
 	va_list	args;
+
+	fmt = _(fmt);
+
 	va_start(args, fmt);
 	vsnprintf(state->errormsg_buf, MAX_ERRORMSG_LEN, fmt, args);
 	va_end(args);
@@ -89,7 +92,6 @@ XLogReaderAllocate(XLogRecPtr startpoint, XLogPageReadCB pagereadfunc,
 	state->private_data = private_data;
 	state->EndRecPtr = startpoint;
 	state->readPageTLI = 0;
-	state->expectedTLEs = NIL;
 	state->system_identifier = 0;
 	state->errormsg_buf = malloc(MAX_ERRORMSG_LEN + 1);
 	if (!state->errormsg_buf)
@@ -344,7 +346,7 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 		do
 		{
 			/* Calculate pointer to beginning of next page */
-			XLByteAdvance(targetPagePtr, XLOG_BLCKSZ);
+			targetPagePtr += XLOG_BLCKSZ;
 
 			/* Wait for the next page to become available */
 			readOff = ReadPageInternal(state, targetPagePtr,
@@ -457,88 +459,6 @@ err:
 		*errormsg = state->errormsg_buf;
 
 	return NULL;
-}
-
-/*
- * Find the first record with at an lsn >= RecPtr.
- *
- * Useful for checking wether RecPtr is a valid xlog address for reading and to
- * find the first valid address after some address when dumping records for
- * debugging purposes.
- */
-XLogRecPtr
-XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr)
-{
-	XLogReaderState saved_state = *state;
-	XLogRecPtr	targetPagePtr;
-	XLogRecPtr	tmpRecPtr;
-	int	targetRecOff;
-	XLogRecPtr found = InvalidXLogRecPtr;
-	uint32		pageHeaderSize;
-	XLogPageHeader header;
-	XLogRecord *record;
-	uint32 readLen;
-	char	   *errormsg;
-
-	if (RecPtr == InvalidXLogRecPtr)
-		RecPtr = state->EndRecPtr;
-
-	targetRecOff = RecPtr % XLOG_BLCKSZ;
-
-	/* scroll back to page boundary */
-	targetPagePtr = RecPtr - targetRecOff;
-
-	/* Read the page containing the record */
-	readLen = ReadPageInternal(state, targetPagePtr, targetRecOff);
-	if (readLen < 0)
-		goto err;
-
-	header = (XLogPageHeader) state->readBuf;
-
-	pageHeaderSize = XLogPageHeaderSize(header);
-
-	/* make sure we have enough data for the page header */
-	readLen = ReadPageInternal(state, targetPagePtr, pageHeaderSize);
-	if (readLen < 0)
-		goto err;
-
-	/* skip over potential continuation data */
-	if (header->xlp_info & XLP_FIRST_IS_CONTRECORD)
-	{
-		/* record headers are MAXALIGN'ed */
-		tmpRecPtr = targetPagePtr + pageHeaderSize
-			+ MAXALIGN(header->xlp_rem_len);
-	}
-	else
-	{
-		tmpRecPtr = targetPagePtr + pageHeaderSize;
-	}
-
-	/*
-	 * we know now that tmpRecPtr is an address pointing to a valid XLogRecord
-	 * because either were at the first record after the beginning of a page or
-	 * we just jumped over the remaining data of a continuation.
-	 */
-	while ((record = XLogReadRecord(state, tmpRecPtr, &errormsg)))
-	{
-		/* continue after the record */
-		tmpRecPtr = InvalidXLogRecPtr;
-
-		/* past the record we've found, break out */
-		if (XLByteLE(RecPtr, state->ReadRecPtr))
-		{
-			found = state->ReadRecPtr;
-			goto out;
-		}
-	}
-
-err:
-out:
-	/* Restore state to what we had before finding the record */
-	saved_state.readRecordBuf = state->readRecordBuf;
-	saved_state.readRecordBufSize = state->readRecordBufSize;
-	*state = saved_state;
-	return found;
 }
 
 /*
@@ -700,7 +620,7 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 		 * We can't exactly verify the prev-link, but surely it should be less
 		 * than the record's own address.
 		 */
-		if (!XLByteLT(record->xl_prev, RecPtr))
+		if (!(record->xl_prev < RecPtr))
 		{
 			report_invalid_record(state,
 								  "record with incorrect prev-link %X/%X at %X/%X",
@@ -717,7 +637,7 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 		 * check guards against torn WAL pages where a stale but valid-looking
 		 * WAL record starts on a sector boundary.
 		 */
-		if (!XLByteEQ(record->xl_prev, PrevRecPtr))
+		if (record->xl_prev != PrevRecPtr)
 		{
 			report_invalid_record(state,
 								  "record with incorrect prev-link %X/%X at %X/%X",
@@ -921,7 +841,7 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 		return false;
 	}
 
-	if (!XLByteEQ(hdr->xlp_pageaddr, recaddr))
+	if (hdr->xlp_pageaddr != recaddr)
 	{
 		char		fname[MAXFNAMELEN];
 
@@ -930,24 +850,6 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 		report_invalid_record(state,
 			  "unexpected pageaddr %X/%X in log segment %s, offset %u",
 			  (uint32) (hdr->xlp_pageaddr >> 32), (uint32) hdr->xlp_pageaddr,
-							  fname,
-							  offset);
-		return false;
-	}
-
-	/*
-	 * Check page TLI is one of the expected values.
-	 */
-	if (state->expectedTLEs != NIL &&
-		!tliInHistory(hdr->xlp_tli, state->expectedTLEs))
-	{
-		char		fname[MAXFNAMELEN];
-
-		XLogFileName(fname, state->readPageTLI, segno);
-
-		report_invalid_record(state,
-					"unexpected timeline ID %u in log segment %s, offset %u",
-							  hdr->xlp_tli,
 							  fname,
 							  offset);
 		return false;
@@ -969,9 +871,9 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 	 * XXX: This is slightly less precise than the check we did in earlier
 	 * times. I don't see a problem with that though.
 	 */
-	if (state->latestReadPtr < recptr)
+	if (state->latestPagePtr < recptr)
 	{
-		if (hdr->xlp_tli < state->latestReadTLI)
+		if (hdr->xlp_tli < state->latestPageTLI)
 		{
 			char		fname[MAXFNAMELEN];
 
@@ -980,13 +882,13 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 			report_invalid_record(state,
 								  "out-of-sequence timeline ID %u (after %u) in log segment %s, offset %u",
 								  hdr->xlp_tli,
-								  state->latestReadTLI,
+								  state->latestPageTLI,
 								  fname,
 								  offset);
 			return false;
 		}
-		state->latestReadPtr = recptr;
-		state->latestReadTLI = hdr->xlp_tli;
 	}
+	state->latestPagePtr = recptr;
+	state->latestPageTLI = hdr->xlp_tli;
 	return true;
 }

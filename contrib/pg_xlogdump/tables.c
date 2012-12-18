@@ -6,7 +6,7 @@
  * Portions Copyright (c) 2012, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		src/bin/pg_xlogdump/tables.c
+ *		contrib/pg_xlogdump/tables.c
  *
  * NOTES
  *
