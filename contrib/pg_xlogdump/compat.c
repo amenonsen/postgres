@@ -24,10 +24,6 @@
 #include "storage/relfilenode.h"
 #include "utils/timestamp.h"
 
-#ifdef USE_ASSERT_CHECKING
-bool assert_enabled = false;
-#endif
-
 const char *
 timestamptz_to_str(TimestampTz t)
 {
@@ -55,36 +51,3 @@ appendStringInfoString(StringInfo str, const char *string)
 {
 	appendStringInfo(str, "%s", string);
 }
-
-#ifdef USE_ASSERT_CHECKING
-void
-ExceptionalCondition(const char *conditionName,
-					 const char *errorType,
-					 const char *fileName, int lineNumber)
-{
-	if (!PointerIsValid(conditionName)
-		|| !PointerIsValid(fileName)
-		|| !PointerIsValid(errorType))
-		fprintf(stderr, "TRAP: ExceptionalCondition: bad arguments\n");
-	else
-	{
-		fprintf(stderr, "TRAP: %s(\"%s\", File: \"%s\", Line: %d)\n",
-					 errorType, conditionName,
-					 fileName, lineNumber);
-	}
-
-	/* Usually this shouldn't be needed, but make sure the msg went out */
-	fflush(stderr);
-
-#ifdef SLEEP_ON_ASSERT
-
-	/*
-	 * It would be nice to use pg_usleep() here, but only does 2000 sec or 33
-	 * minutes, which seems too short.
-	 */
-	sleep(1000000);
-#endif
-
-	abort();
-}
-#endif	/* USE_ASSERT_CHECKING */
