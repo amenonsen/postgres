@@ -14,7 +14,6 @@
 #include "postgres.h"
 
 #include <unistd.h>
-#include <libgen.h>
 
 #include "access/xlog.h"
 #include "access/xlogreader.h"
@@ -409,16 +408,29 @@ main(int argc, char **argv)
 		if (private.file == NULL && private.inpath == NULL)
 			private.inpath = "pg_xlog";
 
-		/* XXX: validate directory */
-
 		/* default value */
 		if (private.file != NULL)
 		{
 			XLogSegNo segno;
+			char *sep;
+
+			/* split filepath into directory & filename */
+			sep = strrchr(private.file, '/');
+			/* directory path */
+			if (sep != NULL)
+			{
+				private.inpath = strndup(private.file, sep - private.file);
+				private.file = strdup(sep + 1);
+			}
+			/* local directory */
+			else
+			{
+				private.inpath = strdup(".");
+				private.file = strdup(private.file);
+			}
 
 			/* FIXME: can we rely on basename? */
-			XLogFromFileName(basename(private.file), &private.timeline, &segno);
-			private.inpath = strdup(dirname(private.file));
+			XLogFromFileName(private.file, &private.timeline, &segno);
 
 			if (XLogRecPtrIsInvalid(private.startptr))
 				XLogSegNoOffsetToRecPtr(segno, 0, private.startptr);
@@ -442,6 +454,8 @@ main(int argc, char **argv)
 				goto bad_argument;
 			}
 		}
+
+		/* XXX: validate directory */
 	}
 
 	/* we have everything we need, start reading */
