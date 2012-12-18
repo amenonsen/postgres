@@ -325,6 +325,7 @@ XLogDumpDisplayRecord(XLogReaderState *state, XLogRecord *record)
 
 			memcpy(&bkpb, blk, sizeof(BkpBlock));
 			blk += sizeof(BkpBlock);
+			blk += BLCKSZ - bkpb.hole_length;
 
 			printf("\tbackup bkp #%u; rel %u/%u/%u; fork: %s; block: %u; hole: offset: %u, length: %u\n",
 				   off, bkpb.node.spcNode, bkpb.node.dbNode, bkpb.node.relNode,
