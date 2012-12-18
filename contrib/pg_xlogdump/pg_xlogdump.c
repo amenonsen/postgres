@@ -419,7 +419,9 @@ main(int argc, char **argv)
 			/* directory path */
 			if (sep != NULL)
 			{
-				private.inpath = strndup(private.file, sep - private.file);
+				/* windows doesn't have strndup */
+				private.inpath = strdup(private.file);
+				private.inpath[(sep - private.file) + 1] = '\0';
 				private.file = strdup(sep + 1);
 			}
 			/* local directory */
