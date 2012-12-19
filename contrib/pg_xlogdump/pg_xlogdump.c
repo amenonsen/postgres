@@ -52,11 +52,11 @@ static void fatal_error(const char *fmt, ...)
 	va_list		args;
 	fflush(stdout);
 
-	fprintf(stderr, "fatal_error: ");
+	fprintf(stderr, "%s: fatal_error: ", progname);
 	va_start(args, fmt);
 	vfprintf(stderr, fmt, args);
 	va_end(args);
-	fprintf(stderr, "\n");
+	fputc('\n', stderr);
 	exit(1);
 }
 
@@ -433,12 +433,11 @@ main(int argc, char **argv)
 			case 'e':
 				if (sscanf(optarg, "%X/%X", &xlogid, &xrecoff) != 2)
 				{
-					fprintf(stderr, "%s: couldn't parse -e %s\n",
+					fprintf(stderr, "%s: could not parse parse --end %s\n",
 							progname, optarg);
 					goto bad_argument;
 				}
-				else
-					private.endptr = (uint64)xlogid << 32 | xrecoff;
+				private.endptr = (uint64)xlogid << 32 | xrecoff;
 				break;
 			case 'f':
 				private.file = strdup(optarg);
@@ -450,7 +449,7 @@ main(int argc, char **argv)
 			case 'n':
 				if (sscanf(optarg, "%d", &private.stop_after_records) != 1)
 				{
-					fprintf(stderr, "%s: couldn't parse -n %s\n",
+					fprintf(stderr, "%s: could not parse parse --limit %s\n",
 							progname, optarg);
 					goto bad_argument;
 				}
@@ -472,7 +471,7 @@ main(int argc, char **argv)
 
 				if (private.filter_by_rmgr == -1)
 				{
-					fprintf(stderr, "%s: rmgr %s does not exist\n",
+					fprintf(stderr, "%s: --rmgr %s does not exist\n",
 							progname, optarg);
 					goto bad_argument;
 				}
@@ -481,7 +480,7 @@ main(int argc, char **argv)
 			case 's':
 				if (sscanf(optarg, "%X/%X", &xlogid, &xrecoff) != 2)
 				{
-					fprintf(stderr, "%s: couldn't parse -s %s\n",
+					fprintf(stderr, "%s: could not parse parse --end %s\n",
 							progname, optarg);
 					goto bad_argument;
 				}
@@ -491,7 +490,7 @@ main(int argc, char **argv)
 			case 't':
 				if (sscanf(optarg, "%d", &private.timeline) != 1)
 				{
-					fprintf(stderr, "%s: couldn't parse timeline -t %s\n",
+					fprintf(stderr, "%s: could not parse timeline --timeline %s\n",
 							progname, optarg);
 					goto bad_argument;
 				}
@@ -503,7 +502,7 @@ main(int argc, char **argv)
 			case 'x':
 				if (sscanf(optarg, "%u", &private.filter_by_xid) != 1)
 				{
-					fprintf(stderr, "%s: couldn't count not parse --xid %s as a valid xid\n",
+					fprintf(stderr, "%s: could not parse --xid %s as a valid xid\n",
 							progname, optarg);
 					goto bad_argument;
 				}
@@ -567,8 +566,10 @@ main(int argc, char **argv)
 			else if (!XLByteInSeg(private.startptr, segno))
 			{
 				fprintf(stderr,
-						"%s: -s does not lie inside file \"%s\"\n",
+						"%s: --start %X/%X is not inside --file \"%s\"\n",
 						progname,
+						(uint32)(private.startptr >> 32),
+						(uint32)private.startptr,
 						private.file);
 				goto bad_argument;
 			}
@@ -579,8 +580,11 @@ main(int argc, char **argv)
 					 private.endptr != (segno + 1) * XLogSegSize)
 			{
 				fprintf(stderr,
-						"%s: -e does not lie inside file \"%s\"\n",
-						progname, private.file);
+						"%s: --end %X/%X is not inside --file \"%s\"\n",
+						progname,
+						(uint32)(private.endptr >> 32),
+						(uint32)private.endptr,
+						private.file);
 				goto bad_argument;
 			}
 		}
@@ -597,7 +601,7 @@ main(int argc, char **argv)
 	first_record = FindFirstRecord(&private, private.startptr);
 
 	if (first_record == InvalidXLogRecPtr)
-		fatal_error("Could not find a valid record after %X/%X",
+		fatal_error("could not find a valid record after %X/%X",
 					(uint32) (private.startptr >> 32),
 					(uint32) private.startptr);
 
@@ -623,8 +627,12 @@ main(int argc, char **argv)
 			private.already_displayed_records >= private.stop_after_records)
 			break;
 	}
+
 	if (errormsg)
-		fprintf(stderr, "error in WAL record: %s\n", errormsg);
+		fatal_error("error in WAL record at %X/%X: %s\n",
+					(uint32)(xlogreader_state->ReadRecPtr >> 32),
+					(uint32)xlogreader_state->ReadRecPtr,
+					errormsg);
 
 	XLogReaderFree(xlogreader_state);
 
