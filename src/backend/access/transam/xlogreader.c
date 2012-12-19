@@ -892,3 +892,96 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 	state->latestPageTLI = hdr->xlp_tli;
 	return true;
 }
+
+/*
+ * Functions that are currently only needed in the backend, but are better
+ * implemented inside xlogreader because the internal functions available
+ * there.
+ */
+#ifdef FRONTEND
+
+/*
+ * Find the first record with at an lsn >= RecPtr.
+ *
+ * Useful for checking wether RecPtr is a valid xlog address for reading and to
+ * find the first valid address after some address when dumping records for
+ * debugging purposes.
+ */
+XLogRecPtr
+XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr)
+{
+   XLogReaderState saved_state = *state;
+   XLogRecPtr  targetPagePtr;
+   XLogRecPtr  tmpRecPtr;
+   int targetRecOff;
+   XLogRecPtr found = InvalidXLogRecPtr;
+   uint32      pageHeaderSize;
+   XLogPageHeader header;
+   XLogRecord *record;
+   uint32 readLen;
+   char       *errormsg;
+
+   if (RecPtr == InvalidXLogRecPtr)
+       RecPtr = state->EndRecPtr;
+
+   targetRecOff = RecPtr % XLOG_BLCKSZ;
+
+   /* scroll back to page boundary */
+   targetPagePtr = RecPtr - targetRecOff;
+
+   /* Read the page containing the record */
+   readLen = ReadPageInternal(state, targetPagePtr, targetRecOff);
+   if (readLen < 0)
+       goto err;
+
+   header = (XLogPageHeader) state->readBuf;
+
+   pageHeaderSize = XLogPageHeaderSize(header);
+
+   /* make sure we have enough data for the page header */
+   readLen = ReadPageInternal(state, targetPagePtr, pageHeaderSize);
+   if (readLen < 0)
+       goto err;
+
+   /* skip over potential continuation data */
+   if (header->xlp_info & XLP_FIRST_IS_CONTRECORD)
+   {
+       /* record headers are MAXALIGN'ed */
+       tmpRecPtr = targetPagePtr + pageHeaderSize
+           + MAXALIGN(header->xlp_rem_len);
+   }
+   else
+   {
+       tmpRecPtr = targetPagePtr + pageHeaderSize;
+   }
+
+   /*
+    * we know now that tmpRecPtr is an address pointing to a valid XLogRecord
+    * because either were at the first record after the beginning of a page or
+    * we just jumped over the remaining data of a continuation.
+    */
+   while ((record = XLogReadRecord(state, tmpRecPtr, &errormsg)))
+   {
+       /* continue after the record */
+       tmpRecPtr = InvalidXLogRecPtr;
+
+       /* past the record we've found, break out */
+       if (RecPtr <= state->ReadRecPtr)
+       {
+           found = state->ReadRecPtr;
+           goto out;
+       }
+   }
+
+err:
+out:
+   /* Reset state to what we had before finding the record */
+   state->readSegNo = 0;
+   state->readOff = 0;
+   state->readLen = 0;
+   state->ReadRecPtr = saved_state.ReadRecPtr;
+   state->EndRecPtr = saved_state.EndRecPtr;
+   return found;
+}
+
+#endif /* FRONTEND */

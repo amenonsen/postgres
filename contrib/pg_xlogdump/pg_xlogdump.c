@@ -280,64 +280,6 @@ XLogDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 	return count;
 }
 
-
-/*
- * Find the first record with at an lsn >= RecPtr.
- *
- * Useful for checking wether RecPtr is a valid xlog address for reading and to
- * find the first valid address after some address when dumping records for
- * debugging purposes.
- */
-static XLogRecPtr
-FindFirstRecord(XLogDumpPrivateData *private, XLogRecPtr RecPtr)
-{
-	XLogRecPtr	targetPagePtr;
-	XLogRecPtr	tmpRecPtr;
-	int			targetRecOff;
-	uint32		pageHeaderSize;
-	XLogPageHeader header;
-	char	   *buffer;
-
-	buffer = (char *) malloc(XLOG_BLCKSZ);
-	if (buffer == NULL)
-		fatal_error("out of memory");
-
-	targetRecOff = RecPtr % XLOG_BLCKSZ;
-
-	/* scroll back to page boundary */
-	targetPagePtr = RecPtr - targetRecOff;
-
-	/* Read the page containing the record */
-	XLogDumpXLogRead(private->inpath, private->timeline,
-					 targetPagePtr, buffer, XLOG_BLCKSZ);
-
-	header = (XLogPageHeader) buffer;
-
-	pageHeaderSize = XLogPageHeaderSize(header);
-
-	/* skip over potential continuation data */
-	if (header->xlp_info & XLP_FIRST_IS_CONTRECORD)
-	{
-		/* record headers are MAXALIGN'ed */
-		tmpRecPtr = targetPagePtr + pageHeaderSize
-			+ MAXALIGN(header->xlp_rem_len);
-	}
-	else
-	{
-		tmpRecPtr = targetPagePtr + pageHeaderSize;
-	}
-
-	/*
-	 * we know now that tmpRecPtr is an address pointing to a valid XLogRecord
-	 * because either were at the first record after the beginning of a page or
-	 * we just jumped over the remaining data of a continuation.
-	 *
-	 * FIXME: except if the continued record extends completely over this page,
-	 * onto the next page.
-	 */
-	return tmpRecPtr;
-}
-
 static void
 XLogDumpDisplayRecord(XLogReaderState *state, XLogRecord *record)
 {
@@ -667,7 +609,7 @@ main(int argc, char **argv)
 										  &private);
 
 	/* first find a valid recptr to start from */
-	first_record = FindFirstRecord(&private, private.startptr);
+	first_record = XLogFindNextRecord(xlogreader_state, private.startptr);
 
 	if (first_record == InvalidXLogRecPtr)
 		fatal_error("could not find a valid record after %X/%X",

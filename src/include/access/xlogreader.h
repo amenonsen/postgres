@@ -125,4 +125,17 @@ extern void XLogReaderFree(XLogReaderState *state);
 extern struct XLogRecord *XLogReadRecord(XLogReaderState *state, XLogRecPtr ptr,
 			   char **errormsg);
 
+/*
+ * Functions that are currently only needed in the backend, but are better
+ * implemented inside xlogreader because the internal functions available
+ * there.
+ */
+#ifdef FRONTEND
+/*
+ * Find the address of the first record with a lsn >= RecPtr.
+ */
+extern XLogRecPtr XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr);
+
+#endif /* FRONTEND */
+
 #endif   /* XLOGREADER_H */
