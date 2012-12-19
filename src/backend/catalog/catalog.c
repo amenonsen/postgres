@@ -52,6 +52,8 @@
  * If you add a new entry, remember to update the errhint below, and the
  * documentation for pg_relation_size(). Also keep FORKNAMECHARS above
  * up-to-date.
+ *
+ * Also update contrib/pg_xlogdump/tables.c if you add something here.
  */
 const char *forkNames[] = {
 	"main",						/* MAIN_FORKNUM */

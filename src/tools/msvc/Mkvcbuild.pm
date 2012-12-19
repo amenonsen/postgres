@@ -41,7 +41,7 @@ my $contrib_extraincludes =
 my $contrib_extrasource = {
 	'cube' => [ 'cubescan.l', 'cubeparse.y' ],
 	'seg'  => [ 'segscan.l',  'segparse.y' ] };
-my @contrib_excludes = ('pgcrypto', 'intagg', 'sepgsql');
+my @contrib_excludes = ('intagg', 'pgcrypto', 'pg_xlogdump', 'sepgsql');
 
 sub mkvcbuild
 {
@@ -408,6 +408,20 @@ sub mkvcbuild
 	$zic->AddFiles('src\timezone', 'zic.c', 'ialloc.c', 'scheck.c',
 		'localtime.c');
 	$zic->AddReference($libpgport);
+
+	my $pgxlogdump = $solution->AddProject('pg_xlogdump', 'exe', 'contrib');
+	$pgxlogdump->{name} = 'pg_xlogdump';
+	$pgxlogdump->AddIncludeDir('src\backend');
+	$pgxlogdump->AddFiles('contrib\pg_xlogdump',
+		'compat.c', 'pg_xlogdump.c', 'tables.c');
+	$pgxlogdump->AddFile('src\backend\access\transam\xlogreader.c');
+	$pgxlogdump->AddFiles('src\backend\access\rmgrdesc',
+		'clogdesc.c', 'dbasedesc.c', 'gindesc.c', 'gistdesc.c', 'hashdesc.c',
+		'heapdesc.c', 'mxactdesc.c', 'nbtdesc.c', 'relmapdesc.c', 'seqdesc.c',
+		'smgrdesc.c', 'spgdesc.c', 'standbydesc.c', 'tblspcdesc.c',
+		'xactdesc.c', 'xlogdesc.c');
+	$pgxlogdump->AddReference($libpgport);
+	$pgxlogdump->AddDefine('FRONTEND');
 
 	if ($solution->{options}->{xml})
 	{
