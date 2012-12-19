@@ -227,11 +227,12 @@ XLogDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 
 	if (private->endptr != InvalidXLogRecPtr)
 	{
-		if (targetPagePtr > private->endptr)
-			return -1;
-
-		if (targetPagePtr + reqLen > private->endptr)
+		if (targetPagePtr + XLOG_BLCKSZ <= private->endptr)
+			count = XLOG_BLCKSZ;
+		else if (targetPagePtr + reqLen <= private->endptr)
 			count = private->endptr - targetPagePtr;
+		else
+			return -1;
 	}
 
 	XLogDumpXLogRead(private->inpath, private->timeline, targetPagePtr,
