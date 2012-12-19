@@ -30,7 +30,6 @@ typedef struct XLogDumpPrivateData
 {
 	TimeLineID	timeline;
 	char	   *inpath;
-	char	   *file;
 	XLogRecPtr	startptr;
 	XLogRecPtr	endptr;
 
@@ -58,6 +57,116 @@ static void fatal_error(const char *fmt, ...)
 	va_end(args);
 	fputc('\n', stderr);
 	exit(1);
+}
+
+/*
+ * Check whether directory exists and whether we can open it. Keep errno set
+ * error reporting by the caller.
+ */
+static bool
+verify_directory(const char *directory)
+{
+	int fd = open(directory, O_DIRECTORY|O_RDONLY);
+	if (fd < 0)
+		return false;
+	close(fd);
+	return true;
+}
+
+static void
+split_path(const char *path, char **dir, char **fname)
+{
+	char *sep;
+
+	/* split filepath into directory & filename */
+	sep = strrchr(path, '/');
+
+	/* directory path */
+	if (sep != NULL)
+	{
+		/* windows doesn't have strndup */
+		*dir = strdup(path);
+		(*dir)[(sep - path) + 1] = '\0';
+		*fname = strdup(sep + 1);
+		}
+	/* local directory */
+	else
+	{
+		*dir = NULL;
+		*fname = strdup(path);
+	}
+}
+
+/*
+ * Try to find the file in several places:
+ * if directory == NULL:
+ *   fname
+ *   XLOGDIR / fname
+ *   $DATADIR / XLOGDIR / fname
+ * else
+ *   directory / fname
+ *   directory / XLOGDIR / fname
+ */
+static int
+fuzzy_open_file(const char *directory, const char *fname)
+{
+	int fd = -1;
+	char fpath[MAXPGPATH];
+
+	if (directory == NULL)
+	{
+		const char* datadir;
+
+		/* fname */
+		fd = open(fname, O_RDONLY, 0);
+		if (fd < 0 && errno != ENOENT)
+			return -1;
+		else if (fd > 0)
+			return fd;
+
+		/* XLOGDIR / fname */
+		snprintf(fpath, MAXPGPATH, "%s/%s",
+				 XLOGDIR, fname);
+		fd = open(fpath, O_RDONLY, 0);
+		if (fd < 0 && errno != ENOENT)
+			return -1;
+		else if (fd > 0)
+			return fd;
+
+		datadir = getenv("DATADIR");
+		/* $DATADIR / XLOGDIR / fname */
+		if (datadir != NULL)
+		{
+			snprintf(fpath, MAXPGPATH, "%s/%s/%s",
+					 datadir, XLOGDIR, fname);
+			fd = open(fpath, O_RDONLY, 0);
+			if (fd < 0 && errno != ENOENT)
+				return -1;
+			else if (fd > 0)
+				return fd;
+		}
+	}
+	else
+	{
+		/* directory / fname */
+		snprintf(fpath, MAXPGPATH, "%s/%s",
+				 directory, fname);
+		fd = open(fpath, O_RDONLY, 0);
+		if (fd < 0 && errno != ENOENT)
+			return -1;
+		else if (fd > 0)
+			return fd;
+
+		/* directory / XLOGDIR / fname */
+		snprintf(fpath, MAXPGPATH, "%s/%s/%s",
+				 directory, XLOGDIR, fname);
+		fd = open(fpath, O_RDONLY, 0);
+		if (fd < 0 && errno != ENOENT)
+			return -1;
+		else if (fd > 0)
+			return fd;
+	}
+	return -1;
 }
 
 /* this should probably be put in a general implementation */
@@ -88,7 +197,6 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 		if (sendFile < 0 || !XLByteInSeg(recptr, sendSegNo))
 		{
 			char		fname[MAXFNAMELEN];
-			char		fpath[MAXPGPATH];
 
 			/* Switch to another logfile segment */
 			if (sendFile >= 0)
@@ -98,82 +206,11 @@ XLogDumpXLogRead(const char *directory, TimeLineID timeline_id,
 
 			XLogFileName(fname, timeline_id, sendSegNo);
 
-			/*
-			 * Try to find the file in several places:
-			 * if directory == NULL:
-			 *   fname
-			 *   XLOGDIR / fname
-			 *   $DATADIR / XLOGDIR / fname
-			 * else
-			 *   directory / fname
-			 *   directory / XLOGDIR / fname
-			 */
-			if (directory == NULL)
-			{
-				const char* datadir;
-
-				/* fname */
-				sendFile = open(fname, O_RDONLY, 0);
-				if (sendFile < 0 && errno != ENOENT)
-					goto file_not_found;
-				else if (sendFile > 0)
-					goto file_found;
-
-				/* XLOGDIR / fname */
-				snprintf(fpath, MAXPGPATH, "%s/%s",
-				         XLOGDIR, fname);
-				sendFile = open(fpath, O_RDONLY, 0);
-				if (sendFile < 0 && errno != ENOENT)
-					goto file_not_found;
-				else if (sendFile > 0)
-					goto file_found;
-
-				datadir = getenv("DATADIR");
-				/* $DATADIR / XLOGDIR / fname */
-				if (datadir != NULL)
-				{
-					snprintf(fpath, MAXPGPATH, "%s/%s/%s",
-					         datadir, XLOGDIR, fname);
-					sendFile = open(fpath, O_RDONLY, 0);
-					if (sendFile < 0 && errno != ENOENT)
-						goto file_not_found;
-					else if (sendFile > 0)
-						goto file_found;
-				}
-
-
-			}
-			else
-			{
-				/* directory / fname */
-				snprintf(fpath, MAXPGPATH, "%s/%s",
-				         directory, fname);
-				sendFile = open(fpath, O_RDONLY, 0);
-				if (sendFile < 0 && errno != ENOENT)
-					goto file_not_found;
-				else if (sendFile > 0)
-					goto file_found;
-
-				/* directory / XLOGDIR / fname */
-				snprintf(fpath, MAXPGPATH, "%s/%s/%s",
-				         directory, XLOGDIR, fname);
-				sendFile = open(fpath, O_RDONLY, 0);
-				if (sendFile < 0 && errno != ENOENT)
-					goto file_not_found;
-				else if (sendFile > 0)
-					goto file_found;
-			}
+			sendFile = fuzzy_open_file(directory, fname);
 
 			if (sendFile < 0)
-				goto file_not_found;
-			else
-				goto file_found;
-
-		file_not_found:
-			fatal_error("could not find file \"%s\": %s",
-			            fname, strerror(errno));
-
-		file_found:
+				fatal_error("could not find file \"%s\": %s",
+							fname, strerror(errno));
 			sendOff = 0;
 		}
 
@@ -360,11 +397,10 @@ usage(void)
 	printf("%s: reads/writes postgres transaction logs for debugging.\n\n",
 		   progname);
 	printf("Usage:\n");
-	printf("  %s [OPTION]...\n", progname);
+	printf("  %s [OPTION] [STARTSEG [ENDSEG]] \n", progname);
 	printf("\nOptions:\n");
 	printf("  -b, --bkp-details      output detailed information about backup blocks\n");
 	printf("  -e, --end RECPTR       read wal up to RECPTR\n");
-	printf("  -f, --file FILE        wal file to parse, cannot be specified together with -p\n");
 	printf("  -h, --help             show this help, then exit\n");
 	printf("  -n, --limit RECORDS    only display n records, abort afterwards\n");
 	printf("  -p, --path PATH        from where do we want to read? cwd/pg_xlog is the default\n");
@@ -389,7 +425,6 @@ main(int argc, char **argv)
 	static struct option long_options[] = {
 		{"bkp-details", no_argument, NULL, 'b'},
 		{"end", required_argument, NULL, 'e'},
-		{"file", required_argument, NULL, 'f'},
 		{"help", no_argument, NULL, '?'},
 		{"limit", required_argument, NULL, 'n'},
 		{"path", required_argument, NULL, 'p'},
@@ -423,7 +458,7 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 
-	while ((option = getopt_long(argc, argv, "be:f:?n:p:r:s:t:Vx:",
+	while ((option = getopt_long(argc, argv, "be:?n:p:r:s:t:Vx:",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
@@ -439,9 +474,6 @@ main(int argc, char **argv)
 					goto bad_argument;
 				}
 				private.endptr = (uint64)xlogid << 32 | xrecoff;
-				break;
-			case 'f':
-				private.file = strdup(optarg);
 				break;
 			case '?':
 				usage();
@@ -513,85 +545,119 @@ main(int argc, char **argv)
 		}
 	}
 
-	/* some parameter was badly specified, don't output further errors */
-	if (optind < argc)
+	if ((optind + 2) < argc)
 	{
 		fprintf(stderr,
 				"%s: too many command-line arguments (first is \"%s\")\n",
-				progname, argv[optind]);
+				progname, argv[optind + 2]);
 		goto bad_argument;
 	}
-	else if (private.inpath != NULL && private.file != NULL)
+
+	if (private.inpath != NULL)
 	{
-		fprintf(stderr,
-				"%s: only one of -p or -f can be specified\n",
-				progname);
-		goto bad_argument;
-	}
-	/* no file specified, but no range of of interesting data either */
-	else if (private.file == NULL && XLogRecPtrIsInvalid(private.startptr))
-	{
-		fprintf(stderr, "%s: no -s given in range mode.\n", progname);
-		goto bad_argument;
-	}
-	/* everything ok, do some more setup */
-	else
-	{
-		if (private.file != NULL)
+		/* validdate path points to directory */
+		if (!verify_directory(private.inpath))
 		{
-			XLogSegNo segno;
-			char *sep;
+			fprintf(stderr,
+					"%s: --path %s is cannot be opened: %s",
+					progname, private.inpath, strerror(errno));
+			goto bad_argument;
+		}
+	}
 
-			/* split filepath into directory & filename */
-			sep = strrchr(private.file, '/');
-			/* directory path */
-			if (sep != NULL)
-			{
-				/* windows doesn't have strndup */
-				private.inpath = strdup(private.file);
-				private.inpath[(sep - private.file) + 1] = '\0';
-				private.file = strdup(sep + 1);
-			}
-			/* local directory */
-			else
-			{
-				private.inpath = NULL;
-				private.file = strdup(private.file);
-			}
+	/* parse files as start/end boundaries, extract path if not specified */
+	if (optind < argc)
+	{
+		char *directory = NULL;
+		char *fname = NULL;
+		int fd;
+		XLogSegNo segno;
 
-			/* FIXME: can we rely on basename? */
-			XLogFromFileName(private.file, &private.timeline, &segno);
+		split_path(argv[optind], &directory, &fname);
 
-			if (XLogRecPtrIsInvalid(private.startptr))
-				XLogSegNoOffsetToRecPtr(segno, 0, private.startptr);
-			else if (!XLByteInSeg(private.startptr, segno))
-			{
-				fprintf(stderr,
-						"%s: --start %X/%X is not inside --file \"%s\"\n",
-						progname,
-						(uint32)(private.startptr >> 32),
-						(uint32)private.startptr,
-						private.file);
-				goto bad_argument;
-			}
+		if (private.inpath == NULL && directory != NULL)
+		{
+			private.inpath = directory;
 
-			if (XLogRecPtrIsInvalid(private.endptr))
-				XLogSegNoOffsetToRecPtr(segno + 1, 0, private.endptr);
-			else if (!XLByteInSeg(private.endptr, segno) &&
-					 private.endptr != (segno + 1) * XLogSegSize)
-			{
-				fprintf(stderr,
-						"%s: --end %X/%X is not inside --file \"%s\"\n",
-						progname,
-						(uint32)(private.endptr >> 32),
-						(uint32)private.endptr,
-						private.file);
-				goto bad_argument;
-			}
+			if (!verify_directory(private.inpath))
+				fatal_error("cannot open directory %s: %s",
+							private.inpath, strerror(errno));
 		}
 
-		/* XXX: validate directory */
+		fd = fuzzy_open_file(private.inpath, fname);
+		if (fd < 0)
+			fatal_error("could not open file %s", fname);
+		close(fd);
+
+		/* parse position from file */
+		XLogFromFileName(fname, &private.timeline, &segno);
+
+		if (XLogRecPtrIsInvalid(private.startptr))
+			XLogSegNoOffsetToRecPtr(segno, 0, private.startptr);
+		else if (!XLByteInSeg(private.startptr, segno))
+		{
+			fprintf(stderr,
+					"%s: --end %X/%X is not inside file \"%s\"\n",
+					progname,
+					(uint32)(private.startptr >> 32),
+					(uint32)private.startptr,
+					fname);
+			goto bad_argument;
+		}
+
+		/* no second file specified, set end position */
+		if (!(optind + 1 < argc) && XLogRecPtrIsInvalid(private.endptr))
+			XLogSegNoOffsetToRecPtr(segno + 1, 0, private.endptr);
+
+		/* parse ENDSEG if passed */
+		if (optind + 1 < argc)
+		{
+			XLogSegNo endsegno;
+
+			/* ignore directory, already have that */
+			split_path(argv[optind + 1], &directory, &fname);
+
+			fd = fuzzy_open_file(private.inpath, fname);
+			if (fd < 0)
+				fatal_error("could not open file %s", fname);
+			close(fd);
+
+			/* parse position from file */
+			XLogFromFileName(fname, &private.timeline, &endsegno);
+
+			if (endsegno < segno)
+				fatal_error("ENDSEG %s is before STARSEG %s",
+							argv[optind + 1], argv[optind]);
+
+			if (XLogRecPtrIsInvalid(private.endptr))
+				XLogSegNoOffsetToRecPtr(endsegno + 1, 0, private.endptr);
+
+			/* set segno to endsegno for check of --end */
+			segno = endsegno;
+		}
+
+
+		if (!XLByteInSeg(private.endptr, segno) &&
+			private.endptr != (segno + 1) * XLogSegSize)
+		{
+			fprintf(stderr,
+					"%s: --end %X/%X is not inside file \"%s\"\n",
+					progname,
+					(uint32)(private.endptr >> 32),
+					(uint32)private.endptr,
+					argv[argc -1]);
+			goto bad_argument;
+		}
 	}
+
+	/* we don't know what to print */
+	if (XLogRecPtrIsInvalid(private.startptr))
+	{
+		fprintf(stderr, "%s: no --start given in range mode.\n", progname);
+		goto bad_argument;
+	}
+
+	/* done with argument parsing, do the actual work */
 
 	/* we have everything we need, start reading */
 	xlogreader_state = XLogReaderAllocate(private.startptr,
@@ -615,7 +681,7 @@ main(int argc, char **argv)
 		printf("first record is after %X/%X, at %X/%X, skipping over %u bytes\n",
 			   (uint32) (private.startptr >> 32), (uint32) private.startptr,
 			   (uint32) (first_record >> 32), (uint32) first_record,
-			   (uint32) (first_record - private.endptr));
+			   (uint32) (first_record - private.startptr));
 
 	while ((record = XLogReadRecord(xlogreader_state, first_record, &errormsg)))
 	{
