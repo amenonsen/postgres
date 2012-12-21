@@ -42,6 +42,7 @@
 #include "postmaster/startup.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
+#include "replication/logical.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -5004,6 +5005,13 @@ StartupXLOG(void)
 	XLogCtl->ckptXidEpoch = checkPoint.nextXidEpoch;
 	XLogCtl->ckptXid = checkPoint.nextXid;
 
+
+	/*
+	 * Startup logical state, needs to be setup now so we have proper data
+	 * during restore. XXX
+	 */
+	StartupLogical(checkPoint.redo);
+
 	/*
 	 * We must replay WAL entries using the same TimeLineID they were created
 	 * under, so temporarily adopt the TLI indicated by the checkpoint (see
@@ -6884,6 +6892,7 @@ CheckPointGuts(XLogRecPtr checkPointRedo, int flags)
 	CheckPointPredicate();
 	CheckPointRelationMap();
 	CheckPointBuffers(flags);	/* performs all required fsyncs */
+	CheckPointLogical(checkPointRedo);
 	/* We deliberately delay 2PC checkpointing as long as possible */
 	CheckPointTwoPhase(checkPointRedo);
 }

@@ -49,6 +49,15 @@ typedef struct
 	LogicalDecodingSlot logical_slots[1];		/* VARIABLE LENGTH ARRAY */
 } LogicalDecodingCtlData;
 
+#define LOGICAL_MAGIC	0x1051CA1		/* format identifier */
+
+typedef struct
+{
+	uint32 magic;
+	TransactionId Lsn;
+	LogicalDecodingSlot slot;
+} LogicalDecodingCheckpointData;
+
 extern LogicalDecodingCtlData *LogicalDecodingCtl;
 
 extern LogicalDecodingSlot *MyLogicalDecodingSlot;
@@ -69,4 +78,7 @@ extern void IncreaseLogicalXminForSlot(XLogRecPtr lsn, TransactionId xmin);
 
 extern void CheckLogicalReplicationRequirements(void);
 
+extern void CheckPointLogical(XLogRecPtr checkPointRedo);
+
+extern void StartupLogical(XLogRecPtr checkPointRedo);
 #endif

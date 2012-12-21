@@ -801,6 +801,8 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 	/* Main loop of walsender */
 	WalSndLoop(XLogSendLogical);
 
+	LogicalDecodingReleaseSlot();
+
 	replication_active = false;
 	if (walsender_ready_to_stop)
 		proc_exit(0);

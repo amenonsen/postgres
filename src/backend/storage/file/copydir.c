@@ -38,9 +38,6 @@
 #endif
 
 
-static void fsync_fname(char *fname, bool isdir);
-
-
 /*
  * copydir: copy a directory
  *
@@ -226,7 +223,7 @@ copy_file(char *fromfile, char *tofile)
  * Try to fsync directories but ignore errors that indicate the OS
  * just doesn't allow/require fsyncing directories.
  */
-static void
+void
 fsync_fname(char *fname, bool isdir)
 {
 	int			fd;

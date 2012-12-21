@@ -14,12 +14,17 @@
 
 #include "postgres.h"
 
+#include <unistd.h>
+#include <sys/stat.h>
+
 #include "replication/logical.h"
 
 #include "miscadmin.h"
 #include "access/transam.h"
 #include "storage/ipc.h"
 #include "storage/procarray.h"
+#include "storage/fd.h"
+#include "storage/copydir.h"
 
 /* Control array for logical decoding */
 LogicalDecodingCtlData *LogicalDecodingCtl = NULL;
@@ -31,6 +36,13 @@ LogicalDecodingSlot *MyLogicalDecodingSlot = NULL;
 int			max_logical_slots = 0;	/* the maximum number of logical slots */
 
 static void LogicalSlotKill(int code, Datum arg);
+
+/* persistency functions */
+static void RestoreLogicalSlot(const char* name);
+static void CreateLogicalSlot(LogicalDecodingSlot *slot);
+static void SaveLogicalSlot(LogicalDecodingSlot *slot);
+static void SaveLogicalSlotInternal(LogicalDecodingSlot *slot, const char *path);
+
 
 /* Report shared-memory space needed by LogicalDecodingShmemInit */
 Size
@@ -239,6 +251,8 @@ void LogicalDecodingAcquireFreeSlot(const char *plugin)
 		NormalTransactionIdPrecedes(slot->xmin, LogicalDecodingCtl->xmin))
 		LogicalDecodingCtl->xmin = slot->xmin;
 	LWLockRelease(ProcArrayLock);
+
+	CreateLogicalSlot(slot);
 }
 
 /*
@@ -295,6 +309,8 @@ void LogicalDecodingReAcquireSlot(const char *name)
 
 	/* Arrange to clean up at exit */
 	on_shmem_exit(LogicalSlotKill, 0);
+
+	SaveLogicalSlot(slot);
 }
 
 void
@@ -313,4 +329,240 @@ LogicalDecodingReleaseSlot(void)
 	SpinLockRelease(&slot->mutex);
 
 	MyLogicalDecodingSlot = NULL;
+
+	SaveLogicalSlot(slot);
+}
+
+
+/* FIXME: better name */
+void
+CheckPointLogical(XLogRecPtr checkPointRedo)
+{
+	elog(LOG, "doing logical checkpoint to %X/%X",
+		 (uint32)(checkPointRedo >> 32), (uint32)checkPointRedo);
+}
+
+void
+StartupLogical(XLogRecPtr checkPointRedo)
+{
+	DIR		   *logical_dir;
+	struct dirent *logical_de;
+
+	elog(LOG, "doing logical startup from %X/%X",
+		 (uint32)(checkPointRedo >> 32), (uint32)checkPointRedo);
+
+	/* restore all slots */
+	logical_dir = AllocateDir("pg_llog");
+	while ((logical_de = ReadDir(logical_dir, "pg_llog")) != NULL)
+	{
+		if (strcmp(logical_de->d_name, ".") == 0 ||
+			strcmp(logical_de->d_name, "..") == 0)
+			continue;
+
+		/* one of our own directories */
+		if (strcmp(logical_de->d_name, "snapshots") == 0)
+			continue;
+
+		/* we crashed while a new slot was being setup, clean up */
+		if (strcmp(logical_de->d_name, "new") == 0)
+		{
+			if (!rmtree("pg_llog/new", true))
+			{
+				FreeDir(logical_dir);
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not remove directory \"pg_llog/new\": %m")));
+			}
+			continue;
+		}
+
+		RestoreLogicalSlot(logical_de->d_name);
+	}
+	FreeDir(logical_dir);
+
+	if (max_logical_slots <= 0)
+		return;
+
+	/* FIXME: should we up minRecoveryLSN? */
+
+	/* Now that we have recovered all the data, compute logical xmin */
+	ComputeLogicalXmin();
+}
+
+static void
+CreateLogicalSlot(LogicalDecodingSlot *slot)
+{
+	char tmppath[MAXPGPATH];
+	char path[MAXPGPATH];
+
+	sprintf(tmppath, "pg_llog/new");
+	sprintf(path, "pg_llog/%s", NameStr(slot->name));
+
+	if (mkdir(tmppath, S_IRWXU) < 0)
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not create directory \"%s\": %m",
+						tmppath)));
+
+	fsync_fname(tmppath, true);
+
+	SaveLogicalSlotInternal(slot, tmppath);
+
+	rename(tmppath, path);
+
+	fsync_fname(path, true);
+}
+
+static void
+SaveLogicalSlot(LogicalDecodingSlot *slot)
+{
+	char path[MAXPGPATH];
+	sprintf(path, "pg_llog/%s", NameStr(slot->name));
+	SaveLogicalSlotInternal(slot, path);
+}
+
+static void
+SaveLogicalSlotInternal(LogicalDecodingSlot *slot, const char *dir)
+{
+	char tmppath[MAXPGPATH];
+	char path[MAXPGPATH];
+	int fd;
+	LogicalDecodingCheckpointData cp;
+
+	sprintf(tmppath, "%s/state.tmp", dir);
+	sprintf(path, "%s/state", dir);
+
+	fd = OpenTransientFile(tmppath,
+						   O_CREAT | O_EXCL | O_WRONLY | PG_BINARY,
+						   S_IRUSR | S_IWUSR);
+	if (fd < 0)
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not create logical checkpoint file \"%s\": %m",
+						tmppath)));
+
+	cp.magic = LOGICAL_MAGIC;
+
+	SpinLockAcquire(&slot->mutex);
+
+	cp.slot.xmin = slot->xmin;
+	strcpy(NameStr(cp.slot.name), NameStr(slot->name));
+	strcpy(NameStr(cp.slot.plugin), NameStr(slot->plugin));
+
+	cp.slot.database = slot->database;
+	cp.slot.last_required_checkpoint = slot->last_required_checkpoint;
+	cp.slot.confirmed_flush = slot->confirmed_flush;
+	cp.slot.candidate_xmin = InvalidTransactionId;
+	cp.slot.candidate_xmin_after = InvalidXLogRecPtr;
+	cp.slot.in_use = slot->in_use;
+	cp.slot.active = false;
+
+	SpinLockRelease(&slot->mutex);
+
+	if ((write(fd, &cp, sizeof(cp))) != sizeof(cp))
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not write logical checkpoint file \"%s\": %m",
+						tmppath)));
+	}
+
+	/* fsync the file */
+	if (pg_fsync(fd) != 0)
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not fsync logical checkpoint \"%s\": %m",
+						tmppath)));
+	}
+
+	CloseTransientFile(fd);
+
+	/* fsync the new file, and the directory */
+	if (rename(tmppath, path) != 0)
+	{
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not rename logical checkpoint from \"%s\" to \"%s\": %m",
+						tmppath, path)));
+	}
+
+	fsync_fname(path, true);
+}
+
+static void
+RestoreLogicalSlot(const char* name)
+{
+	LogicalDecodingCheckpointData cp;
+	int i;
+	char path[MAXPGPATH];
+	int fd;
+	bool restored = false;
+
+	/* delete temp file if it exists */
+	sprintf(path, "pg_llog/%s/state.tmp", name);
+	if (unlink(name) < 0 && errno != ENOENT)
+		ereport(ERROR, (errmsg("failed while unlinking %s",  path)));
+
+	sprintf(path, "pg_llog/%s/state", name);
+
+	elog(LOG, "restoring logical slot at %s", path);
+
+	fd = OpenTransientFile(path, O_RDONLY | PG_BINARY, 0);
+
+	/*
+	 * We do not need to handle this as we are rename()ing the directory into
+	 * place only after we fsync()ed the state file.
+	 */
+	if (fd < 0)
+		ereport(ERROR, (errmsg("could not open state file %s",  path)));
+
+	if (read(fd, &cp, sizeof(cp)) != sizeof(cp))
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not read logical checkpoint file \"%s\": %m",
+						path)));
+	}
+
+	CloseTransientFile(fd);
+
+	if (cp.magic != LOGICAL_MAGIC)
+		ereport(ERROR, (errmsg("Logical checkpoint has wrong magic %u instead of %u",
+							   cp.magic, LOGICAL_MAGIC)));
+
+	/* nothing can be active yet, don't lock anything */
+	for (i = 0; i < max_logical_slots; i++)
+	{
+		LogicalDecodingSlot *slot;
+		slot = &LogicalDecodingCtl->logical_slots[i];
+
+		if (slot->in_use)
+			continue;
+
+		slot->xmin = cp.slot.xmin;
+		strcpy(NameStr(slot->name), NameStr(cp.slot.name));
+		strcpy(NameStr(slot->plugin), NameStr(cp.slot.plugin));
+		slot->database = cp.slot.database;
+		slot->last_required_checkpoint = cp.slot.last_required_checkpoint;
+		slot->confirmed_flush = cp.slot.confirmed_flush;
+		slot->candidate_xmin = InvalidTransactionId;
+		slot->candidate_xmin_after = InvalidXLogRecPtr;
+		slot->in_use = true;
+		slot->active = false;
+		restored = true;
+
+		/*
+		 * FIXME: Do some validation here.
+		 */
+		break;
+	}
+
+	if (!restored)
+		ereport(ERROR,
+				(errmsg("too many logical slots active before shutdown, increase max_logical_slots and try again")));
+}
 }
