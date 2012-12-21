@@ -23,6 +23,7 @@
 #include "access/relscan.h"
 #include "access/sdir.h"
 #include "access/xlog.h"
+#include "nodes/execnodes.h"
 #include "nodes/tidbitmap.h"
 #include "storage/lock.h"
 #include "storage/relfilenode.h"
@@ -749,8 +750,10 @@ extern void _bitmap_relbuf(Buffer buf);
 extern void _bitmap_wrtnorelbuf(Buffer buf);
 extern void _bitmap_init_vmipage(Buffer buf);
 extern void _bitmap_init_bitmappage(Buffer buf);
-extern void _bitmap_init_buildstate(Relation index, BMBuildState *bmstate);
-extern void _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate);
+extern void _bitmap_init_buildstate(Relation index, BMBuildState *bmstate,
+									IndexInfo *indexInfo);
+extern void _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate,
+									   IndexInfo *indexInfo);
 extern void _bitmap_init(Relation index, bool use_wal);
 
 /* bitmapinsert.c */
@@ -827,7 +830,8 @@ extern void _bitmap_open_lov_heapandindex(BMMetaPage metapage,
 						 Relation *lovHeapP, Relation *lovIndexP,
 						 LOCKMODE lockMode);
 extern void _bitmap_insert_lov(Relation lovHeap, Relation lovIndex,
-							   Datum *datum, bool *nulls, bool use_wal);
+							   Datum *datum, bool *nulls, bool use_wal,
+							   bool skip_index_insert);
 extern void _bitmap_close_lov_heapandindex(Relation lovHeap, 
 										Relation lovIndex, LOCKMODE lockMode);
 extern bool _bitmap_findvalue(Relation lovHeap, Relation lovIndex,

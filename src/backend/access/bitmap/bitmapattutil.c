@@ -194,7 +194,7 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 							   false,						/* deferrable */
 							   false,						/* initdeferred */
 							   true,						/* allow_system_table_mods */
-							   false,						/* skip_build */
+							   true,						/* skip_build */
 							   false);						/* concurrent */
 		
 	list_free(indexColNames);
@@ -264,8 +264,8 @@ _bitmap_open_lov_heapandindex(BMMetaPage metapage,
  * _bitmap_insert_lov() -- insert a new data into the given heap and index.
  */
 void
-_bitmap_insert_lov(Relation lovHeap, Relation lovIndex, Datum *datum, 
-				   bool *nulls, bool use_wal)
+_bitmap_insert_lov(Relation lovHeap, Relation lovIndex, Datum *datum,
+				   bool *nulls, bool use_wal, bool skip_index_insert)
 {
 	TupleDesc	tupDesc;
 	HeapTuple	tuple;
@@ -280,17 +280,20 @@ _bitmap_insert_lov(Relation lovHeap, Relation lovIndex, Datum *datum,
 	heap_insert(lovHeap, tuple, GetCurrentCommandId(true),
 				use_wal ? 0 : HEAP_INSERT_SKIP_WAL, NULL);
 
-	/* insert a new tuple into the index */
-	indexDatum = palloc0((tupDesc->natts - 2) * sizeof(Datum));
-	indexNulls = palloc0((tupDesc->natts - 2) * sizeof(bool));
-	memcpy(indexDatum, datum, (tupDesc->natts - 2) * sizeof(Datum));
-	memcpy(indexNulls, nulls, (tupDesc->natts - 2) * sizeof(bool));
-	result = index_insert(lovIndex, indexDatum, indexNulls, 
-					 	  &(tuple->t_self), lovHeap, true);
+	if (!skip_index_insert)
+	{
+		/* insert a new tuple into the index */
+		indexDatum = palloc0((tupDesc->natts - 2) * sizeof(Datum));
+		indexNulls = palloc0((tupDesc->natts - 2) * sizeof(bool));
+		memcpy(indexDatum, datum, (tupDesc->natts - 2) * sizeof(Datum));
+		memcpy(indexNulls, nulls, (tupDesc->natts - 2) * sizeof(bool));
+		result = index_insert(lovIndex, indexDatum, indexNulls,
+							  &(tuple->t_self), lovHeap, true);
 
-	pfree(indexDatum);
-	pfree(indexNulls);
-	Assert(result);
+		pfree(indexDatum);
+		pfree(indexNulls);
+		Assert(result);
+	}
 
 	heap_freetuple(tuple);
 }

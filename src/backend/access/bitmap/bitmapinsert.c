@@ -50,7 +50,8 @@ static Buffer get_lastbitmappagebuf(Relation rel, BMVectorMetaItem vmi);
 static void create_loventry(Relation rel, Buffer metabuf, uint64 tidnum,
 							TupleDesc tupDesc, Datum *attdata, bool *nulls,
 							Relation lovHeap, Relation lovIndex,
-							BMVMIID *vmiid, bool use_wal);
+							BMVMIID *vmiid, bool use_wal,
+							bool skip_index_insert);
 static void build_inserttuple(Relation index, uint64 tidnum,
     ItemPointerData ht_ctid,
     Datum *attdata, bool *nulls, BMBuildState *state);
@@ -1361,7 +1362,7 @@ static void
 create_loventry(Relation rel, Buffer metabuf, uint64 tidnum,
 				TupleDesc tupDesc, Datum *attdata, bool *nulls,
 				Relation lovHeap, Relation lovIndex, BMVMIID *vmiid,
-				bool use_wal)
+				bool use_wal, bool skip_index_insert)
 {
 	const int	numOfAttrs = tupDesc->natts;
 	Page		page;
@@ -1439,7 +1440,8 @@ create_loventry(Relation rel, Buffer metabuf, uint64 tidnum,
 	lovNulls[numOfAttrs + 1] = false;
 
 	/* Insert the in the LOV HEAP and the LOV btree index */
-	_bitmap_insert_lov(lovHeap, lovIndex, lovDatum, lovNulls, use_wal);
+	_bitmap_insert_lov(lovHeap, lovIndex, lovDatum, lovNulls, use_wal,
+					   skip_index_insert);
 
 	if (PageAddItem(vmiPage, (Item) vmi, itemSize, vmiid->offset,
 					false, false) == InvalidOffsetNumber)
@@ -2348,7 +2350,7 @@ build_inserttuple(Relation index, uint64 tidnum,
 				 */
 				create_loventry(index, metabuf, tidnum, tupDesc, attdata,
 								nulls, state->bm_lov_heap, state->bm_lov_index,
-								&vmiid, state->use_wal);
+								&vmiid, state->use_wal, true);
 
 				/*
 				 * Updates the information in the LOV heap entry about the block
@@ -2401,7 +2403,7 @@ build_inserttuple(Relation index, uint64 tidnum,
 				 */
 				create_loventry(index, metabuf, tidnum, tupDesc, attdata,
 								nulls, state->bm_lov_heap, state->bm_lov_index,
-								&vmiid, state->use_wal);
+								&vmiid, state->use_wal, false);
 			}
 		}
 	}
@@ -2484,7 +2486,7 @@ inserttuple(Relation rel, Buffer metabuf, uint64 tidnum,
 			 * lov heap and index.
 			 */
 			create_loventry(rel, metabuf, tidnum, tupDesc, attdata, nulls,
-							lovHeap, lovIndex, &vmiid, use_wal);
+							lovHeap, lovIndex, &vmiid, use_wal, false);
 		}
 		LockBuffer(metabuf, BUFFER_LOCK_UNLOCK);
 	}

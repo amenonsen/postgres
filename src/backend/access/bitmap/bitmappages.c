@@ -24,6 +24,7 @@
 #include "utils/syscache.h"
 #include "storage/bufmgr.h" /* for buffer manager functions */
 #include "utils/tqual.h" /* for SnapshotAny */
+#include "catalog/index.h"
 #include "catalog/pg_collation.h"
 
 /* 
@@ -42,6 +43,8 @@ typedef struct BMBuildHashData
 
 static BMBuildHashData *cur_bmbuild = NULL;
 
+static void _bitmap_build_lovindex(BMBuildState *bmstate,
+								   IndexInfo *indexInfo);
 static uint32 build_hash_key(const void *key, Size keysize);
 static int build_match_key(const void *key1, const void *key2, Size keysize);
 
@@ -139,7 +142,8 @@ _bitmap_init_bitmappage(Buffer buf)
  *	a bitmap index.
  */
 void
-_bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
+_bitmap_init_buildstate(Relation index, BMBuildState *bmstate,
+						IndexInfo *indexInfo)
 {
 	/* BitMap Index Meta Page (first page of the index) */
 	BMMetaPage	mp;
@@ -254,6 +258,10 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
 		 * search through the btree
 		 */
 		bmstate->vmi_hash = NULL;
+
+		/* so build the LOV index now, so it can be filled with every tuple */
+		_bitmap_build_lovindex(bmstate, indexInfo);
+
 		bmstate->bm_lov_scanKeys =
 			(ScanKey) palloc0(bmstate->bm_tupDesc->natts * sizeof(ScanKeyData));
 
@@ -319,7 +327,8 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate)
  *	inserting all rows in the heap into the bitmap index.
  */
 void
-_bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate)
+_bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate,
+						   IndexInfo *indexInfo)
 {
 	/* write out remaining tids in bmstate->bm_tidLocsBuffer */
 	BMTidBuildBuf *tidLocsBuffer = bmstate->bm_tidLocsBuffer;
@@ -346,6 +355,9 @@ _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate)
 		pfree(cur_bmbuild->eq_funcs);
 		pfree(cur_bmbuild);
 		cur_bmbuild = NULL;
+
+		/* now fire the deferred index build for the list of values */
+		_bitmap_build_lovindex(bmstate, indexInfo);
 	}
 	else
 	{
@@ -480,6 +492,21 @@ _bitmap_init(Relation index, bool use_wal)
 	_bitmap_wrtbuf(metabuf);
 
 	pfree(vmi); /* free the item from memory */
+}
+
+/*
+ * _bitmap_build_lovindex() -- index the tuples of the LOV for the first time
+ *
+ * For performance reasons we defer indexing of the LOV tuples when building a
+ * fresh bitmap index when possible.  This function allows to initiate the
+ * indexing separately from the creation of the index and insertion of the
+ * tuples.
+ */
+static void
+_bitmap_build_lovindex(BMBuildState *bmstate, IndexInfo *indexInfo)
+{
+	index_build(bmstate->bm_lov_heap, bmstate->bm_lov_index, indexInfo,
+				false, false);
 }
 
 /*

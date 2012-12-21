@@ -61,7 +61,7 @@ bmbuild(PG_FUNCTION_ARGS)
     _bitmap_init(index, XLogArchivingActive() && RelationNeedsWAL(index));
 
     /* Initialize the build state. */
-    _bitmap_init_buildstate(index, &bmstate);
+    _bitmap_init_buildstate(index, &bmstate, indexInfo);
 
     /*
      * Do the initial heap scan for the relation and calls the bmbuildCallback
@@ -77,7 +77,8 @@ bmbuild(PG_FUNCTION_ARGS)
     elog(NOTICE,"[bmbuild] IndexBuildHeapScan POST");
 #endif
 
-    _bitmap_cleanup_buildstate(index, &bmstate); /* clean up the build state */
+	/* clean up the build state */
+    _bitmap_cleanup_buildstate(index, &bmstate, indexInfo);
 
 	/*
 	 * fsync the relevant files to disk, unless we're building
