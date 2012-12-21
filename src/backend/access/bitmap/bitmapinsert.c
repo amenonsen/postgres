@@ -1593,8 +1593,8 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 		MemSet(buf->hwords, 0, BM_NUM_OF_HEADER_WORDS * sizeof(BM_WORD));
 
 		/* initialisation of HOT buffer data */
-		buf->hot_buffer_count=0;
-		buf->hot_buffer_last_offset=0;
+		buf->hot_buffer_count = 0;
+		buf->hot_buffer_last_tid = 0;
 		buf->hot_buffer_block=InvalidBlockNumber;
 		MemSet(buf->hot_buffer, 0, BM_SIZEOF_HOT_BUFFER * sizeof(BM_WORD));
 
@@ -1612,135 +1612,144 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 }
 
 /*
- * hot_buffer_flush()
+ * hot_buffer_flush() -- compress the contents of the HOT buffer into the the
+ * buffer words and write out data blocks when complete
  */
 static int16
-hot_buffer_flush(Relation rel, BMTIDBuffer *buf,
-				 BlockNumber vmi_block, OffsetNumber off,
-				 bool use_wal, bool merge_words)
+hot_buffer_flush(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
+				 OffsetNumber off, bool use_wal, bool merge_words)
 {
 	int			i;
 	int16		bytes_used = 0;
 
-#ifdef DEBUG_BMI
-	elog(NOTICE,"[hot_buffer_flush] BEGIN"
-		 "\n\tBM_SIZEOF_HOT_BUFFER = %d"
-		 "\n\thot_buffer_block = %04x"
-		 "\n\thot_buffer_count = %d",
-		 BM_SIZEOF_HOT_BUFFER,
-		 buf->hot_buffer_block,
-		 buf->hot_buffer_count);
-#endif
-
-#ifdef DEBUG_BMI
-	/* display buffer contents */
-
-	Assert(BM_WORD_SIZE == 16);
-	/* currently there's no need to be more general, and this is only
-	   for debug purposes */
-
-	for (i = 0 ; i < BM_SIZEOF_HOT_BUFFER ; i += 4)
+	for (i = 0; i < BM_SIZEOF_HOT_BUFFER; i++)
 	{
-		if (BM_SIZEOF_HOT_BUFFER - i >= 4)
-		{
-			elog(NOTICE,"[hot_buffer_flush] %02d-%02d : %04x %04x %04x %04x",
-				 i, i+3,
-				 buf->hot_buffer[i],
-				 buf->hot_buffer[i+1],
-				 buf->hot_buffer[i+2],
-				 buf->hot_buffer[i+3]);
-			;
-		}
-		else
-		{
-			if (BM_SIZEOF_HOT_BUFFER - i == 3)
-			{
-				elog(NOTICE,"[hot_buffer_flush] %02d-%02d : %04x %04x %04x",
-					 i, i+2,
-					 buf->hot_buffer[i],
-					 buf->hot_buffer[i+1],
-					 buf->hot_buffer[i+2]
-					);
-				;
-			}
-			else
-			{
-				elog(ERROR, "[hot_buffer_flush] INTERNAL ERROR: "
-					 "check out BM_SIZEOF_HOT_BUFFER");
-			}
-		}
-	}
-#endif
+		uint64	word_last_tid =
+			buf->hot_buffer_start_tid + (i + 1) * BM_WORD_SIZE - 1;
 
-	/* write the buffer to disk */
-	if (1)
-	{ /* only to declare variables here */
-		ItemPointerData _ctid ;
-		int				max_offset;
-		bool			merge_words = true;
-		ItemPointerSetBlockNumber(&_ctid, buf->hot_buffer_block);
-		for(i = 0; i < BM_SIZEOF_HOT_BUFFER; i++) {
-			max_offset = Min(buf->hot_buffer_last_offset, (i+1)*BM_WORD_SIZE);
-			ItemPointerSetOffsetNumber(&_ctid, max_offset);
-			buf->last_tid = BM_IPTR_TO_INT(&_ctid);
+		bytes_used -=
+			buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
 
-			/*
-			 * don't merge the very last word, and also don't loop any more
-			 */
-			if (buf->hot_buffer_last_offset <= (i+1) * BM_WORD_SIZE)
-				merge_words = false;
-
-#ifdef DEBUG_BMI
-			elog(NOTICE,"[hot_buffer_flush] CP0"
-				 "\n\tbuf->hot_buffer_last_offset = %d"
-				 "\n\ti = %d",
-				 buf->hot_buffer_last_offset, i);
-#endif
-			bytes_used -=
-				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
+		if (word_last_tid <= buf->hot_buffer_last_tid) {
 			switch (buf->hot_buffer[i])
 			{
 				case LITERAL_ALL_ONE:
 					buf->last_word = BM_MAKE_FILL_WORD(1,1);
-					if (merge_words) {
-#ifdef DEBUG_BMI
-						elog(NOTICE,"[hot_buffer_flush] CP1 merge_words");
-#endif
-						if (merge_words)
-							bytes_used += mergewords(buf, true);
-					}
+					buf->last_tid = word_last_tid;
+					bytes_used += mergewords(buf, true);
 					break;
 				case LITERAL_ALL_ZERO:
 					buf->last_word = BM_MAKE_FILL_WORD(0,1);
-					if (merge_words) {
-#ifdef DEBUG_BMI
-						elog(NOTICE, "[hot_buffer_flush] CP2 merge_words");
-#endif
-						if (merge_words)
-							bytes_used += mergewords(buf, true);
-					}
+					buf->last_tid = word_last_tid;
+					bytes_used += mergewords(buf, true);
 					break;
 				default:
 					buf->last_word = buf->hot_buffer[i];
-					if (merge_words) {
-#ifdef DEBUG_BMI
-						elog(NOTICE, "[hot_buffer_flush] CP3 merge_words");
-#endif
-						if (merge_words)
-							bytes_used += mergewords(buf, false);
-					}
+					buf->last_tid = word_last_tid;
+					bytes_used += mergewords(buf, false);
 			}
-			if (merge_words == false)
+
+			/*
+			 * If the HOT buffer ends exactly with the end of this word, reset
+			 * last_word and end the loop.
+			 */
+			if (word_last_tid == buf->hot_buffer_last_tid)
+			{
+				buf->last_word = 0;
 				break;
+			}
+		}
+		else
+		{
+			/*
+			 * The last HOT buffer word is incomplete.  Copy it to last word,
+			 * adapt last_tid counter and then we are done with this HOT
+			 * buffer.
+			 */
+			buf->last_word = buf->hot_buffer[i];
+			buf->last_tid = buf->hot_buffer_last_tid;
+			break;
 		}
 	}
 
 	/* reset the buffer */
-	for (i=0; i < BM_SIZEOF_HOT_BUFFER; i++)
-	{
-		buf->hot_buffer[i] = (BM_WORD) 0;
-	}
+	MemSet(buf->hot_buffer, 0, BM_SIZEOF_HOT_BUFFER * sizeof(BM_WORD));
 	buf->hot_buffer_count = 0;
+	buf->hot_buffer_last_tid = 0;
+
+	return bytes_used;
+}
+
+/*
+ * buf_add_fill() -- Append the given number of zeros to the end of the
+ * buffered vector.
+ */
+static int16
+buf_add_fill(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
+			 OffsetNumber off, uint64 zeros, bool use_wal)
+{
+	int16	bytes_used = 0;
+
+	if (zeros > 0)
+	{
+		uint64	zerosNeeded;
+		uint64	numOfTotalFillWords;
+
+		/*
+		 * Calculate how many bits are needed to fill up the existing last
+		 * bitmap word.
+		 */
+		if (buf->last_tid == 0)
+			zerosNeeded = BM_WORD_SIZE;
+		else
+			zerosNeeded =
+				BM_WORD_SIZE - ((buf->last_tid - 1) % BM_WORD_SIZE) - 1;
+
+		buf->last_tid += Min(zeros, zerosNeeded);
+
+		if (zerosNeeded > 0 && zeros >= zerosNeeded)
+		{
+			/*
+			 * The last bitmap word is complete now.  We merge it with the last
+			 * bitmap complete word.
+			 */
+			bytes_used -=
+				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
+
+			bytes_used += mergewords(buf, false);
+			zeros -= zerosNeeded;
+		}
+
+		/*
+		 * If the remaining zeros are more than BM_WORD_SIZE, we construct the
+		 * last bitmap word to be a fill word, and merge it with the last
+		 * complete bitmap word.
+		 */
+		numOfTotalFillWords = zeros / BM_WORD_SIZE;
+
+		while (numOfTotalFillWords > 0)
+		{
+			BM_WORD 	numOfFillWords;
+
+			if (numOfTotalFillWords >= MAX_FILL_LENGTH)
+				numOfFillWords = MAX_FILL_LENGTH;
+			else
+				numOfFillWords = numOfTotalFillWords;
+
+			buf->last_word = BM_MAKE_FILL_WORD(0, numOfFillWords);
+
+			bytes_used -=
+				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
+			bytes_used += mergewords(buf, true);
+
+			numOfTotalFillWords -= numOfFillWords;
+			zeros -= numOfFillWords * BM_WORD_SIZE;
+		}
+
+		buf->last_tid += zeros;
+	}
+
+	Assert((zeros >= 0) && (zeros < BM_WORD_SIZE));
 
 	return bytes_used;
 }
@@ -1753,61 +1762,83 @@ hot_buffer_flush(Relation rel, BMTIDBuffer *buf,
  * can be negative.
  */
 static int16
-buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf,
-			  BlockNumber vmi_block, OffsetNumber off,
-			  uint64 tidnum, bool use_wal)
+buf_add_tid_with_fill(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
+					  OffsetNumber off, uint64 tidnum, bool use_wal)
 {
 	int16			bytes_used = 0;
-	BlockNumber		_blockno   = BM_INT_GET_BLOCKNO(tidnum);
-	OffsetNumber	_offset	   = BM_INT_GET_OFFSET(tidnum);
-#ifdef DEBUG_BMI
-	static int		j		   = 0;
-#endif
-
-#ifdef DEBUG_BMI
-	if (j == 1000)
-	{
-		j = 0;
-		_debug_view_2(buf, "[buf_add_tid_with_fill] BEGIN");
-		elog(NOTICE, "[buf_add_tid_with_fill] BEGIN"
-			 "\n\ttidnum   == 0x%08llx"
-			 "\n\t_blockno == %08x"
-			 "\n\t_offset  == %04x",
-			 tidnum, _blockno,_offset);
-	}
-	else
-		j++;
-#endif
+	BlockNumber		blockno = BM_INT_GET_BLOCKNO(tidnum);
+	int				hot_buffer_bit_offset;
 
 	/* Checking if block number has changed */
-	if (_blockno != buf->hot_buffer_block)
+	if (blockno != buf->hot_buffer_block)
 	{
 		if (buf->hot_buffer_block != InvalidBlockNumber)
 		{
-			buf->hot_buffer_last_offset = BM_MAX_HTUP_PER_PAGE;
+			buf->hot_buffer_last_tid =
+				(buf->hot_buffer_block + 1) * BM_MAX_HTUP_PER_PAGE;
 			hot_buffer_flush(rel, buf, vmi_block, off, use_wal, true);
 		}
-#ifdef DEBUG_BMI
-		elog(NOTICE, "[buf_add_tid_with_fill] updating hot_buffer_block"
-			 "\n\thot_buffer_block == %08x"
-			 "\n\t_blockno == %08x",
-			 buf->hot_buffer_block, _blockno);
-#endif
-		buf->hot_buffer_block = _blockno;
+
+		/*
+		 * If there is a gap between the current and the previous block, fill
+		 * it with zeros.  As we assume that the last word is only merged if it
+		 * is complete, we must shorten the fill a bit in case it is not.
+		 */
+		if (blockno > 0)
+		{
+			if (buf->hot_buffer_block == InvalidBlockNumber)
+			{
+				uint64	gap_length = blockno * BM_MAX_HTUP_PER_PAGE;
+				uint64	last_word_length = gap_length % BM_WORD_SIZE;
+				uint64	fill_length = gap_length - last_word_length;
+
+				bytes_used += buf_add_fill(rel, buf, vmi_block, off,
+										   fill_length, use_wal);
+
+				buf->last_word = 0;
+				buf->last_tid = gap_length;
+			}
+			else if (blockno > (buf->hot_buffer_block + 1))
+			{
+				uint64	gap_blocks = blockno - (buf->hot_buffer_block + 1);
+				uint64	gap_length = gap_blocks * BM_MAX_HTUP_PER_PAGE;
+				uint64	new_last_tid = buf->last_tid + gap_length;
+				uint64	last_word_length = new_last_tid % BM_WORD_SIZE;
+				uint64	fill_length = gap_length - last_word_length;
+
+				bytes_used += buf_add_fill(rel, buf, vmi_block, off,
+										   fill_length, use_wal);
+
+				buf->last_word = 0;
+				buf->last_tid = new_last_tid;
+			}
+		}
+
+		/*
+		 * If the new block is a consecutive one, the old and the new HOT
+		 * buffer may overlap because of word alignment.  Therefore we need to
+		 * copy the last_word into the first word of the new HOT buffer.
+		 */
+		if ((buf->hot_buffer_block != InvalidBlockNumber) &&
+			(blockno == (buf->hot_buffer_block + 1)) &&
+			(buf->last_tid % BM_WORD_SIZE != 0))
+		{
+			buf->hot_buffer[0] = buf->last_word;
+		}
+
+		buf->hot_buffer_block = blockno;
+		buf->hot_buffer_start_tid =
+			(blockno * BM_MAX_HTUP_PER_PAGE) + 1 -
+			((blockno * BM_MAX_HTUP_PER_PAGE) % BM_WORD_SIZE);
 	}
 
 	/* setting the bit */
-	buf->hot_buffer[(_offset-1) / BM_WORD_SIZE] |=
-		(((unsigned char)1) << ((_offset-1) % BM_WORD_SIZE));
+	hot_buffer_bit_offset = tidnum - buf->hot_buffer_start_tid;
+	buf->hot_buffer[hot_buffer_bit_offset / BM_WORD_SIZE] |=
+		((BM_WORD) 1) << (hot_buffer_bit_offset % BM_WORD_SIZE);
 	buf->hot_buffer_count++;
-	if (buf->hot_buffer_last_offset < _offset)
-		buf->hot_buffer_last_offset = _offset;
-#ifdef DEBUG_BMI
-	elog(NOTICE, "[buf_add_tid_with_fill] setting bit in hot_buffer"
-		 "\n\t(_offset-1) / BM_WORD_SIZE == %d"
-		 "\n\t(_offset-1) %% BM_WORD_SIZE == %d",
-		 (_offset-1) / BM_WORD_SIZE, (_offset-1) % BM_WORD_SIZE);
-#endif
+	if (buf->hot_buffer_last_tid < tidnum)
+		buf->hot_buffer_last_tid = tidnum;
 
 	return bytes_used;
 }
@@ -1845,65 +1876,7 @@ buf_add_tid_with_fill_immediate(Relation rel, BMTIDBuffer *buf,
 	else
 		zeros = tidnum - buf->last_tid - 1;
 
-	if (zeros > 0)
-	{
-		uint64 zerosNeeded;
-		uint64 numOfTotalFillWords;
-
-		/*
-		 * Calculate how many bits are needed to fill up the existing last
-		 * bitmap word.
-		 */
-		if (buf->last_tid == 0)
-		{
-			zerosNeeded = BM_WORD_SIZE;
-			buf->last_tid = tidnum - tidnum % BM_WORD_SIZE;
-
-		} else
-			zerosNeeded =
-				BM_WORD_SIZE - ((buf->last_tid - 1) % BM_WORD_SIZE) - 1;
-
-		if (zerosNeeded > 0 && zeros >= zerosNeeded)
-		{
-			/*
-			 * The last bitmap word is complete now. We merge it with the
-			 * last bitmap complete word.
-			 */
-			bytes_used -=
-				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
-
-			bytes_used += mergewords(buf, false);
-			zeros -= zerosNeeded;
-		}
-
-		/*
-		 * If the remaining zeros are more than BM_WORD_SIZE,
-		 * We construct the last bitmap word to be a fill word, and merge it
-		 * with the last complete bitmap word.
-		 */
-		numOfTotalFillWords = zeros/BM_WORD_SIZE;
-
-		while (numOfTotalFillWords > 0)
-		{
-			BM_WORD 	numOfFillWords;
-
-			if (numOfTotalFillWords >= MAX_FILL_LENGTH)
-				numOfFillWords = MAX_FILL_LENGTH;
-			else
-				numOfFillWords = numOfTotalFillWords;
-
-			buf->last_word = BM_MAKE_FILL_WORD(0, numOfFillWords);
-
-			bytes_used -=
-				buf_ensure_head_space(rel, buf, vmi_block, off, use_wal);
-			bytes_used += mergewords(buf, true);
-
-			numOfTotalFillWords -= numOfFillWords;
-			zeros -= numOfFillWords * BM_WORD_SIZE;
-		}
-	}
-
-	Assert((zeros >= 0) && (zeros<BM_WORD_SIZE));
+	bytes_used += buf_add_fill(rel, buf, vmi_block, off, zeros, use_wal);
 
 	inserting_pos = (tidnum-1)%BM_WORD_SIZE;
 	buf->last_word |= (((BM_WORD)1) << inserting_pos);
@@ -2348,7 +2321,7 @@ build_inserttuple(Relation index, uint64 tidnum,
 				 * If the inserting tuple has a new value, then we create a new
 				 * LOV entry.
 				 */
-				create_loventry(index, metabuf, tidnum, tupDesc, attdata,
+				create_loventry(index, metabuf, 0, tupDesc, attdata,
 								nulls, state->bm_lov_heap, state->bm_lov_index,
 								&vmiid, state->use_wal, true);
 
@@ -2401,7 +2374,7 @@ build_inserttuple(Relation index, uint64 tidnum,
 				 * If the inserting tuple has a new value, then we create a new
 				 * LOV entry.
 				 */
-				create_loventry(index, metabuf, tidnum, tupDesc, attdata,
+				create_loventry(index, metabuf, 0, tupDesc, attdata,
 								nulls, state->bm_lov_heap, state->bm_lov_index,
 								&vmiid, state->use_wal, false);
 			}
@@ -2640,7 +2613,8 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg)
 		 "\n\tcwords = [ %04x %04x %04x %04x ... ]"
 		 "\n\thot_buffer_block = %08lx"
 		 "\n\thot_buffer_count = %d"
-		 "\n\thot_buffer_last_offset = %d",
+		 "\n\thot_buffer_start_tid = %08x:%04x"
+		 "\n\thot_buffer_last_tid = %08x:%04x",
 		 msg,
 		 x->last_compword,
 		 x->last_word,
@@ -2654,7 +2628,10 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg)
 		 x->cwords[0],x->cwords[1],x->cwords[2],x->cwords[3],
 		 (unsigned long)x->hot_buffer_block,
 		 x->hot_buffer_count,
-		 x->hot_buffer_last_offset);
+		 BM_INT_GET_BLOCKNO(x->hot_buffer_start_tid),
+		 BM_INT_GET_OFFSET(x->hot_buffer_start_tid),
+		 BM_INT_GET_BLOCKNO(x->hot_buffer_last_tid),
+		 BM_INT_GET_OFFSET(x->hot_buffer_last_tid));
 	Assert(BUF_INIT_WORDS==8);
 	for (i = 0; i < x->num_cwords; i += 8)
 	{

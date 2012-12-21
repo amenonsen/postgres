@@ -384,7 +384,7 @@ typedef struct BMTidBuildBuf
  * per-vector "hot_buffer".
  */
 
-#define BM_SIZEOF_HOT_BUFFER (BM_MAX_HTUP_PER_PAGE - 1) / BM_WORD_SIZE + 1
+#define BM_SIZEOF_HOT_BUFFER ((BM_MAX_HTUP_PER_PAGE - 1) / BM_WORD_SIZE + 2)
 
 typedef struct BMTIDBuffer
 {
@@ -408,11 +408,12 @@ typedef struct BMTIDBuffer
 	BM_WORD 	hwords[BM_NUM_OF_HEADER_WORDS];
 	BM_WORD    *cwords;
 
-  /* HOT tuples buffer */
-  BlockNumber hot_buffer_block;
-  BM_WORD hot_buffer[BM_SIZEOF_HOT_BUFFER];
-  int16 hot_buffer_count;
-  uint16 hot_buffer_last_offset;
+	/* HOT tuples buffer */
+	BlockNumber	hot_buffer_block;
+	BM_WORD		hot_buffer[BM_SIZEOF_HOT_BUFFER];
+	int16		hot_buffer_count;
+	uint64		hot_buffer_start_tid;
+	uint64		hot_buffer_last_tid;
 } BMTIDBuffer;
 
 /*
