@@ -758,7 +758,7 @@ main(int argc, char **argv)
 			/* Error message already written in GetConnection() */
 			exit(1);
 
-		snprintf(query, sizeof(query), "STOP_LOGICAL_REPLICATION '%s'",
+		snprintf(query, sizeof(query), "FREE_LOGICAL_REPLICATION '%s'",
 				 free_slot);
 		res = PQexec(conn, query);
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)

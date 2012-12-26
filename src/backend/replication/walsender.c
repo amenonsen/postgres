@@ -186,6 +186,7 @@ static void IdentifySystem(void);
 static void StartReplication(StartReplicationCmd *cmd);
 static void InitLogicalReplication(InitLogicalReplicationCmd *cmd);
 static void StartLogicalReplication(StartLogicalReplicationCmd *cmd);
+static void FreeLogicalReplication(FreeLogicalReplicationCmd *cmd);
 static void ProcessStandbyMessage(void);
 static void ProcessStandbyReplyMessage(void);
 static void ProcessStandbyHSFeedbackMessage(void);
@@ -813,6 +814,17 @@ StartLogicalReplication(StartLogicalReplicationCmd *cmd)
 }
 
 /*
+ * Free permanent state by a now inactive but defined logical slot.
+ */
+static void
+FreeLogicalReplication(FreeLogicalReplicationCmd *cmd)
+{
+	CheckLogicalReplicationRequirements();
+	LogicalDecodingFreeSlot(cmd->name);
+	EndCommand("FREE_LOGICAL_REPLICATION", DestRemote);
+}
+
+/*
  * Prepare a write into a StringInfo.
  *
  * Don't do anything lasting in here, its quite possible that nothing will done
@@ -1016,6 +1028,10 @@ exec_replication_command(const char *cmd_string)
 
 		case T_StartLogicalReplicationCmd:
 			StartLogicalReplication((StartLogicalReplicationCmd *) cmd_node);
+			break;
+
+		case T_FreeLogicalReplicationCmd:
+			FreeLogicalReplication((FreeLogicalReplicationCmd *) cmd_node);
 			break;
 
 		case T_BaseBackupCmd:
