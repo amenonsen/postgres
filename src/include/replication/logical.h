@@ -16,24 +16,53 @@
 
 typedef struct
 {
+	/* lock, on same cacheline as effective_xmin */
+	slock_t		mutex;
+
+	/* on-disk xmin, updated first */
 	TransactionId xmin;
 
-	NameData      name;
-	NameData      plugin;
-
-	Oid           database;
+	/* in-memory xmin, updated after syncing to disk */
+	TransactionId effective_xmin;
 
 	XLogRecPtr	  last_required_checkpoint;
-	XLogRecPtr	  confirmed_flush;
-
-	TransactionId candidate_xmin;
-	XLogRecPtr	  candidate_xmin_after;
 
 	/* is this slot defined */
 	bool          in_use;
+
 	/* is somebody streaming out changes for this slot */
 	bool          active;
-	slock_t		mutex;
+
+	/* have we been aborted while ->active */
+	bool          aborted;
+
+	/*
+	 * If we shutdown, crash, whatever where do we have to restart decoding
+	 * from to get
+	 * a) a valid snapshot
+	 * b) the complete content for all in-progress xacts
+	 */
+	XLogRecPtr	  restart_decoding;
+
+	/*
+	 * Last location we know the client has confirmed to have safely received
+	 * data to. No earlier data can be decoded after a restart/crash.
+	 */
+	XLogRecPtr	  confirmed_flush;
+
+	/*
+	 * When the client has confirmed flushes >= candidate_xmin_after we can
+	 * a) advance our xmin
+	 * b) increase restart_decoding_from
+	 *
+	 */
+	XLogRecPtr	  candidate_lsn;
+	TransactionId candidate_xmin;
+	XLogRecPtr	  candidate_restart_decoding;
+
+	Oid           database;
+	NameData      name;
+	NameData      plugin;
 } LogicalDecodingSlot;
 
 /* There is one WalSndCtl struct for the whole database cluster */
@@ -76,10 +105,26 @@ extern void ComputeLogicalXmin(void);
 
 /* change logical xmin */
 extern void IncreaseLogicalXminForSlot(XLogRecPtr lsn, TransactionId xmin);
+extern void LogicalConfirmReceivedLocation(XLogRecPtr lsn);
 
 extern void CheckLogicalReplicationRequirements(void);
 
 extern void CheckPointLogical(XLogRecPtr checkPointRedo);
 
 extern void StartupLogical(XLogRecPtr checkPointRedo);
+
+extern void logical_redo(XLogRecPtr lsn, XLogRecord *record);
+extern void logical_desc(StringInfo buf, uint8 xl_info, char *rec);
+
+typedef struct
+{
+	LogicalDecodingSlot slot;
+} xl_logical_slot;
+
+typedef struct
+{
+	TransactionId xmin;
+} xl_logical_xmin_changed;
+
+
 #endif

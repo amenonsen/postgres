@@ -89,6 +89,7 @@ LogicalDecodingShmemInit(void)
 				LogicalDecodingSlot *slot =
 					&LogicalDecodingCtl->logical_slots[i];
 				slot->xmin = InvalidTransactionId;
+				slot->effective_xmin = InvalidTransactionId;
 				SpinLockInit(&slot->mutex);
 			}
 		}
@@ -115,17 +116,87 @@ IncreaseLogicalXminForSlot(XLogRecPtr lsn, TransactionId xmin)
 	Assert(MyLogicalDecodingSlot != NULL);
 
 	SpinLockAcquire(&MyLogicalDecodingSlot->mutex);
+
 	/*
-	 * Only increase if the previous value has been applied...
+	 * Only increase if the previous values have been applied...
 	 */
-	if (!TransactionIdIsValid(MyLogicalDecodingSlot->candidate_xmin))
+	if (!MyLogicalDecodingSlot->candidate_lsn != InvalidXLogRecPtr)
 	{
-		MyLogicalDecodingSlot->candidate_xmin_after = lsn;
+		MyLogicalDecodingSlot->candidate_lsn = lsn;
 		MyLogicalDecodingSlot->candidate_xmin = xmin;
 		elog(LOG, "got new xmin %u at %X/%X", xmin,
 			 (uint32)(lsn >> 32), (uint32)lsn); /* FIXME: log level */
 	}
 	SpinLockRelease(&MyLogicalDecodingSlot->mutex);
+}
+
+void
+LogicalConfirmReceivedLocation(XLogRecPtr lsn)
+{
+	Assert(lsn != InvalidXLogRecPtr);
+
+	/* Do an unlocked check for candidate_lsn first.*/
+	if (MyLogicalDecodingSlot->candidate_lsn != InvalidXLogRecPtr)
+	{
+		bool updated_xmin = false;
+		bool updated_restart = false;
+
+		/* use volatile pointer to prevent code rearrangement */
+		volatile LogicalDecodingSlot *slot = MyLogicalDecodingSlot;
+
+		SpinLockAcquire(&slot->mutex);
+
+		/* if were past the location required for bumping xmin, do so */
+		if (slot->candidate_lsn != InvalidXLogRecPtr &&
+			slot->candidate_lsn < lsn)
+		{
+			/*
+			 * We have to write the changed xmin to disk *before* we change the
+			 * in-memory value, otherwise after a crash we wouldn't know that
+			 * some catalog tuples might have been removed already.
+			 *
+			 * Ensure that by first writing to ->xmin and only update
+			 * ->effective_xmin once the new state is fsynced to disk. After a
+			 * crash ->effective_xmin is set to ->xmin.
+			 */
+			if (slot->xmin != slot->candidate_xmin)
+			{
+				slot->xmin = slot->candidate_xmin;
+				updated_xmin = true;
+			}
+
+			if (slot->restart_decoding != slot->candidate_restart_decoding)
+			{
+				slot->restart_decoding = slot->candidate_restart_decoding;
+				updated_restart = true;
+			}
+
+			slot->candidate_lsn = InvalidXLogRecPtr;
+			slot->candidate_xmin = InvalidTransactionId;
+			slot->candidate_restart_decoding = InvalidXLogRecPtr;
+		}
+
+		SpinLockRelease(&slot->mutex);
+
+		/* first write new xmin to disk, so we know whats up after a crash */
+		if (updated_xmin || updated_restart)
+			/* cast away volatile, thats ok. */
+			SaveLogicalSlot((LogicalDecodingSlot *) slot);
+
+		/*
+		 * now the new xmin is safely on disk, we can let the global value
+		 * advance
+		 */
+		if (updated_xmin)
+		{
+			SpinLockAcquire(&slot->mutex);
+			slot->effective_xmin = slot->xmin;
+			SpinLockRelease(&slot->mutex);
+
+			ComputeLogicalXmin();
+		}
+	}
+
 }
 
 /*
@@ -149,12 +220,12 @@ ComputeLogicalXmin(void)
 
 		SpinLockAcquire(&slot->mutex);
 		if (slot->in_use &&
-			TransactionIdIsValid(slot->xmin) && (
+			TransactionIdIsValid(slot->effective_xmin) && (
 				!TransactionIdIsValid(xmin) ||
-				TransactionIdPrecedes(slot->xmin, xmin))
+				TransactionIdPrecedes(slot->effective_xmin, xmin))
 			)
 		{
-			xmin = slot->xmin;
+			xmin = slot->effective_xmin;
 		}
 		SpinLockRelease(&slot->mutex);
 	}
@@ -246,11 +317,12 @@ void LogicalDecodingAcquireFreeSlot(const char *plugin)
 	 * advance above walsnd->xmin.
 	 */
 	LWLockAcquire(ProcArrayLock, LW_SHARED);
-	slot->xmin = GetOldestXminNoLock(true, true);
+	slot->effective_xmin = GetOldestXminNoLock(true, true);
+	slot->xmin = slot->effective_xmin;
 
 	if (!TransactionIdIsValid(LogicalDecodingCtl->xmin) ||
-		NormalTransactionIdPrecedes(slot->xmin, LogicalDecodingCtl->xmin))
-		LogicalDecodingCtl->xmin = slot->xmin;
+		NormalTransactionIdPrecedes(slot->effective_xmin, LogicalDecodingCtl->xmin))
+		LogicalDecodingCtl->xmin = slot->effective_xmin;
 	LWLockRelease(ProcArrayLock);
 
 	CreateLogicalSlot(slot);
@@ -524,14 +596,18 @@ SaveLogicalSlotInternal(LogicalDecodingSlot *slot, const char *dir)
 	SpinLockAcquire(&slot->mutex);
 
 	cp.slot.xmin = slot->xmin;
+	cp.slot.effective_xmin = slot->effective_xmin;
+
 	strcpy(NameStr(cp.slot.name), NameStr(slot->name));
 	strcpy(NameStr(cp.slot.plugin), NameStr(slot->plugin));
 
 	cp.slot.database = slot->database;
 	cp.slot.last_required_checkpoint = slot->last_required_checkpoint;
 	cp.slot.confirmed_flush = slot->confirmed_flush;
+	cp.slot.restart_decoding = slot->restart_decoding;
+	cp.slot.candidate_lsn = InvalidXLogRecPtr;
 	cp.slot.candidate_xmin = InvalidTransactionId;
-	cp.slot.candidate_xmin_after = InvalidXLogRecPtr;
+	cp.slot.candidate_restart_decoding = InvalidXLogRecPtr;
 	cp.slot.in_use = slot->in_use;
 	cp.slot.active = false;
 
@@ -627,13 +703,17 @@ RestoreLogicalSlot(const char* name)
 			continue;
 
 		slot->xmin = cp.slot.xmin;
+		/* XXX: after a crash, always use xmin, not effective_xmin */
+		slot->effective_xmin = cp.slot.xmin;
 		strcpy(NameStr(slot->name), NameStr(cp.slot.name));
 		strcpy(NameStr(slot->plugin), NameStr(cp.slot.plugin));
 		slot->database = cp.slot.database;
 		slot->last_required_checkpoint = cp.slot.last_required_checkpoint;
+		slot->restart_decoding = cp.slot.restart_decoding;
 		slot->confirmed_flush = cp.slot.confirmed_flush;
+		slot->candidate_lsn = InvalidXLogRecPtr;
 		slot->candidate_xmin = InvalidTransactionId;
-		slot->candidate_xmin_after = InvalidXLogRecPtr;
+		slot->candidate_restart_decoding = InvalidXLogRecPtr;
 		slot->in_use = true;
 		slot->active = false;
 		restored = true;

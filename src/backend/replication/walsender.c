@@ -1238,34 +1238,8 @@ ProcessStandbyReplyMessage(void)
 	/*
 	 * Advance our local xmin horizon when the client confirmed a flush.
 	 */
-	/* Do an unlocked check for candidate_xmin first.*/
-	if (MyLogicalDecodingSlot &&
-		TransactionIdIsValid(MyLogicalDecodingSlot->candidate_xmin))
-	{
-		bool updated_xmin = false;
-
-		/* use volatile pointer to prevent code rearrangement */
-		volatile LogicalDecodingSlot *slot = MyLogicalDecodingSlot;
-
-		SpinLockAcquire(&slot->mutex);
-
-		/* if were past the location required for bumping xmin, do so */
-		if (TransactionIdIsValid(slot->candidate_xmin) &&
-			flushPtr != InvalidXLogRecPtr &&
-			flushPtr > slot->candidate_xmin_after
-			)
-		{
-			slot->xmin = slot->candidate_xmin;
-			slot->candidate_xmin = InvalidTransactionId;
-			slot->candidate_xmin_after = InvalidXLogRecPtr;
-			updated_xmin = true;
-		}
-
-		SpinLockRelease(&slot->mutex);
-
-		if (updated_xmin)
-			ComputeLogicalXmin();
-	}
+	if (MyLogicalDecodingSlot && flushPtr != InvalidXLogRecPtr)
+		LogicalConfirmReceivedLocation(flushPtr);
 
 	if (!am_cascading_walsender)
 		SyncRepReleaseWaiters();
