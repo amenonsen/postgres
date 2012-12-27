@@ -64,6 +64,10 @@
 
 #include "postgres.h"
 
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #include "access/heapam_xlog.h"
 #include "access/rmgr.h"
 #include "access/transam.h"
@@ -93,6 +97,8 @@
 #include "utils/tqual.h"
 
 #include "storage/block.h" /* debugging output */
+#include "storage/copydir.h" /* fsync_fname */
+#include "storage/fd.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/standby.h"
@@ -122,6 +128,11 @@ static void	SnapBuildFreeSnapshot(Snapshot snap);
 static void SnapBuildSnapIncRefcount(Snapshot snap);
 
 static void SnapBuildDistributeSnapshotNow(Snapstate *snapstate, ReorderBuffer *reorder, XLogRecPtr lsn);
+
+/* on disk stuff */
+static bool SnapBuildRestore(Snapstate *state, XLogRecPtr lsn);
+static void SnapBuildSerialize(Snapstate *state, XLogRecPtr lsn);
+
 
 /*
  * Lookup a table via its current relfilenode.
@@ -598,10 +609,10 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 		 * Build snapshot incrementally using information about the currently
 		 * running transactions. As soon as all of those have finished
 		 */
-		if (r->xl_rmid == RM_STANDBY_ID &&
-			info == XLOG_RUNNING_XACTS)
+		if (r->xl_rmid == RM_STANDBY_ID && info == XLOG_RUNNING_XACTS)
 		{
 			xl_running_xacts *running = (xl_running_xacts *) buf->record_data;
+
 
 			if (TransactionIdIsNormal(snapstate->initial_xmin_horizon) &&
 				NormalTransactionIdPrecedes(running->oldestRunningXid, snapstate->initial_xmin_horizon))
@@ -638,6 +649,13 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 
 				elog(LOG, "found initial snapshot (xmin %u) due to running xacts with xcnt == 0",
 					 snapstate->xmin);
+				return SNAPBUILD_DECODE;
+			}
+			/* valid on disk state */
+			else if (SnapBuildRestore(snapstate, buf->origptr))
+			{
+				Assert(snapstate->state == SNAPBUILD_CONSISTENT);
+				return SNAPBUILD_DECODE;
 			}
 			/* first encounter of a xl_running_xacts record */
 			else if (!snapstate->running.xcnt)
@@ -681,11 +699,6 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 				elog(LOG, "found initial snapshot (xmin %u) due to running xacts, %u xacts need to finish",
 					 snapstate->xmin, (uint32)snapstate->running.xcnt);
 			}
-		}
-		else if (r->xl_rmid == RM_XLOG_ID &&
-				 (info == XLOG_CHECKPOINT_SHUTDOWN || info == XLOG_CHECKPOINT_ONLINE))
-		{
-			/* FIXME: Check whether there is a valid state dumped to disk */
 		}
 	}
 
@@ -737,6 +750,9 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 							xl_running_xacts *running =
 								(xl_running_xacts *) buf->record_data;
 
+							if (snapstate->state == SNAPBUILD_CONSISTENT)
+								SnapBuildSerialize(snapstate, buf->origptr);
+
 							/*
 							 * update range of interesting xids. We don't
 							 * increase ->xmax because once we are in a
@@ -772,7 +788,8 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 							  */
 							 IncreaseLogicalXminForSlot(buf->origptr,
 														running->oldestRunningXid);
-							break;
+
+							 break;
 						}
 					case XLOG_STANDBY_LOCK:
 						break;
@@ -1121,9 +1138,9 @@ SnapBuildAddCommittedTxn(Snapstate *snapstate, TransactionId xid)
 
 	if (snapstate->committed.xcnt == snapstate->committed.xcnt_space)
 	{
-		snapstate->committed.xcnt_space *= 2;
+		snapstate->committed.xcnt_space = snapstate->committed.xcnt_space * 2 + 1;
 
-		elog(WARNING, "increasing space for committed transactions to " INT64_FORMAT,
+		elog(WARNING, "increasing space for committed transactions to %zu",
 			 snapstate->committed.xcnt_space);
 
 		snapstate->committed.xip = repalloc(snapstate->committed.xip,
@@ -1343,4 +1360,265 @@ SnapBuildCommitTxn(Snapstate *snapstate, ReorderBuffer *reorder,
 		/* record that we cannot export a general snapshot anymore */
 		snapstate->committed.includes_all_transactions = false;
 	}
+}
+
+
+#define SNAPSTATE_MAGIC 0x51A1E001
+
+/*
+ * We store snapstates on disk in the following manner:
+ *
+ * struct Snapstate;
+ * TransactionId * running.xcnt_space;
+ * TransactionId * committed.xcnt; (*not xcnt_space*)
+ *
+ */
+typedef struct SnapstateOnDisk
+{
+	uint32 magic;
+	Size size;
+	Snapstate state;
+	/* variable amount of TransactionId's */
+} SnapstateOnDisk;
+
+/*
+ * Serialize the snapshot represented by 'state' at the location 'lsn' if it
+ * hasn't already been done by another decoding process.
+ */
+static void
+SnapBuildSerialize(Snapstate *state, XLogRecPtr lsn)
+{
+	Size needed_size =
+		sizeof(SnapstateOnDisk) +
+		sizeof(TransactionId) * state->running.xcnt_space +
+		sizeof(TransactionId) * state->committed.xcnt;
+
+	SnapstateOnDisk *ondisk;
+	char *ondisk_c;
+	int fd;
+	char tmppath[MAXPGPATH];
+	char path[MAXPGPATH];
+	int ret;
+	struct stat stat_buf;
+
+	/*
+	 * FIXME: Timeline handling
+	 */
+
+	/*
+	 * first check whether some other backend already has written the snapshot
+	 * for this LSN
+	 */
+	sprintf(path, "pg_llog/snapshots/%X-%X.snap",
+	        (uint32)(lsn >> 32), (uint32)lsn);
+
+	ret = stat(path, &stat_buf);
+
+	if (ret != 0 && errno != ENOENT)
+		ereport(ERROR, (errmsg("could not stat snapbuild state file %s", path)));
+	else if (ret == 0)
+		return;
+
+	elog(LOG, "serializing snapshot to %s", path);
+
+	sprintf(tmppath, "pg_llog/snapshots/%X-%X.snap.%u.tmp",
+	        (uint32)(lsn >> 32), (uint32)lsn, getpid());
+
+	if (unlink(tmppath) != 0 && errno != ENOENT)
+		ereport(ERROR, (errmsg("could not unlink old file %s", path)));
+
+	ondisk = MemoryContextAlloc(state->context, needed_size);
+	ondisk_c = ((char *) ondisk) + sizeof(SnapstateOnDisk);
+	ondisk->magic = SNAPSTATE_MAGIC;
+	ondisk->size = needed_size;
+
+	/* copy state */
+	ondisk->state = *state;
+
+	/* NULL-ify memory-only data */
+	ondisk->state.context = NULL;
+	ondisk->state.snapshot = NULL;
+
+	/* copy running xacts */
+	memcpy(ondisk_c, state->running.xip,
+	       sizeof(TransactionId) * state->running.xcnt_space);
+	ondisk_c += sizeof(TransactionId) * state->running.xcnt_space;
+
+	/* copy  committed xacts */
+	memcpy(ondisk_c, state->committed.xip,
+	       sizeof(TransactionId) * state->committed.xcnt);
+	ondisk_c += sizeof(TransactionId) * state->committed.xcnt;
+
+	/* we have valid data now, open tempfile and write it there */
+	/* FIXME: locking! */
+
+	fd = OpenTransientFile(tmppath,
+						   O_CREAT | O_EXCL | O_WRONLY | PG_BINARY,
+						   S_IRUSR | S_IWUSR);
+	if (fd < 0)
+		ereport(ERROR, (errmsg("could not open snapbuild state file %s for writing",  path)));
+
+	if ((write(fd, ondisk, needed_size)) != needed_size)
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not write to snapbuild state file \"%s\": %m",
+						tmppath)));
+	}
+
+	/*
+	 * XXX: Do the fsync() via checkpoints/restartpoints
+	 */
+	if (pg_fsync(fd) != 0)
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not fsync snapbuild state file \"%s\": %m",
+						tmppath)));
+	}
+
+	CloseTransientFile(fd);
+
+	/*
+	 * We may overwrite the work from some other backend, but that's ok, our
+	 * snapshot is valid as well.
+	 */
+	if (rename(tmppath, path) != 0)
+	{
+		ereport(PANIC,
+				(errcode_for_file_access(),
+				 errmsg("could not rename snapbuild state file from \"%s\" to \"%s\": %m",
+						tmppath, path)));
+	}
+	/* make sure we persist */
+	fsync_fname(path, false);
+	fsync_fname("pg_llog/snapshots", true);
+}
+
+/*
+ * Restore a snapshot into 'state' if previously one has been stored at the
+ * location indicated by 'lsn'. Returns true if successfull, false otherwise.
+ */
+static bool
+SnapBuildRestore(Snapstate *state, XLogRecPtr lsn)
+{
+	SnapstateOnDisk ondisk;
+	int fd;
+	char path[MAXPGPATH];
+	Size sz;
+
+	sprintf(path, "pg_llog/snapshots/%X-%X.snap",
+	        (uint32)(lsn >> 32), (uint32)lsn);
+
+	fd = OpenTransientFile(path, O_RDONLY | PG_BINARY, 0);
+
+	elog(LOG, "restoring snapbuild state from %s", path);
+
+	if (fd < 0 && errno == ENOENT)
+		return false;
+	else if (fd < 0)
+		ereport(ERROR, (errmsg("could not open snapbuild state file %s", path)));
+
+	elog(LOG, "really restoring from %s", path);
+
+	/* read statically sized portion of snapshot */
+	if (read(fd, &ondisk, sizeof(ondisk)) != sizeof(ondisk))
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not read snapbuild file \"%s\": %m",
+						path)));
+	}
+
+	if (ondisk.magic != SNAPSTATE_MAGIC)
+		ereport(ERROR, (errmsg("snapbuild state file has wrong magic %u instead of %u",
+							   ondisk.magic, SNAPSTATE_MAGIC)));
+
+	/* restore running xact information */
+	sz = sizeof(TransactionId) * ondisk.state.running.xcnt_space;
+	ondisk.state.running.xip = MemoryContextAlloc(state->context, sz);
+	if (read(fd, ondisk.state.running.xip, sz) != sz)
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not read running xacts from snapbuild file \"%s\": %m",
+						path)));
+	}
+
+	/* restore running xact information */
+	sz = sizeof(TransactionId) * ondisk.state.committed.xcnt;
+	ondisk.state.committed.xip = MemoryContextAlloc(state->context, sz);
+	if (read(fd, ondisk.state.committed.xip, sz) != sz)
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not read committed xacts from snapbuild file \"%s\": %m",
+						path)));
+	}
+
+	CloseTransientFile(fd);
+
+	/*
+	 * ok, we now have a sensible snapshot here, figure out if it has more
+	 * information than we have.
+	 *
+	 * We are only interested in consistent snapshots for now, comparing
+	 * whether one imcomplete snapshot is more "advanced" seems to be
+	 * unnecessarily complex.
+	 */
+	if (ondisk.state.state < SNAPBUILD_CONSISTENT)
+		goto snapshot_not_interesting;
+
+	/*
+	 * Don't use a snapshot that requires an xmin that we cannot guarantee to
+	 * be available.
+	 */
+	if (TransactionIdPrecedes(ondisk.state.xmin, state->initial_xmin_horizon))
+		goto snapshot_not_interesting;
+
+	/* XXX: transactions_after needs to be updated differently, to be checked here */
+
+	/* ok, we think the snapshot is sensible, copy over everything important */
+	state->xmin = ondisk.state.xmin;
+	state->xmax = ondisk.state.xmax;
+	state->state = ondisk.state.state;
+
+	state->committed.xcnt = ondisk.state.committed.xcnt;
+	/* We only allocated/stored xcnt, not xcnt_space xids !*/
+	/* don't overwrite preallocated xip, if we don't have anything here */
+	if (state->committed.xcnt > 0)
+	{
+		pfree(state->committed.xip);
+		state->committed.xcnt_space = ondisk.state.committed.xcnt;
+		state->committed.xip = ondisk.state.committed.xip;
+	}
+	ondisk.state.committed.xip = NULL;
+
+	state->running.xcnt = ondisk.state.committed.xcnt;
+	if (state->running.xip)
+		pfree(state->running.xip);
+	state->running.xcnt_space = ondisk.state.committed.xcnt_space;
+	state->running.xip = ondisk.state.running.xip;
+
+	/*  our snapshot is not interesting anymore, build a new one */
+	if (state->snapshot != NULL)
+	{
+		SnapBuildSnapDecRefcount(state->snapshot);
+	}
+	state->snapshot = SnapBuildBuildSnapshot(state, InvalidTransactionId);
+	SnapBuildSnapIncRefcount(state->snapshot);
+
+	return true;
+
+snapshot_not_interesting:
+	if (ondisk.state.running.xip != NULL)
+		pfree(ondisk.state.running.xip);
+	if (ondisk.state.committed.xip != NULL)
+		pfree(ondisk.state.committed.xip);
+	return false;
 }

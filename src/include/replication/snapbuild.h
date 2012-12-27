@@ -64,6 +64,26 @@ typedef struct Snapstate
 	TransactionId xmax;
 
 	/*
+	 * Don't replay commits from an LSN <= this LSN. This can be set externally
+	 * but it will also be advanced (never reatreat) from within snapbuild.c.
+	 */
+	XLogRecPtr transactions_after;
+
+	/*
+	 * Don't start decoding WAL until the "xl_running_xacts" information
+	 * indicates there are no running xids with a xid smaller than this.
+	 */
+	TransactionId initial_xmin_horizon;
+
+	/*
+	 * Snapshot thats valid to see all currently committed transactions that
+	 * see catalog modifications.
+	 */
+	Snapshot snapshot;
+
+	/* variable length data */
+
+	/*
 	 * Information about initially running transactions
 	 *
 	 * When we start building a snapshot there already may be transactions in
@@ -107,16 +127,9 @@ typedef struct Snapstate
 	{
 		/* number of committed transactions */
 		size_t		xcnt;
+
 		/* available space for committed transactions */
 		size_t		xcnt_space;
-		/*
-		 * Array of committed transactions that have modified the catalog.
-		 *
-		 * As this array is frequently modified we do *not* keep it in
-		 * xidComparator order. Instead we sort the array when building &
-		 * distributing a snapshot.
-		 */
-		TransactionId *xip;
 
 		/*
 		 * Until we reach a CONSISTENT state, we record commits of all
@@ -124,26 +137,23 @@ typedef struct Snapstate
 		 * changes so we know we cannot export a snapshot safely anymore.
 		 */
 		bool includes_all_transactions;
+
+		/*
+		 * Array of committed transactions that have modified the catalog.
+		 *
+		 * As this array is frequently modified we do *not* keep it in
+		 * xidComparator order. Instead we sort the array when building &
+		 * distributing a snapshot.
+		 *
+		 * XXX: That doesn't seem to be good reasoning anymore. Everytime we
+		 * add something here after becoming consistent will also require
+		 * distributing a snapshot. Storing them sorted would potentially make
+		 * it easier to purge as well (but more complicated wrt wraparound?).
+		 */
+		TransactionId *xip;
 	} committed;
 
-	/*
-	 * Don't replay commits from an LSN <= this LSN. This can be set externally
-	 * but it will also be advanced (never reatreat) from within snapbuild.c.
-	 */
-	XLogRecPtr transactions_after;
-
-	/*
-	 * Don't start decoding WAL until the "xl_running_xacts" information
-	 * indicates there are no running xids with a xid smaller than this.
-	 */
-	TransactionId initial_xmin_horizon;
-
-	/*
-	 * Snapshot thats valid to see all currently committed transactions that
-	 * see catalog modifications.
-	 */
-	Snapshot snapshot;
-}	Snapstate;
+} Snapstate;
 
 extern Snapstate *AllocateSnapshotBuilder(ReorderBuffer *cache);
 
