@@ -298,6 +298,7 @@ void LogicalDecodingAcquireFreeSlot(const char *plugin)
 	/* Arrange to clean up at exit/error */
 	on_shmem_exit(LogicalSlotKill, 0);
 
+	/* XXX: conflict free algorithm! */
 	slot_name = NameStr(slot->name);
 	sprintf(slot_name, "id-%d-%d", MyDatabaseId, i);
 
