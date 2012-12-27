@@ -107,9 +107,9 @@ typedef struct ReorderBufferTXN
 	bool does_timetravel;
 
 	/*
-	 * Did we already get passed a base snapshot?
+	 * Base snapshot or NULL.
 	 */
-	bool has_base_snapshot;
+	Snapshot base_snapshot;
 
 	/*
 	 * Do we know this is a subxact?
@@ -273,7 +273,8 @@ void ReorderBufferAssignChild(ReorderBuffer *, TransactionId, TransactionId, XLo
 void ReorderBufferCommitChild(ReorderBuffer *, TransactionId, TransactionId, XLogRecPtr lsn);
 void ReorderBufferAbort(ReorderBuffer *, TransactionId, XLogRecPtr lsn);
 
-void ReorderBufferAddBaseSnapshot(ReorderBuffer *, TransactionId, XLogRecPtr lsn, struct SnapshotData *snap);
+void ReorderBufferSetBaseSnapshot(ReorderBuffer *, TransactionId, XLogRecPtr lsn, struct SnapshotData *snap);
+void ReorderBufferAddSnapshot(ReorderBuffer *, TransactionId, XLogRecPtr lsn, struct SnapshotData *snap);
 void ReorderBufferAddNewCommandId(ReorderBuffer *, TransactionId, XLogRecPtr lsn,
 								  CommandId cid);
 void ReorderBufferAddNewTupleCids(ReorderBuffer *, TransactionId, XLogRecPtr lsn,
