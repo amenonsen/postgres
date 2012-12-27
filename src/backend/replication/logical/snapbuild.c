@@ -821,7 +821,7 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 								 * modified the catalog. We need this at commit
 								 * time.
 								 */
-								ReorderBufferXidSetTimetravel(reorder, xid);
+								ReorderBufferXidSetTimetravel(reorder, xid, buf->origptr);
 
 							}
 
@@ -912,7 +912,7 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 							 * inplace records happen in catalog modifying
 							 * txn's
 							 */
-							ReorderBufferXidSetTimetravel(reorder, xid);
+							ReorderBufferXidSetTimetravel(reorder, xid, buf->origptr);
 
 							break;
 						}
@@ -987,7 +987,7 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 								 xlrec->cmin, xlrec->cmax, xlrec->combocid);
 #endif
 							/* we only log new_cid's if a catalog tuple was modified */
-							ReorderBufferXidSetTimetravel(reorder, xid);
+							ReorderBufferXidSetTimetravel(reorder, xid, buf->origptr);
 
 							if (!ReorderBufferXidHasBaseSnapshot(reorder, xid))
 							{

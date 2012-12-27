@@ -112,6 +112,11 @@ typedef struct ReorderBufferTXN
 	bool has_base_snapshot;
 
 	/*
+	 * Do we know this is a subxact?
+	 */
+	bool is_known_as_subxact;
+
+	/*
 	 * How many ReorderBufferChange's do we have in this txn.
 	 *
 	 * Changes in subtransactions are *not* included but tracked separately.
@@ -155,8 +160,10 @@ typedef struct ReorderBufferTXN
 	Size nsubtxns;
 
 	/*
-	 * our position in a list of subtransactions while the TXN is in use.
-	 * Otherwise its the position in the list of preallocated transactions.
+	 * Position in one of three lists:
+	 * * list of subtransactions if we are *known* to be subxact
+	 * * list of toplevel xacts (can be a as-yet unknown subxact)
+	 * * list of preallocated ReorderBufferTXNs
 	 */
 	dlist_node node;
 
@@ -197,6 +204,12 @@ struct ReorderBuffer
 	 * xid => ReorderBufferTXN lookup table
 	 */
 	HTAB	   *by_txn;
+
+	/*
+	 * Transactions that could be a toplevel xact, ordered by LSN of the first
+	 * record bearing that xid..
+	 */
+	dlist_head toplevel_by_lsn;
 
 	/*
 	 * one-entry sized cache for by_txn. Very frequently the same txn gets
@@ -256,6 +269,7 @@ void ReorderBufferReturnChange(ReorderBuffer *, ReorderBufferChange *);
 
 void ReorderBufferAddChange(ReorderBuffer *, TransactionId, XLogRecPtr lsn, ReorderBufferChange *);
 void ReorderBufferCommit(ReorderBuffer *, TransactionId, XLogRecPtr lsn);
+void ReorderBufferAssignChild(ReorderBuffer *, TransactionId, TransactionId, XLogRecPtr lsn);
 void ReorderBufferCommitChild(ReorderBuffer *, TransactionId, TransactionId, XLogRecPtr lsn);
 void ReorderBufferAbort(ReorderBuffer *, TransactionId, XLogRecPtr lsn);
 
@@ -268,7 +282,7 @@ void ReorderBufferAddNewTupleCids(ReorderBuffer *, TransactionId, XLogRecPtr lsn
 void ReorderBufferAddInvalidations(ReorderBuffer *, TransactionId, XLogRecPtr lsn,
 								   Size nmsgs, SharedInvalidationMessage* msgs);
 bool ReorderBufferIsXidKnown(ReorderBuffer *cache, TransactionId xid);
-void ReorderBufferXidSetTimetravel(ReorderBuffer *cache, TransactionId xid);
+void ReorderBufferXidSetTimetravel(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn);
 bool ReorderBufferXidDoesTimetravel(ReorderBuffer *cache, TransactionId xid);
 bool ReorderBufferXidHasBaseSnapshot(ReorderBuffer *cache, TransactionId xid);
 

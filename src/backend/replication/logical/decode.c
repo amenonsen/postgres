@@ -224,12 +224,21 @@ void DecodeRecordIntoReorderBuffer(XLogReaderState *reader,
 						}
 
 					case XLOG_XACT_ASSIGNMENT:
-						/*
-						 * XXX: We could reassign transactions to the parent
-						 * here to save space and effort when merging
-						 * transactions at commit.
-						 */
-						break;
+						{
+							int i;
+							TransactionId *sub_xid;
+							xl_xact_assignment *xlrec =
+								(xl_xact_assignment *) buf->record_data;
+
+							sub_xid = &xlrec->xsub[0];
+
+							for (i = 0; i < xlrec->nsubxacts; i++)
+							{
+								ReorderBufferAssignChild(reorder, r->xl_xid,
+								                         *(sub_xid++), buf->origptr);
+							}
+							break;
+						}
 					case XLOG_XACT_PREPARE:
 						/*
 						 * FIXME: we should replay the transaction and prepare
