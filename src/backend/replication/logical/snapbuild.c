@@ -129,7 +129,7 @@ static void SnapBuildSnapIncRefcount(Snapshot snap);
 
 static void SnapBuildDistributeSnapshotNow(Snapstate *snapstate, ReorderBuffer *reorder, XLogRecPtr lsn);
 
-/* on disk stuff */
+/* on disk serialization & restore */
 static bool SnapBuildRestore(Snapstate *state, XLogRecPtr lsn);
 static void SnapBuildSerialize(Snapstate *state, XLogRecPtr lsn);
 
@@ -562,9 +562,7 @@ SnapBuildProcessChange(ReorderBuffer *reorder, Snapstate *snapstate,
 
 			/* refcount of the transaction */
 			SnapBuildSnapIncRefcount(snapstate->snapshot);
-			ReorderBufferAddBaseSnapshot(reorder, xid,
-									  InvalidXLogRecPtr,
-									  snapstate->snapshot);
+			ReorderBufferSetBaseSnapshot(reorder, xid, buf->origptr, snapstate->snapshot);
 		}
 	}
 
@@ -908,7 +906,6 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 						 */
 					default:
 						break;
-						;
 				}
 				break;
 			}
@@ -973,7 +970,7 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 							break;
 						}
 					default:
-						;
+						break;
 				}
 				break;
 			}
@@ -1006,22 +1003,6 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 							/* we only log new_cid's if a catalog tuple was modified */
 							ReorderBufferXidSetTimetravel(reorder, xid, buf->origptr);
 
-							if (!ReorderBufferXidHasBaseSnapshot(reorder, xid))
-							{
-								if (!snapstate->snapshot) {
-									snapstate->snapshot = SnapBuildBuildSnapshot(snapstate, xid);
-									/* refcount of the snapshot builder */
-									SnapBuildSnapIncRefcount(snapstate->snapshot);
-								}
-
-								/* refcount of the transaction */
-								SnapBuildSnapIncRefcount(snapstate->snapshot);
-
-								ReorderBufferAddBaseSnapshot(reorder, xid,
-														  InvalidXLogRecPtr,
-														  snapstate->snapshot);
-							}
-
 							ReorderBufferAddNewTupleCids(reorder, xlrec->top_xid, buf->origptr,
 													  xlrec->target.node, xlrec->target.tid,
 													  xlrec->cmin, xlrec->cmax, xlrec->combocid);
@@ -1047,9 +1028,10 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 							 */
 							ReorderBufferAddNewCommandId(reorder, xid, buf->origptr,
 													  cid + 1);
+							break;
 						}
 					default:
-						;
+						break;
 				}
 			}
 			break;
@@ -1088,17 +1070,6 @@ SnapBuildTxnIsRunning(Snapstate *snapstate, TransactionId xid)
 }
 
 /*
- * FIXME: Analogous struct to the private one in reorderbuffer.c.
- *
- * Maybe introduce reorderbuffer_internal.h?
- */
-typedef struct ReorderBufferTXNByIdEnt
-{
-	TransactionId xid;
-	ReorderBufferTXN *txn;
-}  ReorderBufferTXNByIdEnt;
-
-/*
  * Add a new SnapshotNow to all transactions we're decoding that currently are
  * in-progress so they can see new catalog contents made by the transaction
  * that just committed.
@@ -1106,25 +1077,27 @@ typedef struct ReorderBufferTXNByIdEnt
 static void
 SnapBuildDistributeSnapshotNow(Snapstate *snapstate, ReorderBuffer *reorder, XLogRecPtr lsn)
 {
-	HASH_SEQ_STATUS status;
-	ReorderBufferTXNByIdEnt* ent;
-	elog(DEBUG1, "distributing snapshots to all running transactions");
+	dlist_iter txn_i;
+	ReorderBufferTXN *txn;
 
-	hash_seq_init(&status, reorder->by_txn);
-
-	/*
-	 * FIXME: were providing snapshots the txn that committed just now...
-	 *
-	 * XXX: If we would handle XLOG_ASSIGNMENT records we could avoid handing
-	 * out snapshots to transactions that we recognize as being subtransactions.
-	 */
-	while ((ent = (ReorderBufferTXNByIdEnt*) hash_seq_search(&status)) != NULL)
+	dlist_foreach(txn_i, &reorder->toplevel_by_lsn)
 	{
-		if (ReorderBufferXidHasBaseSnapshot(reorder, ent->xid))
+		txn = dlist_container(ReorderBufferTXN, node, txn_i.cur);
+
+		/*
+		 * If we don't have a base snapshot yet, there are no changes which in
+		 * turn implies we don't yet need a new snapshot.
+		 */
+		if (ReorderBufferXidHasBaseSnapshot(reorder, txn->xid))
 		{
+			elog(LOG, "adding a new snapshot to %u at %X/%X", txn->xid,
+			     (uint32)(lsn >> 32), (uint32)lsn);
 			SnapBuildSnapIncRefcount(snapstate->snapshot);
-			ReorderBufferAddBaseSnapshot(reorder, ent->xid, lsn, snapstate->snapshot);
+			ReorderBufferAddSnapshot(reorder, txn->xid, lsn, snapstate->snapshot);
 		}
+		else
+			elog(LOG, "no new snapshot to %u at %X/%X", txn->xid,
+			     (uint32)(lsn >> 32), (uint32)lsn);
 	}
 }
 
@@ -1456,7 +1429,7 @@ SnapBuildSerialize(Snapstate *state, XLogRecPtr lsn)
 						   O_CREAT | O_EXCL | O_WRONLY | PG_BINARY,
 						   S_IRUSR | S_IWUSR);
 	if (fd < 0)
-		ereport(ERROR, (errmsg("could not open snapbuild state file %s for writing",  path)));
+		ereport(ERROR, (errmsg("could not open snapbuild state file %s for writing: %m",  path)));
 
 	if ((write(fd, ondisk, needed_size)) != needed_size)
 	{

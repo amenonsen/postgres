@@ -168,6 +168,7 @@ ReorderBufferAllocate(void)
 	cache->nr_cached_changes = 0;
 	cache->nr_cached_tuplebufs = 0;
 
+	dlist_init(&cache->toplevel_by_lsn);
 	dlist_init(&cache->cached_transactions);
 	dlist_init(&cache->cached_changes);
 	slist_init(&cache->cached_tuplebufs);
@@ -463,6 +464,7 @@ ReorderBufferAddChange(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn,
 	}
 
 	change->lsn = lsn;
+	Assert(InvalidXLogRecPtr != lsn);
 	dlist_push_tail(&txn->changes, &change->node);
 	txn->nentries++;
 	txn->nentries_mem++;
@@ -496,7 +498,6 @@ ReorderBufferAssignChild(ReorderBuffer *cache, TransactionId xid,
 	else if (!subtxn->is_known_as_subxact)
 	{
 		dlist_delete(&subtxn->node);
-		dlist_push_tail(&cache->toplevel_by_lsn, &subtxn->node);
 		dlist_push_tail(&txn->subtxns, &subtxn->node);
 	}
 }
@@ -526,7 +527,7 @@ ReorderBufferCommitChild(ReorderBuffer *cache, TransactionId xid,
 	{
 		/* FIXME: This gives the wrong position in the list! */
 		txn->lsn = subtxn->lsn;
-		dlist_push_tail(&cache->toplevel_by_lsn, &subtxn->node);
+		dlist_push_tail(&cache->toplevel_by_lsn, &txn->node);
 	}
 
 	Assert(!top_is_new || !subtxn->is_known_as_subxact);
@@ -756,6 +757,18 @@ ReorderBufferCleanupTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
 		ReorderBufferReturnChange(cache, change);
 	}
 
+	if (txn->base_snapshot != NULL)
+	{
+		SnapBuildSnapDecRefcount(txn->base_snapshot);
+		txn->base_snapshot = NULL;
+	}
+
+	if (!txn->is_known_as_subxact)
+	{
+		dlist_delete(&txn->node);
+	}
+
+
 	/* now remove reference from cache */
 	hash_search(cache->by_txn,
 	            (void *)&txn->xid,
@@ -922,8 +935,8 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 	ReorderBufferIterTXNState *iterstate = NULL;
 	ReorderBufferChange *change;
 	CommandId command_id = FirstCommandId;
-	Snapshot snapshot_mvcc = NULL;
-	Snapshot snapshot_now = NULL;
+	Snapshot snapshot_mvcc;
+	Snapshot snapshot_now;
 	bool snapshot_copied = false;
 
 	/* empty transaction */
@@ -932,11 +945,18 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 
 	txn->lsn = lsn;
 
-	cache->begin(cache, txn);
+	snapshot_mvcc = txn->base_snapshot;
+	snapshot_now = snapshot_mvcc;
+	Assert(snapshot_now);
+
+	ReorderBufferBuildTupleCidHash(cache, txn);
+
+	/* setup initial snapshot */
+	SetupDecodingSnapshots(snapshot_now, txn->tuplecid_hash);
 
 	PG_TRY();
 	{
-		ReorderBufferBuildTupleCidHash(cache, txn);
+		cache->begin(cache, txn);
 
 		iterstate = ReorderBufferIterTXNInit(cache, txn);
 		while ((change = ReorderBufferIterTXNNext(cache, iterstate)))
@@ -946,12 +966,15 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 				case REORDER_BUFFER_CHANGE_INTERNAL_INSERT:
 				case REORDER_BUFFER_CHANGE_INTERNAL_UPDATE:
 				case REORDER_BUFFER_CHANGE_INTERNAL_DELETE:
-					Assert(snapshot_mvcc != NULL);
 					if (!SnapBuildHasCatalogChanges(NULL, xid, &change->relnode))
 						cache->apply_change(cache, txn, change);
 					break;
 				case REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT:
 					/* XXX: we could skip snapshots in non toplevel txns */
+
+					/* get rid of the old */
+					RevertFromDecodingSnapshots();
+
 					if (snapshot_copied)
 					{
 						ReorderBufferFreeSnap(cache, snapshot_now);
@@ -963,30 +986,23 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 						snapshot_now = change->snapshot;
 					}
 
-					/*
-					 * the first snapshot seen in a transaction is its mvcc
-					 * snapshot
-					 */
-					if (!snapshot_mvcc)
-						snapshot_mvcc = snapshot_now;
-					else
-						RevertFromDecodingSnapshots();
 
+					/* and start with the new one */
 					SetupDecodingSnapshots(snapshot_now, txn->tuplecid_hash);
 					break;
 
 				case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
-					if (!snapshot_copied && snapshot_now)
+					if (!snapshot_copied)
 					{
 						/* we don't use the global one anymore */
 						snapshot_copied = true;
 						snapshot_now = ReorderBufferCopySnap(cache, snapshot_now,
-														  txn, command_id);
+						                                     txn, command_id);
 					}
 
 					command_id = Max(command_id, change->command_id);
 
-					if (snapshot_now && command_id != InvalidCommandId)
+					if (command_id != InvalidCommandId)
 					{
 						snapshot_now->curcid = command_id;
 
@@ -1074,14 +1090,11 @@ ReorderBufferIsXidKnown(ReorderBuffer *cache, TransactionId xid)
 }
 
 /*
- * Add a new snapshot to this transaction which is the "base" of snapshots we
- * modify if this is a catalog modifying transaction.
- *
- * FIXME: Split into ReorderBufferSetBaseSnapshot & ReorderBufferAddSnapshot
+ * Add a new snapshot to this transaction
  */
 void
-ReorderBufferAddBaseSnapshot(ReorderBuffer *cache, TransactionId xid,
-							 XLogRecPtr lsn, Snapshot snap)
+ReorderBufferAddSnapshot(ReorderBuffer *cache, TransactionId xid,
+                         XLogRecPtr lsn, Snapshot snap)
 {
 	bool is_new;
 	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, true, &is_new);
@@ -1096,10 +1109,24 @@ ReorderBufferAddBaseSnapshot(ReorderBuffer *cache, TransactionId xid,
 	change->snapshot = snap;
 	change->action_internal = REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT;
 
-	if (lsn == InvalidXLogRecPtr)
-		txn->has_base_snapshot = true;
-
 	ReorderBufferAddChange(cache, xid, lsn, change);
+}
+
+void
+ReorderBufferSetBaseSnapshot(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn, Snapshot snap)
+{
+	bool is_new;
+	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, true, &is_new);
+
+	if (is_new)
+	{
+		txn->lsn = lsn;
+		dlist_push_tail(&cache->toplevel_by_lsn, &txn->node);
+	}
+
+	Assert(txn->base_snapshot == NULL);
+
+	txn->base_snapshot = snap;
 }
 
 /*
@@ -1236,7 +1263,7 @@ ReorderBufferXidHasBaseSnapshot(ReorderBuffer *cache, TransactionId xid)
 	ReorderBufferTXN *txn = ReorderBufferTXNByXid(cache, xid, false, NULL);
 	if (!txn)
 		return false;
-	return txn->has_base_snapshot;
+	return txn->base_snapshot != NULL;
 }
 
 /*
