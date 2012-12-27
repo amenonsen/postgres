@@ -193,6 +193,15 @@ sendFeedback(PGconn *conn, XLogRecPtr blockpos, int64 now, bool replyRequested)
 	char		replybuf[1 + 8 + 8 + 8 + 8 + 1];
 	int			len = 0;
 
+	if (blockpos == startpos)
+		return;
+
+	if (verbose)
+		fprintf(stderr,
+				_("%s: confirming flush up to %X/%X (slot %s)\n"),
+				progname, (uint32) (blockpos >> 32), (uint32) blockpos,
+				slot);
+
 	replybuf[len] = 'r';
 	len += 1;
 	sendint64(blockpos, &replybuf[len]);			/* write */
@@ -205,6 +214,8 @@ sendFeedback(PGconn *conn, XLogRecPtr blockpos, int64 now, bool replyRequested)
 	len += 8;
 	replybuf[len] = replyRequested ? 1 : 0;			/* replyRequested */
 	len += 1;
+
+	startpos = blockpos;
 
 	if (PQputCopyData(conn, replybuf, len) <= 0 || PQflush(conn))
 	{
