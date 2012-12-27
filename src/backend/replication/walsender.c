@@ -925,7 +925,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 	 * fast path case where we already know we have enough WAL available.
 	 */
 	flushptr = GetFlushRecPtr();
-	if (loc < flushptr)
+	if (loc <= flushptr)
 		return flushptr;
 
 	for (;;)
@@ -955,7 +955,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 
 		/* check whether we're done */
 		flushptr = GetFlushRecPtr();
-		if (loc < flushptr)
+		if (loc <= flushptr)
 			break;
 
 		/* FIXME: wal_sender_timeout integration */
