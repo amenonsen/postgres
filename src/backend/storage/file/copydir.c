@@ -45,7 +45,7 @@
  * a directory or a regular file is ignored.
  */
 void
-copydir(char *fromdir, char *todir, bool recurse)
+copydir(const char *fromdir, const char *todir, bool recurse)
 {
 	DIR		   *xldir;
 	struct dirent *xlde;
@@ -143,7 +143,7 @@ copydir(char *fromdir, char *todir, bool recurse)
  * copy one file
  */
 void
-copy_file(char *fromfile, char *tofile)
+copy_file(const char *fromfile, const char *tofile)
 {
 	char	   *buffer;
 	int			srcfd;
@@ -224,7 +224,7 @@ copy_file(char *fromfile, char *tofile)
  * just doesn't allow/require fsyncing directories.
  */
 void
-fsync_fname(char *fname, bool isdir)
+fsync_fname(const char *fname, bool isdir)
 {
 	int			fd;
 	int			returncode;
