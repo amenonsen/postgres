@@ -658,6 +658,7 @@ RestoreLogicalSlot(const char* name)
 	char path[MAXPGPATH];
 	int fd;
 	bool restored = false;
+	int readBytes;
 
 	START_CRIT_SECTION();
 
@@ -679,13 +680,16 @@ RestoreLogicalSlot(const char* name)
 	if (fd < 0)
 		ereport(PANIC, (errmsg("could not open state file %s",  path)));
 
-	if (read(fd, &cp, sizeof(cp)) != sizeof(cp))
+	readBytes = read(fd, &cp, sizeof(cp));
+	if (readBytes != sizeof(cp))
 	{
+		int saved_errno = errno;
 		CloseTransientFile(fd);
+		errno = saved_errno;
 		ereport(PANIC,
 				(errcode_for_file_access(),
-				 errmsg("could not read logical checkpoint file \"%s\": %m",
-						path)));
+				 errmsg("could not read logical checkpoint file \"%s\": %m, read %d of %zu",
+				        path, readBytes, sizeof(cp))));
 	}
 
 	CloseTransientFile(fd);
