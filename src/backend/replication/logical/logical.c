@@ -768,4 +768,4 @@ DeleteLogicalSlot(LogicalDecodingSlot *slot)
 
 	END_CRIT_SECTION();
 }
-}
+

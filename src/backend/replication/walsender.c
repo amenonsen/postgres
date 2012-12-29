@@ -182,6 +182,7 @@ static void InitWalSenderSlot(void);
 static void WalSndKill(int code, Datum arg);
 static void XLogSendPhysical(bool *caughtup);
 static void XLogSendLogical(bool *caughtup);
+static XLogRecPtr GetStandbyFlushRecPtr(void);
 static void IdentifySystem(void);
 static void StartReplication(StartReplicationCmd *cmd);
 static void InitLogicalReplication(InitLogicalReplicationCmd *cmd);
@@ -205,12 +206,6 @@ InitWalSender(void)
 
 	/* Set up resource owner */
 	CurrentResourceOwner = ResourceOwnerCreate(NULL, "walsender top-level resource owner");
-
-	/*
-	 * Use the recovery target timeline ID during recovery
-	 */
-	if (am_cascading_walsender)
-		ThisTimeLineID = GetRecoveryTargetTLI();
 
 	/*
 	 * Let postmaster know that we're a WAL sender. Once we've declared us as
@@ -272,8 +267,8 @@ IdentifySystem(void)
 	am_cascading_walsender = RecoveryInProgress();
 	if (am_cascading_walsender)
 	{
+		/* this also updates ThisTimeLineID */
 		logptr = GetStandbyFlushRecPtr();
-		ThisTimeLineID = GetRecoveryTargetTLI();
 	}
 	else
 		logptr = GetInsertRecPtr();
@@ -448,6 +443,7 @@ static void
 StartReplication(StartReplicationCmd *cmd)
 {
 	StringInfoData buf;
+	XLogRecPtr FlushPtr;
 
 	/*
 	 * We assume here that we're logging enough information in the WAL for
@@ -460,8 +456,17 @@ StartReplication(StartReplicationCmd *cmd)
 
 	/*
 	 * Select the timeline. If it was given explicitly by the client, use
-	 * that. Otherwise use the current ThisTimeLineID.
+	 * that. Otherwise use the timeline of the last replayed record, which
+	 * is kept in ThisTimeLineID.
 	 */
+	if (am_cascading_walsender)
+	{
+		/* this also updates ThisTimeLineID */
+		FlushPtr = GetStandbyFlushRecPtr();
+	}
+	else
+		FlushPtr = GetFlushRecPtr();
+
 	if (cmd->timeline != 0)
 	{
 		XLogRecPtr	switchpoint;
@@ -533,7 +538,6 @@ StartReplication(StartReplicationCmd *cmd)
 	if (!sendTimeLineIsHistoric ||
 		cmd->startpoint < sendTimeLineValidUpto)
 	{
-		XLogRecPtr FlushPtr;
 		/*
 		 * When we first start replication the standby will be behind the primary.
 		 * For some applications, for example, synchronous replication, it is
@@ -555,10 +559,6 @@ StartReplication(StartReplicationCmd *cmd)
 		 * Don't allow a request to stream from a future point in WAL that
 		 * hasn't been flushed to disk in this server yet.
 		 */
-		if (am_cascading_walsender)
-			FlushPtr = GetStandbyFlushRecPtr();
-		else
-			FlushPtr = GetFlushRecPtr();
 		if (FlushPtr < cmd->startpoint)
 		{
 			ereport(ERROR,
@@ -1750,7 +1750,6 @@ static void
 XLogSendPhysical(bool *caughtup)
 {
 	XLogRecPtr	SendRqstPtr;
-	XLogRecPtr	FlushPtr;
 	XLogRecPtr	startptr;
 	XLogRecPtr	endptr;
 	Size		nbytes;
@@ -1761,33 +1760,38 @@ XLogSendPhysical(bool *caughtup)
 		return;
 	}
 
-	/*
-	 * Attempt to send all data that's already been written out and fsync'd to
-	 * disk.  We cannot go further than what's been written out given the
-	 * current implementation of XLogRead().  And in any case it's unsafe to
-	 * send WAL that is not securely down to disk on the master: if the master
-	 * subsequently crashes and restarts, slaves must not have applied any WAL
-	 * that gets lost on the master.
-	 */
-	if (am_cascading_walsender)
-		FlushPtr = GetStandbyFlushRecPtr();
-	else
-		FlushPtr = GetFlushRecPtr();
-
-	/*
-	 * In a cascading standby, the current recovery target timeline can
-	 * change, or we can be promoted. In either case, the current timeline
-	 * becomes historic. We need to detect that so that we don't try to stream
-	 * past the point where we switched to another timeline. It's checked
-	 * after calculating FlushPtr, to avoid a race condition: if the timeline
-	 * becomes historic just after we checked that it was still current, it
-	 * should still be OK to stream it up to the FlushPtr that was calculated
-	 * before it became historic.
-	 */
-	if (!sendTimeLineIsHistoric && am_cascading_walsender)
+	/* Figure out how far we can safely send the WAL. */
+	if (sendTimeLineIsHistoric)
 	{
+		/*
+		 * Streaming an old timeline timeline that's in this server's history,
+		 * but is not the one we're currently inserting or replaying. It can
+		 * be streamed up to the point where we switched off that timeline.
+		 */
+		SendRqstPtr = sendTimeLineValidUpto;
+	}
+	else if (am_cascading_walsender)
+	{
+		/*
+		 * Streaming the latest timeline on a standby.
+		 *
+		 * Attempt to send all WAL that has already been replayed, so that
+		 * we know it's valid. If we're receiving WAL through streaming
+		 * replication, it's also OK to send any WAL that has been received
+		 * but not replayed.
+		 *
+		 * The timeline we're recovering from can change, or we can be
+		 * promoted. In either case, the current timeline becomes historic.
+		 * We need to detect that so that we don't try to stream past the
+		 * point where we switched to another timeline. We check for promotion
+		 * or timeline switch after calculating FlushPtr, to avoid a race
+		 * condition: if the timeline becomes historic just after we checked
+		 * that it was still current, it's still be OK to stream it up to the
+		 * FlushPtr that was calculated before it became historic.
+		 */
 		bool		becameHistoric = false;
-		TimeLineID	targetTLI;
+
+		SendRqstPtr = GetStandbyFlushRecPtr();
 
 		if (!RecoveryInProgress())
 		{
@@ -1795,7 +1799,6 @@ XLogSendPhysical(bool *caughtup)
 			 * We have been promoted. RecoveryInProgress() updated
 			 * ThisTimeLineID to the new current timeline.
 			 */
-			targetTLI = ThisTimeLineID;
 			am_cascading_walsender = false;
 			becameHistoric = true;
 		}
@@ -1803,11 +1806,10 @@ XLogSendPhysical(bool *caughtup)
 		{
 			/*
 			 * Still a cascading standby. But is the timeline we're sending
-			 * still the recovery target timeline?
+			 * still the one recovery is recovering from? ThisTimeLineID was
+			 * updated by the GetStandbyFlushRecPtr() call above.
 			 */
-			targetTLI = GetRecoveryTargetTLI();
-
-			if (targetTLI != sendTimeLine)
+			if (sendTimeLine != ThisTimeLineID)
 				becameHistoric = true;
 		}
 
@@ -1820,7 +1822,7 @@ XLogSendPhysical(bool *caughtup)
 			 */
 			List	   *history;
 
-			history = readTimeLineHistory(targetTLI);
+			history = readTimeLineHistory(ThisTimeLineID);
 			sendTimeLineValidUpto = tliSwitchPoint(sendTimeLine, history);
 			Assert(sentPtr <= sendTimeLineValidUpto);
 			list_free_deep(history);
@@ -1835,7 +1837,23 @@ XLogSendPhysical(bool *caughtup)
 					 (uint32) sentPtr);
 
 			sendTimeLineIsHistoric = true;
+
+			SendRqstPtr = sendTimeLineValidUpto;
 		}
+	}
+	else
+	{
+		/*
+		 * Streaming the current timeline on a master.
+		 *
+		 * Attempt to send all data that's already been written out and
+		 * fsync'd to disk.  We cannot go further than what's been written out
+		 * given the current implementation of XLogRead().  And in any case
+		 * it's unsafe to send WAL that is not securely down to disk on the
+		 * master: if the master subsequently crashes and restarts, slaves
+		 * must not have applied any WAL that gets lost on the master.
+		 */
+		SendRqstPtr = GetFlushRecPtr();
 	}
 
 	/*
@@ -1857,15 +1875,7 @@ XLogSendPhysical(bool *caughtup)
 		return;
 	}
 
-	/*
-	 * Stream up to the point known to be flushed to disk, or to the end of
-	 * this timeline, whichever comes first.
-	 */
-	if (sendTimeLineIsHistoric && sendTimeLineValidUpto < FlushPtr)
-		SendRqstPtr = sendTimeLineValidUpto;
-	else
-		SendRqstPtr = FlushPtr;
-
+	/* Do we have any work to do? */
 	Assert(sentPtr <= SendRqstPtr);
 	if (SendRqstPtr <= sentPtr)
 	{
@@ -2043,6 +2053,41 @@ XLogSendLogical(bool *caughtup)
 		walsnd->sentPtr = logical_reader->ReadRecPtr;
 		SpinLockRelease(&walsnd->mutex);
 	}
+}
+
+/*
+ * Returns the latest point in WAL that has been safely flushed to disk, and
+ * can be sent to the standby. This should only be called when in recovery,
+ * ie. we're streaming to a cascaded standby.
+ *
+ * As a side-effect, ThisTimeLineID is updated to the TLI of the last
+ * replayed WAL record.
+ */
+static XLogRecPtr
+GetStandbyFlushRecPtr(void)
+{
+	XLogRecPtr replayPtr;
+	TimeLineID replayTLI;
+	XLogRecPtr receivePtr;
+	TimeLineID receiveTLI;
+	XLogRecPtr	result;
+
+	/*
+	 * We can safely send what's already been replayed. Also, if walreceiver
+	 * is streaming WAL from the same timeline, we can send anything that
+	 * it has streamed, but hasn't been replayed yet.
+	 */
+
+	receivePtr = GetWalRcvWriteRecPtr(NULL, &receiveTLI);
+	replayPtr = GetXLogReplayRecPtr(&replayTLI);
+
+	ThisTimeLineID = replayTLI;
+
+	result = replayPtr;
+	if (receiveTLI == ThisTimeLineID && receivePtr > replayPtr)
+		result = receivePtr;
+
+	return result;
 }
 
 /*
