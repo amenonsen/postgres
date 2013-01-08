@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 
 #include "replication/logical.h"
+#include "replication/reorderbuffer.h"
 
 #include "miscadmin.h"
 #include "access/transam.h"
@@ -526,6 +527,8 @@ StartupLogical(XLogRecPtr checkPointRedo)
 
 	/* Now that we have recovered all the data, compute logical xmin */
 	ComputeLogicalXmin();
+
+	ReorderBufferStartup();
 }
 
 static void
@@ -577,6 +580,9 @@ SaveLogicalSlotInternal(LogicalDecodingSlot *slot, const char *dir)
 	char path[MAXPGPATH];
 	int fd;
 	LogicalDecodingCheckpointData cp;
+
+	/* silence valgrind :( */
+	memset(&cp, 0, sizeof(LogicalDecodingCheckpointData));
 
 	sprintf(tmppath, "%s/state.tmp", dir);
 	sprintf(path, "%s/state", dir);
@@ -768,4 +774,3 @@ DeleteLogicalSlot(LogicalDecodingSlot *slot)
 
 	END_CRIT_SECTION();
 }
-

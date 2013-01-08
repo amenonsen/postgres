@@ -14,9 +14,12 @@
  */
 #include "postgres.h"
 
+#include <unistd.h>
+
 #include "access/heapam.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "access/xlog_internal.h"
 
 #include "catalog/pg_class.h"
 #include "catalog/pg_control.h"
@@ -25,9 +28,11 @@
 
 #include "replication/reorderbuffer.h"
 #include "replication/snapbuild.h"
+#include "replication/logical.h"
 
-#include "storage/sinval.h"
 #include "storage/bufmgr.h"
+#include "storage/fd.h"
+#include "storage/sinval.h"
 
 #include "utils/builtins.h"
 #include "utils/combocid.h"
@@ -38,9 +43,9 @@
 
 
 
-const Size max_memtries = 1 << 16;
+const Size max_memtries = 4096;
 
-const Size max_cached_changes = 1024;
+const Size max_cached_changes = 4096 * 2;
 const Size max_cached_tuplebufs = 1024; /* ~8MB */
 const Size max_cached_transactions = 512;
 
@@ -95,11 +100,14 @@ typedef struct ReorderBufferIterTXNEntry
 	XLogRecPtr lsn;
 	ReorderBufferChange *change;
 	ReorderBufferTXN *txn;
+	int fd;
+	XLogSegNo segno;
 } ReorderBufferIterTXNEntry;
 
 typedef struct ReorderBufferIterTXNState
 {
 	binaryheap *heap;
+	Size nr_txns;
 	ReorderBufferIterTXNEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } ReorderBufferIterTXNState;
 
@@ -109,7 +117,6 @@ static ReorderBufferTXN *ReorderBufferGetTXN(ReorderBuffer *cache);
 static void ReorderBufferReturnTXN(ReorderBuffer *cache, ReorderBufferTXN *txn);
 static ReorderBufferTXN *ReorderBufferTXNByXid(ReorderBuffer *cache, TransactionId xid,
                                          bool create, bool *is_new);
-
 
 
 /*
@@ -127,6 +134,21 @@ ReorderBufferIterTXNNext(ReorderBuffer *cache, ReorderBufferIterTXNState *state)
 static void ReorderBufferIterTXNFinish(ReorderBuffer *cache,
 									   ReorderBufferIterTXNState *state);
 static void ReorderBufferExecuteInvalidations(ReorderBuffer *cache, ReorderBufferTXN *txn);
+
+/* persistency support */
+static void ReorderBufferCheckSerializeTXN(ReorderBuffer *cache, ReorderBufferTXN *txn);
+static void ReorderBufferSerializeTXN(ReorderBuffer *cache, ReorderBufferTXN *txn);
+static void ReorderBufferSerializeChange(ReorderBuffer *cache, ReorderBufferTXN *txn,
+                                         int fd, ReorderBufferChange *change);
+static Size ReorderBufferRestoreChanges(ReorderBuffer *cache, ReorderBufferTXN *txn,
+                                        int *fd, XLogSegNo *segno);
+static void ReorderBufferRestoreChange(ReorderBuffer *cache, ReorderBufferTXN *txn,
+                                       char *change);
+static void ReorderBufferRestoreCleanup(ReorderBuffer *cache, ReorderBufferTXN *txn);
+
+static void ReorderBufferFreeSnap(ReorderBuffer *cache, Snapshot snap);
+static Snapshot ReorderBufferCopySnap(ReorderBuffer *cache, Snapshot orig_snap,
+									  ReorderBufferTXN *txn, CommandId cid);
 
 /*
  * Allocate a new ReorderBuffer
@@ -168,6 +190,9 @@ ReorderBufferAllocate(void)
 	cache->nr_cached_changes = 0;
 	cache->nr_cached_tuplebufs = 0;
 
+	cache->outbuf = NULL;
+	cache->outbufsize = 0;
+
 	dlist_init(&cache->toplevel_by_lsn);
 	dlist_init(&cache->cached_transactions);
 	dlist_init(&cache->cached_changes);
@@ -186,6 +211,9 @@ ReorderBufferFree(ReorderBuffer *cache)
 	/* FIXME: clean up cached transaction */
 	/* FIXME: clean up cached changes */
 	/* FIXME: clean up cached tuplebufs */
+	if (cache->outbufsize > 0)
+		free(cache->outbuf);
+
 	hash_destroy(cache->by_txn);
 	free(cache);
 }
@@ -316,7 +344,7 @@ ReorderBufferReturnChange(ReorderBuffer *cache, ReorderBufferChange *change)
 		case REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT:
 			if (change->snapshot)
 			{
-				SnapBuildSnapDecRefcount(change->snapshot);
+				ReorderBufferFreeSnap(cache, change->snapshot);
 				change->snapshot = NULL;
 			}
 			break;
@@ -468,6 +496,8 @@ ReorderBufferAddChange(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn,
 	dlist_push_tail(&txn->changes, &change->node);
 	txn->nentries++;
 	txn->nentries_mem++;
+
+	ReorderBufferCheckSerializeTXN(cache, txn);
 }
 
 
@@ -514,7 +544,6 @@ ReorderBufferCommitChild(ReorderBuffer *cache, TransactionId xid,
 	bool top_is_new;
 
 	subtxn = ReorderBufferTXNByXid(cache, subxid, false, NULL);
-
 	/*
 	 * No need to do anything if that subtxn didn't contain any changes
 	 */
@@ -529,6 +558,8 @@ ReorderBufferCommitChild(ReorderBuffer *cache, TransactionId xid,
 		txn->lsn = subtxn->lsn;
 		dlist_push_tail(&cache->toplevel_by_lsn, &txn->node);
 	}
+
+	subtxn->last_lsn = lsn;
 
 	Assert(!top_is_new || !subtxn->is_known_as_subxact);
 
@@ -592,7 +623,7 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	ReorderBufferChange *cur_change;
 	int32 off;
 
-	if (!dlist_is_empty(&txn->changes))
+	if (txn->nentries > 0)
 		nr_txns++;
 
 	/* count how large our heap must be */
@@ -600,7 +631,7 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	{
 		cur_txn = dlist_container(ReorderBufferTXN, node, cur_txn_i.cur);
 
-		if (!dlist_is_empty(&cur_txn->changes))
+		if (cur_txn->nentries > 0)
 			nr_txns++;
 	}
 
@@ -613,6 +644,14 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	state = calloc(1, sizeof(ReorderBufferIterTXNState)
 				   + sizeof(ReorderBufferIterTXNEntry) * nr_txns);
 
+	state->nr_txns = 0;
+
+	for (off = 0; off < nr_txns; off++)
+	{
+		state->entries[off].fd = -1;
+		state->entries[off].segno = 0;
+	}
+
 	/* allocate heap */
 	state->heap = binaryheap_allocate(nr_txns, ReorderBufferIterCompare, NULL);
 
@@ -624,9 +663,14 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	off = 0;
 
 	/* add toplevel transaction if it contains changes*/
-	if (!dlist_is_empty(&txn->changes))
+	if (txn->nentries > 0)
 	{
-		cur_change = dlist_head_element(ReorderBufferChange, node, &txn->changes);
+		if (txn->nentries != txn->nentries_mem)
+			ReorderBufferRestoreChanges(cache, txn, &state->entries[off].fd,
+			                            &state->entries[off].segno);
+
+		cur_change = dlist_head_element(ReorderBufferChange, node,
+		                                &txn->changes);
 
 		state->entries[off].lsn = cur_change->lsn;
 		state->entries[off].change = cur_change;
@@ -640,8 +684,13 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	{
 		cur_txn = dlist_container(ReorderBufferTXN, node, cur_txn_i.cur);
 
-		if (!dlist_is_empty(&cur_txn->changes))
+		if (!cur_txn->nentries > 0)
 		{
+			if (txn->nentries != txn->nentries_mem)
+				ReorderBufferRestoreChanges(cache, cur_txn,
+				                            &state->entries[off].fd,
+				                            &state->entries[off].segno);
+
 			cur_change = dlist_head_element(ReorderBufferChange, node,
 											&cur_txn->changes);
 
@@ -658,6 +707,29 @@ ReorderBufferIterTXNInit(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	return state;
 }
 
+static void
+ReorderBufferRestoreCleanup(ReorderBuffer *cache, ReorderBufferTXN *txn)
+{
+	XLogSegNo first, cur, last;
+
+	XLByteToSeg(txn->lsn, first);
+	XLByteToSeg(txn->last_lsn, last);
+
+	for (cur = first; cur <= last; cur++)
+	{
+		char path[MAXPGPATH];
+		XLogRecPtr recptr;
+
+		XLogSegNoOffsetToRecPtr(cur, 0, recptr);
+
+		sprintf(path, "pg_llog/%s/xid-%u-lsn-%X-%X.snap",
+				NameStr(MyLogicalDecodingSlot->name), txn->xid,
+				(uint32)(recptr >> 32), (uint32)recptr);
+		if (unlink(path) != 0 && errno != ENOENT)
+			elog(FATAL, "could not unlink file \"%s\": %m", path);
+	}
+}
+
 /*
  * Return the next change when iterating over a transaction and its
  * subtransaction.
@@ -671,6 +743,7 @@ ReorderBufferIterTXNNext(ReorderBuffer *cache, ReorderBufferIterTXNState *state)
 	ReorderBufferIterTXNEntry *entry;
 	int32 off;
 
+restart:
 	/* nothing there anymore */
 	if (state->heap->bh_size == 0)
 		return NULL;
@@ -680,11 +753,7 @@ ReorderBufferIterTXNNext(ReorderBuffer *cache, ReorderBufferIterTXNState *state)
 
 	change = entry->change;
 
-	if (!dlist_has_next(&entry->txn->changes, &entry->change->node))
-	{
-		binaryheap_remove_first(state->heap);
-	}
-	else
+	if (dlist_has_next(&entry->txn->changes, &entry->change->node))
 	{
 		dlist_node *next = dlist_next_node(&entry->txn->changes, &change->node);
 		ReorderBufferChange *next_change =
@@ -696,6 +765,29 @@ ReorderBufferIterTXNNext(ReorderBuffer *cache, ReorderBufferIterTXNState *state)
 
 		binaryheap_replace_first(state->heap, Int32GetDatum(off));
 	}
+	else if (entry->txn->nentries != entry->txn->nentries_mem &&
+			 ReorderBufferRestoreChanges(cache, entry->txn, &entry->fd,
+										 &state->entries[off].segno))
+	{
+		/* successfully restore changes from disk */
+		ReorderBufferChange *next_change =
+			dlist_head_element(ReorderBufferChange, node,
+			                   &entry->txn->changes);
+
+		elog(LOG, "restoring from disk because %zu != %zu",
+			 entry->txn->nentries, entry->txn->nentries_mem);
+		Assert(entry->txn->nentries_mem);
+		/* txn stays the same */
+		state->entries[off].lsn = next_change->lsn;
+		state->entries[off].change = next_change;
+		binaryheap_replace_first(state->heap, Int32GetDatum(off));
+	}
+	else
+	{
+		binaryheap_remove_first(state->heap);
+		goto restart;
+	}
+
 	return change;
 }
 
@@ -705,6 +797,14 @@ ReorderBufferIterTXNNext(ReorderBuffer *cache, ReorderBufferIterTXNState *state)
 static void
 ReorderBufferIterTXNFinish(ReorderBuffer *cache, ReorderBufferIterTXNState *state)
 {
+	int32 off;
+
+	for (off = 0; off < state->nr_txns; off++)
+	{
+		if (state->entries[off].fd != -1)
+			CloseTransientFile(state->entries[off].fd);
+	}
+
 	binaryheap_free(state->heap);
 	free(state);
 }
@@ -726,14 +826,13 @@ ReorderBufferCleanupTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	{
 		ReorderBufferTXN *subtxn = dlist_container(ReorderBufferTXN, node, cur_txn.cur);
 
-		dlist_foreach_modify(cur_change, &subtxn->changes)
-		{
-			ReorderBufferChange *change =
-				dlist_container(ReorderBufferChange, node, cur_change.cur);
-
-			ReorderBufferReturnChange(cache, change);
-		}
-		ReorderBufferReturnTXN(cache, subtxn);
+		Assert(subtxn->is_known_as_subxact);
+		/*
+		 * subtransactions are always associated to the toplevel TXN, even if
+		 * they originally were happening inside another subtxn, so we won't
+		 * ever recurse more than one level here.
+		 */
+		ReorderBufferCleanupTXN(cache, subtxn);
 	}
 
 	/* cleanup changes in the toplevel txn */
@@ -763,11 +862,9 @@ ReorderBufferCleanupTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
 		txn->base_snapshot = NULL;
 	}
 
+	/* delete from LSN ordered list of toplevel TXNs */
 	if (!txn->is_known_as_subxact)
-	{
 		dlist_delete(&txn->node);
-	}
-
 
 	/* now remove reference from cache */
 	hash_search(cache->by_txn,
@@ -775,6 +872,10 @@ ReorderBufferCleanupTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	            HASH_REMOVE,
 	            &found);
 	Assert(found);
+
+	/* remove entries spilled to disk */
+	if (txn->nentries != txn->nentries_mem)
+		ReorderBufferRestoreCleanup(cache, txn);
 
 	/* deallocate */
 	ReorderBufferReturnTXN(cache, txn);
@@ -919,8 +1020,10 @@ ReorderBufferCopySnap(ReorderBuffer *cache, Snapshot orig_snap,
 static void
 ReorderBufferFreeSnap(ReorderBuffer *cache, Snapshot snap)
 {
-	Assert(snap->copied);
-	free(snap);
+	if (snap->copied)
+		free(snap);
+	else
+		SnapBuildSnapDecRefcount(snap);
 }
 
 /*
@@ -937,13 +1040,16 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 	CommandId command_id = FirstCommandId;
 	Snapshot snapshot_mvcc;
 	Snapshot snapshot_now;
-	bool snapshot_copied = false;
 
 	/* empty transaction */
 	if (!txn)
 		return;
 
-	txn->lsn = lsn;
+	txn->last_lsn = lsn;
+
+	/* serialize the last bunch of changes if we need start earlier anyway */
+	if (txn->nentries_mem != txn->nentries)
+		ReorderBufferSerializeTXN(cache, txn);
 
 	snapshot_mvcc = txn->base_snapshot;
 	snapshot_now = snapshot_mvcc;
@@ -975,7 +1081,7 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 					/* get rid of the old */
 					RevertFromDecodingSnapshots();
 
-					if (snapshot_copied)
+					if (snapshot_now->copied)
 					{
 						ReorderBufferFreeSnap(cache, snapshot_now);
 						snapshot_now = ReorderBufferCopySnap(cache, change->snapshot,
@@ -992,10 +1098,9 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 					break;
 
 				case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
-					if (!snapshot_copied)
+					if (!snapshot_now->copied)
 					{
 						/* we don't use the global one anymore */
-						snapshot_copied = true;
 						snapshot_now = ReorderBufferCopySnap(cache, snapshot_now,
 						                                     txn, command_id);
 					}
@@ -1033,12 +1138,10 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 		RevertFromDecodingSnapshots();
 		ReorderBufferExecuteInvalidations(cache, txn);
 
-		ReorderBufferCleanupTXN(cache, txn);
-
-		if (snapshot_copied)
-		{
+		if (snapshot_now->copied)
 			ReorderBufferFreeSnap(cache, snapshot_now);
-		}
+
+		ReorderBufferCleanupTXN(cache, txn);
 	}
 	PG_CATCH();
 	{
@@ -1053,10 +1156,8 @@ ReorderBufferCommit(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 		RevertFromDecodingSnapshots();
 		ReorderBufferExecuteInvalidations(cache, txn);
 
-		if (snapshot_copied)
-		{
+		if (snapshot_now->copied)
 			ReorderBufferFreeSnap(cache, snapshot_now);
-		}
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -1074,6 +1175,8 @@ ReorderBufferAbort(ReorderBuffer *cache, TransactionId xid, XLogRecPtr lsn)
 	/* no changes in this commit */
 	if (!txn)
 		return;
+
+	txn->last_lsn = lsn;
 
 	ReorderBufferCleanupTXN(cache, txn);
 }
@@ -1264,6 +1367,485 @@ ReorderBufferXidHasBaseSnapshot(ReorderBuffer *cache, TransactionId xid)
 	if (!txn)
 		return false;
 	return txn->base_snapshot != NULL;
+}
+
+static void
+ReorderBufferSerializeReserve(ReorderBuffer *cache, Size sz)
+{
+	if (!cache->outbufsize)
+	{
+		elog(LOG, "init membuf to %zu", sz);
+		cache->outbuf = malloc(sz);
+		if (!cache->outbuf)
+			elog(ERROR, "no memory for serialization buffer");
+		cache->outbufsize = sz;
+	}
+	else if (cache->outbufsize < sz)
+	{
+		elog(LOG, "grow membuf to %zu", sz);
+		cache->outbuf = realloc(cache->outbuf, sz);
+		if (!cache->outbuf)
+			elog(ERROR, "no memory for serialization buffer during realloc");
+		cache->outbufsize = sz;
+	}
+}
+
+typedef struct ReorderBufferDiskChange
+{
+	Size size;
+	ReorderBufferChange change;
+	/* data follows */
+} ReorderBufferDiskChange;
+
+/*
+ * Persistency support
+ */
+static void
+ReorderBufferSerializeChange(ReorderBuffer *cache, ReorderBufferTXN *txn,
+                             int fd, ReorderBufferChange *change)
+{
+	ReorderBufferDiskChange *ondisk;
+	Size sz = sizeof(ReorderBufferDiskChange);
+
+	ReorderBufferSerializeReserve(cache, sz);
+
+	ondisk = (ReorderBufferDiskChange *) cache->outbuf;
+	memcpy(&ondisk->change, change, sizeof(ReorderBufferChange));
+
+	switch ((ReorderBufferChangeTypeInternal)change->action_internal)
+	{
+		case REORDER_BUFFER_CHANGE_INTERNAL_INSERT:
+		/* fall through */
+		case REORDER_BUFFER_CHANGE_INTERNAL_UPDATE:
+		/* fall through */
+		case REORDER_BUFFER_CHANGE_INTERNAL_DELETE:
+		{
+			char *data;
+			Size oldlen = 0;
+			Size newlen = 0;
+
+			if (change->oldtuple)
+				oldlen = offsetof(ReorderBufferTupleBuf, data)
+					+ change->oldtuple->tuple.t_len
+					- offsetof(HeapTupleHeaderData, t_bits);
+
+			if (change->newtuple)
+				newlen = offsetof(ReorderBufferTupleBuf, data)
+					+ change->newtuple->tuple.t_len
+					- offsetof(HeapTupleHeaderData, t_bits);
+
+			sz += oldlen;
+			sz += newlen;
+
+			/* make sure we have enough space */
+			ReorderBufferSerializeReserve(cache, sz);
+
+			data = ((char *) cache->outbuf) + sizeof(ReorderBufferDiskChange);
+			/* might have been reallocated above */
+			ondisk = (ReorderBufferDiskChange *) cache->outbuf;
+
+			if (oldlen)
+			{
+				memcpy(data, change->oldtuple, oldlen);
+				data += oldlen;
+			}
+
+			if (newlen)
+			{
+				memcpy(data, change->newtuple, newlen);
+				data += newlen;
+			}
+			break;
+		}
+		case REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT:
+		{
+			char * data;
+
+			sz += sizeof(SnapshotData) +
+				sizeof(TransactionId) * change->snapshot->xcnt +
+				sizeof(TransactionId) * change->snapshot->subxcnt
+				;
+
+			/* make sure we have enough space */
+			ReorderBufferSerializeReserve(cache, sz);
+			data = ((char *) cache->outbuf) + sizeof(ReorderBufferDiskChange);
+			/* might have been reallocated above */
+			ondisk = (ReorderBufferDiskChange *) cache->outbuf;
+
+			memcpy(data, change->snapshot, sizeof(SnapshotData));
+			data += sizeof(SnapshotData);
+
+			if (change->snapshot->xcnt)
+			{
+				memcpy(data, change->snapshot->xip,
+				       sizeof(TransactionId) + change->snapshot->xcnt);
+				data += sizeof(TransactionId) + change->snapshot->xcnt;
+			}
+
+			if (change->snapshot->subxcnt)
+			{
+				memcpy(data, change->snapshot->subxip,
+				       sizeof(TransactionId) + change->snapshot->subxcnt);
+				data += sizeof(TransactionId) + change->snapshot->subxcnt;
+			}
+			break;
+		}
+		case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
+			/* ReorderBufferChange contains everything important */
+			break;
+		case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
+			/* ReorderBufferChange contains everything important */
+			break;
+	}
+
+	ondisk->size = sz;
+
+	if (write(fd, cache->outbuf, ondisk->size) != ondisk->size)
+	{
+		CloseTransientFile(fd);
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not write to xid data file \"%u\": %m",
+						txn->xid)));
+	}
+
+	Assert(ondisk->change.action_internal == change->action_internal);
+}
+
+static void
+ReorderBufferCheckSerializeTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
+{
+	/* FIXME subtxn handling? */
+	if (txn->nentries_mem >= max_memtries)
+	{
+		ReorderBufferSerializeTXN(cache, txn);
+		Assert(txn->nentries_mem == 0);
+	}
+}
+
+static void
+ReorderBufferSerializeTXN(ReorderBuffer *cache, ReorderBufferTXN *txn)
+{
+	dlist_iter subtxn_i;
+	dlist_mutable_iter change_i;
+	int fd = -1;
+	XLogSegNo curOpenSegNo = 0;
+	Size spilled = 0;
+	char path[MAXPGPATH];
+
+	elog(LOG, "starting to spill %u", txn->xid);
+
+	/* do the same to all child TXs */
+	dlist_foreach(subtxn_i, &txn->subtxns)
+	{
+		ReorderBufferTXN *subtxn;
+
+		subtxn = dlist_container(ReorderBufferTXN, node, subtxn_i.cur);
+		ReorderBufferSerializeTXN(cache, subtxn);
+	}
+
+	/* serialize changestream */
+	dlist_foreach_modify(change_i, &txn->changes)
+	{
+		ReorderBufferChange *change;
+
+		change = dlist_container(ReorderBufferChange, node, change_i.cur);
+
+		/*
+		 * store in segment in which it belongs by start lsn, don't split over
+		 * multiple segments tho
+		 */
+		if (fd == -1 || XLByteInSeg(change->lsn, curOpenSegNo))
+		{
+			XLogRecPtr recptr;
+
+			if (fd != -1)
+				CloseTransientFile(fd);
+
+			XLByteToSeg(change->lsn, curOpenSegNo);
+			XLogSegNoOffsetToRecPtr(curOpenSegNo, 0, recptr);
+
+			sprintf(path, "pg_llog/%s/xid-%u-lsn-%X-%X.snap",
+			        NameStr(MyLogicalDecodingSlot->name), txn->xid,
+			        (uint32)(recptr >> 32), (uint32)recptr);
+
+			/* open segment, create it if necessary */
+			fd = OpenTransientFile(path,
+			                       O_CREAT | O_WRONLY | O_APPEND | PG_BINARY,
+			                       S_IRUSR | S_IWUSR);
+
+			if (fd < 0)
+				ereport(ERROR, (errmsg("could not open reorderbuffer file %s for writing: %m",  path)));
+		}
+
+		ReorderBufferSerializeChange(cache, txn, fd, change);
+		dlist_delete(&change->node);
+		ReorderBufferReturnChange(cache, change);
+
+		spilled++;
+	}
+
+	Assert(spilled == txn->nentries_mem);
+	Assert(dlist_is_empty(&txn->changes));
+	txn->nentries_mem = 0;
+
+	if (fd != -1)
+		CloseTransientFile(fd);
+
+	/* issue write barrier */
+	/* serialize main transaction state */
+}
+
+static Size
+ReorderBufferRestoreChanges(ReorderBuffer *cache, ReorderBufferTXN *txn,
+                            int *fd, XLogSegNo *segno)
+{
+	Size restored = 0;
+	XLogSegNo last_segno;
+	dlist_mutable_iter cleanup_iter;
+
+	Assert(txn->lsn != InvalidXLogRecPtr);
+	Assert(txn->last_lsn != InvalidXLogRecPtr);
+
+	/* free current entries, so we have memory for more */
+	dlist_foreach_modify(cleanup_iter, &txn->changes)
+	{
+		ReorderBufferChange *cleanup =
+			dlist_container(ReorderBufferChange, node, cleanup_iter.cur);
+		dlist_delete(&cleanup->node);
+		ReorderBufferReturnChange(cache, cleanup);
+	}
+	txn->nentries_mem = 0;
+	Assert(dlist_is_empty(&txn->changes));
+
+	XLByteToSeg(txn->last_lsn, last_segno);
+
+	while (restored < max_memtries && *segno <= last_segno)
+	{
+		int readBytes;
+		ReorderBufferDiskChange *ondisk;
+
+		if (*fd == -1)
+		{
+			XLogRecPtr recptr;
+			char path[MAXPGPATH];
+
+			/* first time in */
+			if (*segno == 0)
+			{
+				XLByteToSeg(txn->lsn, *segno);
+				elog(LOG, "initial restoring from %zu to %zu",
+				     *segno, last_segno);
+			}
+
+			Assert(*segno != 0 || dlist_is_empty(&txn->changes));
+			XLogSegNoOffsetToRecPtr(*segno, 0, recptr);
+
+			sprintf(path, "pg_llog/%s/xid-%u-lsn-%X-%X.snap",
+			        NameStr(MyLogicalDecodingSlot->name), txn->xid,
+			        (uint32)(recptr >> 32), (uint32)recptr);
+
+			elog(LOG, "opening file %s", path);
+
+			*fd = OpenTransientFile(path, O_RDONLY | PG_BINARY, 0);
+			if (*fd < 0 && errno == ENOENT)
+			{
+				*fd = -1;
+				(*segno)++;
+				continue;
+			}
+			else if (*fd < 0)
+				ereport(ERROR, (errmsg("could not open reorderbuffer file %s for reading: %m",  path)));
+
+		}
+
+		ReorderBufferSerializeReserve(cache, sizeof(ReorderBufferDiskChange));
+
+
+		/*
+		 * read the statically sized part of a change which has information
+		 * about the total size. If we couldn't read a record, we're at the end
+		 * of this file.
+		 */
+
+		readBytes = read(*fd, cache->outbuf, sizeof(ReorderBufferDiskChange));
+
+		/* eof */
+		if (readBytes == 0)
+		{
+			CloseTransientFile(*fd);
+			*fd = -1;
+			(*segno)++;
+			continue;
+		}
+		else if (readBytes < 0)
+			elog(ERROR, "read failed: %m");
+		else if (readBytes != sizeof(ReorderBufferDiskChange))
+			elog(ERROR, "incomplete read, read %d instead of %zu",
+			     readBytes, sizeof(ReorderBufferDiskChange));
+
+		ondisk = (ReorderBufferDiskChange *) cache->outbuf;
+
+		ReorderBufferSerializeReserve(cache, sizeof(ReorderBufferDiskChange) + ondisk->size);
+		ondisk = (ReorderBufferDiskChange *) cache->outbuf;
+
+		readBytes = read(*fd, cache->outbuf + sizeof(ReorderBufferDiskChange),
+		                 ondisk->size - sizeof(ReorderBufferDiskChange));
+
+		if (readBytes < 0)
+			elog(ERROR, "read2 failed: %m");
+		else if (readBytes != ondisk->size - sizeof(ReorderBufferDiskChange))
+			elog(ERROR, "incomplete read2, read %d instead of %zu",
+			     readBytes, ondisk->size - sizeof(ReorderBufferDiskChange));
+
+		/*
+		 * ok, read a full change from disk, now restore it into proper
+		 * in-memory format
+		 */
+		ReorderBufferRestoreChange(cache, txn, cache->outbuf);
+		restored++;
+	}
+
+	return restored;
+}
+
+/*
+ * Convert change from its on-disk format to in-memory format and queue it onto
+ * the TXN's ->changes list.
+ */
+static void
+ReorderBufferRestoreChange(ReorderBuffer *cache, ReorderBufferTXN *txn,
+                           char *data)
+{
+	ReorderBufferDiskChange *ondisk;
+	ReorderBufferChange *change;
+	ondisk = (ReorderBufferDiskChange *)data;
+
+	change = ReorderBufferGetChange(cache);
+
+	/* copy static part */
+	memcpy(change, &ondisk->change, sizeof(ReorderBufferChange));
+
+	data += sizeof(ReorderBufferDiskChange);
+
+	/* restore individual stuff */
+	switch ((ReorderBufferChangeTypeInternal)change->action_internal)
+	{
+		case REORDER_BUFFER_CHANGE_INTERNAL_INSERT:
+		/* fall through */
+		case REORDER_BUFFER_CHANGE_INTERNAL_UPDATE:
+		/* fall through */
+		case REORDER_BUFFER_CHANGE_INTERNAL_DELETE:
+			Assert(change->newtuple != NULL || change->oldtuple != NULL);
+			if (change->newtuple)
+			{
+				Size len =  offsetof(ReorderBufferTupleBuf, data)
+					+ ((ReorderBufferTupleBuf*)data)->tuple.t_len
+					- offsetof(HeapTupleHeaderData, t_bits);
+
+				change->newtuple = ReorderBufferGetTupleBuf(cache);
+				memcpy(change->newtuple, data, len);
+				change->newtuple->tuple.t_data = &change->newtuple->header;
+
+				data += len;
+			}
+
+			if (change->oldtuple)
+			{
+				Size len =  offsetof(ReorderBufferTupleBuf, data)
+					+ ((ReorderBufferTupleBuf*)data)->tuple.t_len
+					- offsetof(HeapTupleHeaderData, t_bits);
+
+				change->oldtuple = ReorderBufferGetTupleBuf(cache);
+				memcpy(change->oldtuple, data, len);
+				change->oldtuple->tuple.t_data = &change->oldtuple->header;
+				data += len;
+			}
+			break;
+		case REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT:
+			{
+				Snapshot oldsnap = change->snapshot;
+				Size size = sizeof(SnapshotData) +
+					sizeof(TransactionId) * oldsnap->xcnt +
+					sizeof(TransactionId) * (oldsnap->subxcnt + 1)
+					;
+				Assert(change->snapshot != NULL);
+
+				change->snapshot = calloc(1, size);
+				if (change->snapshot == NULL)
+					elog(ERROR, "memory allocation failed");
+
+				memcpy(change->snapshot, oldsnap, size);
+				change->snapshot->xip = (TransactionId *)
+					(((char *)change->snapshot) + sizeof(SnapshotData));
+				change->snapshot->subxip =
+					change->snapshot->xip + change->snapshot->xcnt + 1;
+				change->snapshot->copied = true;
+				break;
+			}
+		/* nothing needs to be done */
+		case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
+		case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
+			break;
+	}
+
+	dlist_push_tail(&txn->changes, &change->node);
+	txn->nentries_mem++;
+}
+
+/*
+ * Delete all data spilled to disk.
+ */
+void
+ReorderBufferStartup(void)
+{
+	DIR		   *logical_dir;
+	struct dirent *logical_de;
+
+	DIR		   *spill_dir;
+	struct dirent *spill_de;
+
+	logical_dir = AllocateDir("pg_llog");
+	while ((logical_de = ReadDir(logical_dir, "pg_llog")) != NULL)
+	{
+		char path[MAXPGPATH];
+
+		if (strcmp(logical_de->d_name, ".") == 0 ||
+			strcmp(logical_de->d_name, "..") == 0)
+			continue;
+
+		/* one of our own directories */
+		if (strcmp(logical_de->d_name, "snapshots") == 0)
+			continue;
+
+		/*
+		 * ok, has to be a surviving logical slot, iterate and delete
+		 * everythign starting with xid-*
+		 */
+		sprintf(path, "pg_llog/%s", logical_de->d_name);
+
+		spill_dir = AllocateDir(path);
+		while ((spill_de = ReadDir(spill_dir, "pg_llog")) != NULL)
+		{
+			if (strcmp(spill_de->d_name, ".") == 0 ||
+				strcmp(spill_de->d_name, "..") == 0)
+				continue;
+
+			if (strncmp(spill_de->d_name, "xid", 3) == 0)
+			{
+				sprintf(path, "pg_llog/%s/%s", logical_de->d_name,
+						spill_de->d_name);
+
+				if (unlink(path) != 0)
+					ereport(PANIC,
+							(errcode_for_file_access(),
+							 errmsg("could not remove xid data file \"%s\": %m",
+									path)));
+			}
+		}
+		FreeDir(spill_dir);
+	}
+	FreeDir(logical_dir);
 }
 
 /*

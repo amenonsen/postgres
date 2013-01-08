@@ -102,6 +102,7 @@ typedef struct ReorderBufferTXN
 	 * LSN of the first wal record with knowledge about this xid.
 	 */
 	XLogRecPtr	lsn;
+	XLogRecPtr	last_lsn;
 
 	/* did the TX have catalog changes */
 	bool does_timetravel;
@@ -256,6 +257,9 @@ struct ReorderBuffer
 	/* cached ReorderBufferTupleBufs */
 	slist_head cached_tuplebufs;
 	Size		nr_cached_tuplebufs;
+
+	char *outbuf;
+	Size outbufsize;
 };
 
 
@@ -287,4 +291,5 @@ void ReorderBufferXidSetTimetravel(ReorderBuffer *cache, TransactionId xid, XLog
 bool ReorderBufferXidDoesTimetravel(ReorderBuffer *cache, TransactionId xid);
 bool ReorderBufferXidHasBaseSnapshot(ReorderBuffer *cache, TransactionId xid);
 
+void ReorderBufferStartup(void);
 #endif

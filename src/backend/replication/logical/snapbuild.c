@@ -1400,7 +1400,7 @@ SnapBuildSerialize(Snapstate *state, XLogRecPtr lsn)
 	if (unlink(tmppath) != 0 && errno != ENOENT)
 		ereport(ERROR, (errmsg("could not unlink old file %s", path)));
 
-	ondisk = MemoryContextAlloc(state->context, needed_size);
+	ondisk = MemoryContextAllocZero(state->context, needed_size);
 	ondisk_c = ((char *) ondisk) + sizeof(SnapstateOnDisk);
 	ondisk->magic = SNAPSTATE_MAGIC;
 	ondisk->size = needed_size;
