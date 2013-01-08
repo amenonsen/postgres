@@ -194,7 +194,7 @@ sendFeedback(PGconn *conn, XLogRecPtr blockpos, int64 now, bool replyRequested)
 	int			len = 0;
 
 	if (blockpos == startpos)
-		return;
+		return true;
 
 	if (verbose)
 		fprintf(stderr,
