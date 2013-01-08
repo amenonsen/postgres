@@ -225,6 +225,7 @@
    &pgDumpall;
    &pgReceivexlog;
    &pgRestore;
+   &pgXlogdump;
    &psqlRef;
    &reindexdb;
    &vacuumdb;

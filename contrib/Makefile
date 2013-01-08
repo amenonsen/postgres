@@ -39,6 +39,7 @@ SUBDIRS = \
 		pg_trgm		\
 		pg_upgrade	\
 		pg_upgrade_support \
+		pg_xlogdump	\
 		pgbench		\
 		pgcrypto	\
 		pgrowlocks	\

@@ -24,6 +24,7 @@
 #include "storage/standby.h"
 #include "utils/relmapper.h"
 
+/* Also update contrib/pg_xlogdump/tables.c if you add something here. */
 
 const RmgrData RmgrTable[RM_MAX_ID + 1] = {
 	{"XLOG", xlog_redo, xlog_desc, NULL, NULL, NULL},
