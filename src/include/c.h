@@ -694,6 +694,73 @@ typedef NameData *Name;
 
 
 /*
+ * USE_ASSERT_CHECKING, if defined, turns on all the assertions.
+ * - plai  9/5/90
+ *
+ * It should _NOT_ be defined in releases or in benchmark copies
+ */
+
+/*
+ * Assert() can be used in both frontend and backend code. In frontend code it
+ * just calls the standard assert, if it's available. If use of assertions is
+ * not configured, it does nothing.
+ */
+#ifndef USE_ASSERT_CHECKING
+
+#define Assert(condition)
+#define AssertMacro(condition)	((void)true)
+#define AssertArg(condition)
+#define AssertState(condition)
+
+#elif defined FRONTEND
+
+#include <assert.h>
+#define Assert(p) assert(p)
+#define AssertMacro(p)	((void) assert(p))
+#define AssertArg(condition) assert(condition)
+#define AssertState(condition) assert(condition)
+
+#else /* USE_ASSERT_CHECKING && FRONTEND */
+
+/*
+ * Trap
+ *		Generates an exception if the given condition is true.
+ */
+#define Trap(condition, errorType) \
+	do { \
+		if ((assert_enabled) && (condition)) \
+			ExceptionalCondition(CppAsString(condition), (errorType), \
+								 __FILE__, __LINE__); \
+	} while (0)
+
+/*
+ *	TrapMacro is the same as Trap but it's intended for use in macros:
+ *
+ *		#define foo(x) (AssertMacro(x != 0), bar(x))
+ *
+ *	Isn't CPP fun?
+ */
+#define TrapMacro(condition, errorType) \
+	((bool) ((! assert_enabled) || ! (condition) || \
+			 (ExceptionalCondition(CppAsString(condition), (errorType), \
+								   __FILE__, __LINE__), 0)))
+
+#define Assert(condition) \
+		Trap(!(condition), "FailedAssertion")
+
+#define AssertMacro(condition) \
+		((void) TrapMacro(!(condition), "FailedAssertion"))
+
+#define AssertArg(condition) \
+		Trap(!(condition), "BadArgument")
+
+#define AssertState(condition) \
+		Trap(!(condition), "BadState")
+
+#endif /* USE_ASSERT_CHECKING && !FRONTEND */
+
+
+/*
  * Macros to support compile-time assertion checks.
  *
  * If the "condition" (a compile-time-constant expression) evaluates to false,
