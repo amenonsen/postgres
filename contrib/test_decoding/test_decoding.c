@@ -31,8 +31,6 @@ PG_MODULE_MAGIC;
 
 void _PG_init(void);
 
-void WalSndWriteData(XLogRecPtr lsn, const char *data, Size len);
-
 extern void pg_decode_init(void **private_data);
 
 extern bool pg_decode_begin_txn(void *private_data, StringInfo out, ReorderBufferTXN* txn);
