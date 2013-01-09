@@ -16,6 +16,7 @@
 #include "libpq-fe.h"
 #include "libpq/pqsignal.h"
 #include "access/xlog_internal.h"
+#include "port/palloc.h"
 
 #include "receivelog.h"
 #include "streamutil.h"

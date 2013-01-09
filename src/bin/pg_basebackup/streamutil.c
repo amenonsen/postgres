@@ -13,6 +13,7 @@
 
 #include "postgres_fe.h"
 #include "streamutil.h"
+#include "port/palloc.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -24,43 +25,6 @@ char	   *dbport = NULL;
 int			dbgetpassword = 0;	/* 0=auto, -1=never, 1=always */
 static char *dbpassword = NULL;
 PGconn	   *conn = NULL;
-
-/*
- * strdup() and malloc() replacements that print an error and exit
- * if something goes wrong. Can never return NULL.
- */
-char *
-pg_strdup(const char *s)
-{
-	char	   *result;
-
-	result = strdup(s);
-	if (!result)
-	{
-		fprintf(stderr, _("%s: out of memory\n"), progname);
-		exit(1);
-	}
-	return result;
-}
-
-void *
-pg_malloc0(size_t size)
-{
-	void	   *result;
-
-	/* Avoid unportable behavior of malloc(0) */
-	if (size == 0)
-		size = 1;
-	result = malloc(size);
-	if (!result)
-	{
-		fprintf(stderr, _("%s: out of memory\n"), progname);
-		exit(1);
-	}
-	MemSet(result, 0, size);
-	return result;
-}
-
 
 /*
  * Connect to the server. Returns a valid PGconn pointer if connected,

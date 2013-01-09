@@ -17,6 +17,7 @@
 #define DUMPUTILS_H
 
 #include "libpq-fe.h"
+#include "port/palloc.h"
 #include "pqexpbuffer.h"
 
 typedef enum					/* bits returned by set_dump_section */

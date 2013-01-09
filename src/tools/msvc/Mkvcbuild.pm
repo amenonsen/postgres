@@ -63,9 +63,12 @@ sub mkvcbuild
 	  sprompt.c tar.c thread.c getopt.c getopt_long.c dirent.c rint.c win32env.c
 	  win32error.c win32setlocale.c);
 
+	our @pgportfrontend = qw(palloc.c);
+
 	$libpgport = $solution->AddProject('libpgport', 'lib', 'misc');
 	$libpgport->AddDefine('FRONTEND');
 	$libpgport->AddFiles('src\port', @pgportfiles);
+	$libpgport->AddFiles('src\port', @pgportfrontend);
 
 	$postgres = $solution->AddProject('postgres', 'exe', '', 'src\backend');
 	$postgres->AddIncludeDir('src\backend');
@@ -393,7 +396,6 @@ sub mkvcbuild
 	$pgdumpall->AddIncludeDir('src\backend');
 	$pgdumpall->AddFile('src\bin\pg_dump\pg_dumpall.c');
 	$pgdumpall->AddFile('src\bin\pg_dump\dumputils.c');
-	$pgdumpall->AddFile('src\bin\pg_dump\dumpmem.c');
 	$pgdumpall->AddFile('src\bin\pg_dump\keywords.c');
 	$pgdumpall->AddFile('src\backend\parser\kwlookup.c');
 
