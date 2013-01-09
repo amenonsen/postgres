@@ -213,55 +213,6 @@ get_user_info(char **user_name)
 }
 
 
-void *
-pg_malloc(size_t size)
-{
-	void	   *p;
-
-	/* Avoid unportable behavior of malloc(0) */
-	if (size == 0)
-		size = 1;
-	p = malloc(size);
-	if (p == NULL)
-		pg_log(PG_FATAL, "%s: out of memory\n", os_info.progname);
-	return p;
-}
-
-void *
-pg_realloc(void *ptr, size_t size)
-{
-	void	   *p;
-
-	/* Avoid unportable behavior of realloc(NULL, 0) */
-	if (ptr == NULL && size == 0)
-		size = 1;
-	p = realloc(ptr, size);
-	if (p == NULL)
-		pg_log(PG_FATAL, "%s: out of memory\n", os_info.progname);
-	return p;
-}
-
-
-void
-pg_free(void *ptr)
-{
-	if (ptr != NULL)
-		free(ptr);
-}
-
-
-char *
-pg_strdup(const char *s)
-{
-	char	   *result = strdup(s);
-
-	if (result == NULL)
-		pg_log(PG_FATAL, "%s: out of memory\n", os_info.progname);
-
-	return result;
-}
-
-
 /*
  * getErrorText()
  *

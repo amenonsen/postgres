@@ -49,9 +49,8 @@ extern void *MemoryContextAlloc(MemoryContext context, Size size);
 extern void *MemoryContextAllocZero(MemoryContext context, Size size);
 extern void *MemoryContextAllocZeroAligned(MemoryContext context, Size size);
 
-#define palloc(sz)	MemoryContextAlloc(CurrentMemoryContext, (sz))
-
-#define palloc0(sz) MemoryContextAllocZero(CurrentMemoryContext, (sz))
+extern void *palloc(Size size);
+extern void *palloc0(Size size);
 
 /*
  * The result of palloc() is always word-aligned, so we can skip testing
@@ -102,14 +101,9 @@ MemoryContextSwitchTo(MemoryContext context)
  */
 extern char *MemoryContextStrdup(MemoryContext context, const char *string);
 
-#define pstrdup(str)  MemoryContextStrdup(CurrentMemoryContext, (str))
+extern char *pstrdup(const char *in);
 
 extern char *pnstrdup(const char *in, Size len);
 
-#if defined(WIN32) || defined(__CYGWIN__)
-extern void *pgport_palloc(Size sz);
-extern char *pgport_pstrdup(const char *str);
-extern void pgport_pfree(void *pointer);
-#endif
 
 #endif   /* PALLOC_H */

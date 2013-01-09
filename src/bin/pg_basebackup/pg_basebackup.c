@@ -15,6 +15,7 @@
 #include "libpq-fe.h"
 #include "pqexpbuffer.h"
 #include "pgtar.h"
+#include "port/palloc.h"
 
 #include <unistd.h>
 #include <dirent.h>
@@ -31,7 +32,6 @@
 
 #include "receivelog.h"
 #include "streamutil.h"
-
 
 /* Global options */
 char	   *basedir = NULL;

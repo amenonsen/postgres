@@ -26,7 +26,7 @@
 
 #include "compress_io.h"
 #include "dumputils.h"
-#include "dumpmem.h"
+#include "port/palloc.h"
 
 /*--------
  * Routines in the format interface
