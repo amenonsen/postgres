@@ -50,6 +50,7 @@ SUBDIRS = \
 		tcn		\
 		test_parser	\
 		test_decoding	\
+		test_logical_replication \
 		tsearch2	\
 		unaccent	\
 		vacuumlo	\
