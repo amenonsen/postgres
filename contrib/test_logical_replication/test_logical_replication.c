@@ -327,14 +327,14 @@ PG_FUNCTION_INFO_V1(stop_logical_replication);
 Datum
 stop_logical_replication(PG_FUNCTION_ARGS)
 {
-	int n = 0;
+	if (!slot_name)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 (errmsg("sorry, can't stop logical replication before init"))));
 
-	if (slot_name)
-	{
-		CheckLogicalReplicationRequirements();
-		LogicalDecodingFreeSlot(slot_name);
-		slot_name = NULL;
-		n = 1;
-	}
-	PG_RETURN_INT32(n);
+	CheckLogicalReplicationRequirements();
+	LogicalDecodingFreeSlot(slot_name);
+	slot_name = NULL;
+
+	PG_RETURN_INT32(0);
 }
