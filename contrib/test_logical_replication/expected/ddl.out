@@ -1,0 +1,269 @@
+CREATE EXTENSION test_logical_replication;
+-- predictability
+SET synchronous_commit = on;
+-- faster startup
+CHECKPOINT;
+SELECT 'init' FROM init_logical_replication('test', 'test_decoding');
+ ?column? 
+----------
+ init
+(1 row)
+
+-- fail because of an already existing slot
+SELECT 'init' FROM init_logical_replication('test', 'test_decoding');
+ERROR:  There is already a logical slot named 'test'
+-- succeed once
+SELECT stop_logical_replication('test');
+ stop_logical_replication 
+--------------------------
+                        0
+(1 row)
+
+-- fail
+SELECT stop_logical_replication('test');
+ERROR:  couldn't find logical slot for "test"
+SELECT 'init' FROM init_logical_replication('test', 'test_decoding');
+ ?column? 
+----------
+ init
+(1 row)
+
+CREATE TABLE replication_example(id SERIAL PRIMARY KEY, somedata int, text varchar(120));
+BEGIN;
+INSERT INTO replication_example(somedata, text) VALUES (1, 1);
+INSERT INTO replication_example(somedata, text) VALUES (1, 2);
+COMMIT;
+ALTER TABLE replication_example ADD COLUMN bar int;
+INSERT INTO replication_example(somedata, text, bar) VALUES (2, 1, 4);
+BEGIN;
+INSERT INTO replication_example(somedata, text, bar) VALUES (2, 2, 4);
+INSERT INTO replication_example(somedata, text, bar) VALUES (2, 3, 4);
+INSERT INTO replication_example(somedata, text, bar) VALUES (2, 4, NULL);
+COMMIT;
+ALTER TABLE replication_example DROP COLUMN bar;
+INSERT INTO replication_example(somedata, text) VALUES (3, 1);
+BEGIN;
+INSERT INTO replication_example(somedata, text) VALUES (3, 2);
+INSERT INTO replication_example(somedata, text) VALUES (3, 3);
+COMMIT;
+ALTER TABLE replication_example RENAME COLUMN text TO somenum;
+INSERT INTO replication_example(somedata, somenum) VALUES (4, 1);
+-- collect all changes
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+                                                                                                                                         data                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ BEGIN
+ table "replication_example_id_seq": INSERT: sequence_name[name]:replication_example_id_seq last_value[int8]:1 start_value[int8]:1 increment_by[int8]:1 max_value[int8]:9223372036854775807 min_value[int8]:1 cache_value[int8]:1 log_cnt[int8]:0 is_cycled[bool]:f is_called[bool]:f
+ COMMIT
+ BEGIN
+ table "replication_example": INSERT: id[int4]:1 somedata[int4]:1 text[varchar]:1
+ table "replication_example": INSERT: id[int4]:2 somedata[int4]:1 text[varchar]:2
+ COMMIT
+ BEGIN
+ COMMIT
+ BEGIN
+ table "replication_example": INSERT: id[int4]:3 somedata[int4]:2 text[varchar]:1 bar[int4]:4
+ COMMIT
+ BEGIN
+ table "replication_example": INSERT: id[int4]:4 somedata[int4]:2 text[varchar]:2 bar[int4]:4
+ table "replication_example": INSERT: id[int4]:5 somedata[int4]:2 text[varchar]:3 bar[int4]:4
+ table "replication_example": INSERT: id[int4]:6 somedata[int4]:2 text[varchar]:4 bar[int4]:(null)
+ COMMIT
+ BEGIN
+ COMMIT
+ BEGIN
+ table "replication_example": INSERT: id[int4]:7 somedata[int4]:3 text[varchar]:1
+ COMMIT
+ BEGIN
+ table "replication_example": INSERT: id[int4]:8 somedata[int4]:3 text[varchar]:2
+ table "replication_example": INSERT: id[int4]:9 somedata[int4]:3 text[varchar]:3
+ COMMIT
+ BEGIN
+ COMMIT
+ BEGIN
+ table "replication_example": INSERT: id[int4]:10 somedata[int4]:4 somenum[varchar]:1
+ COMMIT
+(31 rows)
+
+ALTER TABLE replication_example ALTER COLUMN somenum TYPE int4 USING (somenum::int4);
+-- throw away changes, they contain oids
+SELECT count(data) FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+ count 
+-------
+    12
+(1 row)
+
+INSERT INTO replication_example(somedata, somenum) VALUES (5, 1);
+BEGIN;
+INSERT INTO replication_example(somedata, somenum) VALUES (6, 1);
+ALTER TABLE replication_example ADD COLUMN zaphod1 int;
+INSERT INTO replication_example(somedata, somenum, zaphod1) VALUES (6, 2, 1);
+ALTER TABLE replication_example ADD COLUMN zaphod2 int;
+INSERT INTO replication_example(somedata, somenum, zaphod2) VALUES (6, 3, 1);
+INSERT INTO replication_example(somedata, somenum, zaphod1) VALUES (6, 4, 2);
+COMMIT;
+/*
+ * check whether the correct indexes are chosen for deletions
+ */
+CREATE TABLE tr_unique(id2 serial unique NOT NULL, data int);
+INSERT INTO tr_unique(data) VALUES(10);
+--show deletion with unique index
+DELETE FROM tr_unique;
+ALTER TABLE tr_unique RENAME TO tr_pkey;
+-- show changes
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+                                                                                                                                data                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ BEGIN
+ table "replication_example": INSERT: id[int4]:11 somedata[int4]:5 somenum[int4]:1
+ COMMIT
+ BEGIN
+ table "replication_example": INSERT: id[int4]:12 somedata[int4]:6 somenum[int4]:1
+ table "replication_example": INSERT: id[int4]:13 somedata[int4]:6 somenum[int4]:2 zaphod1[int4]:1
+ table "replication_example": INSERT: id[int4]:14 somedata[int4]:6 somenum[int4]:3 zaphod1[int4]:(null) zaphod2[int4]:1
+ table "replication_example": INSERT: id[int4]:15 somedata[int4]:6 somenum[int4]:4 zaphod1[int4]:2 zaphod2[int4]:(null)
+ COMMIT
+ BEGIN
+ table "tr_unique_id2_seq": INSERT: sequence_name[name]:tr_unique_id2_seq last_value[int8]:1 start_value[int8]:1 increment_by[int8]:1 max_value[int8]:9223372036854775807 min_value[int8]:1 cache_value[int8]:1 log_cnt[int8]:0 is_cycled[bool]:f is_called[bool]:f
+ COMMIT
+ BEGIN
+ table "tr_unique": INSERT: id2[int4]:1 data[int4]:10
+ COMMIT
+ BEGIN
+ table "tr_unique": DELETE: id2[int4]:1
+ COMMIT
+ BEGIN
+ COMMIT
+(20 rows)
+
+-- hide changes bc of oid visible in full table rewrites
+ALTER TABLE tr_pkey ADD COLUMN id serial primary key;
+SELECT count(data) FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+ count 
+-------
+     3
+(1 row)
+
+INSERT INTO tr_pkey(data) VALUES(1);
+--show deletion with primary key
+DELETE FROM tr_pkey;
+/* display results */
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+                             data                             
+--------------------------------------------------------------
+ BEGIN
+ table "tr_pkey": INSERT: id2[int4]:2 data[int4]:1 id[int4]:1
+ COMMIT
+ BEGIN
+ table "tr_pkey": DELETE: id[int4]:1
+ COMMIT
+(6 rows)
+
+/*
+ * check that disk spooling works
+ */
+BEGIN;
+CREATE TABLE tr_etoomuch (id serial primary key, data int);
+INSERT INTO tr_etoomuch(data) SELECT g.i FROM generate_series(1, 10234) g(i);
+DELETE FROM tr_etoomuch WHERE id < 5000;
+UPDATE tr_etoomuch SET data = - data WHERE id > 5000;
+COMMIT;
+/* display results, but hide most of the output */
+SELECT count(*), min(data), max(data)
+FROM start_logical_replication('test', 'now', 'hide-xids', '1')
+GROUP BY substring(data, 1, 24)
+ORDER BY 1;
+ count |                                                                                                                                 min                                                                                                                                  |                                                                                                                                 max                                                                                                                                  
+-------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+     1 | COMMIT                                                                                                                                                                                                                                                               | COMMIT
+     1 | BEGIN                                                                                                                                                                                                                                                                | BEGIN
+     1 | table "tr_etoomuch_id_seq": INSERT: sequence_name[name]:tr_etoomuch_id_seq last_value[int8]:1 start_value[int8]:1 increment_by[int8]:1 max_value[int8]:9223372036854775807 min_value[int8]:1 cache_value[int8]:1 log_cnt[int8]:0 is_cycled[bool]:f is_called[bool]:f | table "tr_etoomuch_id_seq": INSERT: sequence_name[name]:tr_etoomuch_id_seq last_value[int8]:1 start_value[int8]:1 increment_by[int8]:1 max_value[int8]:9223372036854775807 min_value[int8]:1 cache_value[int8]:1 log_cnt[int8]:0 is_cycled[bool]:f is_called[bool]:f
+  4999 | table "tr_etoomuch": DELETE: id[int4]:1                                                                                                                                                                                                                              | table "tr_etoomuch": DELETE: id[int4]:999
+  5234 | table "tr_etoomuch": UPDATE: id[int4]:10000 data[int4]:-10000                                                                                                                                                                                                        | table "tr_etoomuch": UPDATE: id[int4]:9999 data[int4]:-9999
+ 10234 | table "tr_etoomuch": INSERT: id[int4]:10000 data[int4]:10000                                                                                                                                                                                                         | table "tr_etoomuch": INSERT: id[int4]:9 data[int4]:9
+(6 rows)
+
+/*
+ * check whether we subtransactions correctly in relation with each other
+ */
+CREATE TABLE tr_sub (id serial primary key, path text);
+-- toplevel, subtxn, toplevel, subtxn, subtxn
+BEGIN;
+INSERT INTO tr_sub(path) VALUES ('1-top-#1');
+SAVEPOINT a;
+INSERT INTO tr_sub(path) VALUES ('1-top-1-#1');
+INSERT INTO tr_sub(path) VALUES ('1-top-1-#2');
+RELEASE SAVEPOINT a;
+SAVEPOINT b;
+SAVEPOINT c;
+INSERT INTO tr_sub(path) VALUES ('1-top-2-1-#1');
+INSERT INTO tr_sub(path) VALUES ('1-top-2-1-#2');
+RELEASE SAVEPOINT c;
+INSERT INTO tr_sub(path) VALUES ('1-top-2-#1');
+RELEASE SAVEPOINT b;
+COMMIT;
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+                                                                                                                            data                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ BEGIN
+ table "tr_sub_id_seq": INSERT: sequence_name[name]:tr_sub_id_seq last_value[int8]:1 start_value[int8]:1 increment_by[int8]:1 max_value[int8]:9223372036854775807 min_value[int8]:1 cache_value[int8]:1 log_cnt[int8]:0 is_cycled[bool]:f is_called[bool]:f
+ COMMIT
+ BEGIN
+ table "tr_sub": INSERT: id[int4]:1 path[text]:1-top-#1
+ table "tr_sub": INSERT: id[int4]:2 path[text]:1-top-1-#1
+ table "tr_sub": INSERT: id[int4]:3 path[text]:1-top-1-#2
+ table "tr_sub": INSERT: id[int4]:4 path[text]:1-top-2-1-#1
+ table "tr_sub": INSERT: id[int4]:5 path[text]:1-top-2-1-#2
+ table "tr_sub": INSERT: id[int4]:6 path[text]:1-top-2-#1
+ COMMIT
+(11 rows)
+
+-- check that we handle xlog assignments correctly
+BEGIN;
+-- nest 80 subtxns
+SAVEPOINT subtop;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;SAVEPOINT a;
+-- assign xid by inserting
+INSERT INTO tr_sub(path) VALUES ('2-top-1...--#1');
+INSERT INTO tr_sub(path) VALUES ('2-top-1...--#2');
+INSERT INTO tr_sub(path) VALUES ('2-top-1...--#3');
+RELEASE SAVEPOINT subtop;
+INSERT INTO tr_sub(path) VALUES ('2-top-#1');
+COMMIT;
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+                             data                             
+--------------------------------------------------------------
+ BEGIN
+ table "tr_sub": INSERT: id[int4]:7 path[text]:2-top-1...--#1
+ table "tr_sub": INSERT: id[int4]:8 path[text]:2-top-1...--#2
+ table "tr_sub": INSERT: id[int4]:9 path[text]:2-top-1...--#3
+ table "tr_sub": INSERT: id[int4]:10 path[text]:2-top-#1
+ COMMIT
+(6 rows)
+
+-- done, free logical replication slot
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+ data 
+------
+(0 rows)
+
+SELECT stop_logical_replication('test');
+ stop_logical_replication 
+--------------------------
+                        0
+(1 row)
+
