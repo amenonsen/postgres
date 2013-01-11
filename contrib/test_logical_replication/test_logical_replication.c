@@ -203,7 +203,7 @@ init_logical_replication(PG_FUNCTION_ARGS)
 	result = HeapTupleGetDatum(tuple);
 
 	/* start_logical_replication should start from where we are now */
-	startpoint = GetXLogWriteRecPtr();
+	startpoint = GetFlushRecPtr();
 
 	PG_RETURN_DATUM(result);
 }
@@ -237,7 +237,7 @@ start_logical_replication(PG_FUNCTION_ARGS)
 		 * XXX: It's impolite to ignore our argument and keep decoding
 		 * until the current position.
 		 */
-		now = GetXLogWriteRecPtr();
+		now = GetFlushRecPtr();
 
 		CheckLogicalReplicationRequirements();
 		LogicalDecodingReAcquireSlot(slot_name);
