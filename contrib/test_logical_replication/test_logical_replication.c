@@ -12,6 +12,7 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "nodes/pg_list.h"
+#include "miscadmin.h"
 #include "funcapi.h"
 
 PG_MODULE_MAGIC;
@@ -22,7 +23,8 @@ Datum stop_logical_replication(PG_FUNCTION_ARGS);
 
 static const char *slot_name = NULL;
 static XLogRecPtr startpoint = 0;
-static List *output = NULL;
+static Tuplestorestate *tupstore = NULL;
+static TupleDesc tupdesc;
 
 extern void XLogRead(char *buf, TimeLineID tli, XLogRecPtr startptr, Size count);
 
@@ -61,9 +63,13 @@ test_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
 
 static void save_line(StringInfo si)
 {
-	StringInfo ti = makeStringInfo();
-	appendStringInfoString(ti, si->data);
-	output = lappend(output, ti);
+	Datum values[1];
+	bool nulls[1];
+
+	memset(nulls, 0, sizeof(nulls));
+	values[0] = CStringGetTextDatum(si->data);
+
+	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 }
 
 static void
@@ -213,7 +219,9 @@ PG_FUNCTION_INFO_V1(start_logical_replication);
 Datum
 start_logical_replication(PG_FUNCTION_ARGS)
 {
-	FuncCallContext *ctx;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	MemoryContext per_query_ctx;
+	MemoryContext oldcontext;
 
 	XLogRecPtr now;
 	XLogReaderState *logical_reader;
@@ -225,101 +233,105 @@ start_logical_replication(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 (errmsg("sorry, can't start logical replication outside of an init/stop pair"))));
 
-	if (SRF_IS_FIRSTCALL())
+	/* check to see if caller supports us returning a tuplestore */
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context that cannot accept a set")));
+	if (!(rsinfo->allowedModes & SFRM_Materialize))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("materialize mode required, but it is not " \
+						"allowed in this context")));
+
+	/* Build a tuple descriptor for our result type */
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		elog(ERROR, "return type must be a row type");
+
+	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
+	oldcontext = MemoryContextSwitchTo(per_query_ctx);
+
+	tupstore = tuplestore_begin_heap(true, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
+
+	MemoryContextSwitchTo(oldcontext);
+
+	/*
+	 * XXX: It's impolite to ignore our argument and keep decoding
+	 * until the current position.
+	 */
+	now = GetFlushRecPtr();
+
+	/*
+	 * We need to create a normal_snapshot_reader, but adjust it to use
+	 * our page_read callback, and also make its reorder buffer use our
+	 * callback wrappers that don't depend on walsender.
+	 */
+
+	CheckLogicalReplicationRequirements();
+	LogicalDecodingReAcquireSlot(slot_name);
+	logical_reader = normal_snapshot_reader(MyLogicalDecodingSlot->last_required_checkpoint,
+											MyLogicalDecodingSlot->xmin,
+											NameStr(MyLogicalDecodingSlot->plugin),
+											startpoint);
+
+	logical_reader->read_page = test_read_page;
+	apply_state = (ReaderApplyState *)logical_reader->private_data;
+	reorder = apply_state->reorderbuffer;
+	reorder->begin = begin_txn_wrapper;
+	reorder->apply_change = change_wrapper;
+	reorder->commit = commit_txn_wrapper;
+
+	elog(DEBUG1, "Starting logical replication from %X/%X to %X/%x",
+		 (uint32)(startpoint>>32), (uint32)startpoint,
+		 (uint32)(now>>32), (uint32)now);
+
+	for (;;)
 	{
-		MemoryContext oldcontext;
+		XLogRecord *record;
+		char *errm = NULL;
 
-		ctx = SRF_FIRSTCALL_INIT();
+		record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, &errm);
+		if (errm)
+			elog(ERROR, "%s", errm);
 
-		oldcontext = MemoryContextSwitchTo(ctx->multi_call_memory_ctx);
-
-		/*
-		 * XXX: It's impolite to ignore our argument and keep decoding
-		 * until the current position.
-		 */
-		now = GetFlushRecPtr();
-
-		CheckLogicalReplicationRequirements();
-		LogicalDecodingReAcquireSlot(slot_name);
-		logical_reader = normal_snapshot_reader(MyLogicalDecodingSlot->last_required_checkpoint,
-												MyLogicalDecodingSlot->xmin,
-												NameStr(MyLogicalDecodingSlot->plugin),
-												startpoint);
-
-		/*
-		 * We need to adjust the normal_snapshot_reader to use our
-		 * page_read callback, and also make its reorder buffer use our
-		 * callback wrappers that don't depend on walsender.
-		 */
-
-		logical_reader->read_page = test_read_page;
-		apply_state = (ReaderApplyState *)logical_reader->private_data;
-		reorder = apply_state->reorderbuffer;
-		reorder->begin = begin_txn_wrapper;
-		reorder->apply_change = change_wrapper;
-		reorder->commit = commit_txn_wrapper;
-
-		/*
-		 * We're accumulating all the decoded WAL in memory until we
-		 * reach the desired end point. That's not very nice, but it's
-		 * simpler than trying to interleave the SRF_RETURN_NEXT() logic
-		 * into the XLogReadRecord() loop.
-		 */
-
-		elog(DEBUG1, "Starting logical replication from %X/%X to %X/%x",
-			 (uint32)(startpoint>>32), (uint32)startpoint,
-			 (uint32)(now>>32), (uint32)now);
-
-		for (;;)
+		if (record != NULL)
 		{
-			XLogRecord *record;
-			char *errm = NULL;
+			XLogRecPtr rp;
+			XLogRecordBuffer buf;
+			ReaderApplyState* apply_state = logical_reader->private_data;
 
-			record = XLogReadRecord(logical_reader, InvalidXLogRecPtr, &errm);
-			if (errm)
-				elog(ERROR, "%s", errm);
+			buf.origptr = logical_reader->ReadRecPtr;
+			buf.record = *record;
+			buf.record_data = XLogRecGetData(record);
 
-			if (record != NULL)
+			/*
+			 * The {begin_txn,change,commit_txn}_wrapper callbacks above
+			 * will store the description into our tuplestore.
+			 */
+			DecodeRecordIntoReorderBuffer(logical_reader, apply_state, &buf);
+
+			rp = logical_reader->ReadRecPtr;
+			if (rp >= now)
 			{
-				XLogRecPtr rp;
-				XLogRecordBuffer buf;
-				ReaderApplyState* apply_state = logical_reader->private_data;
-
-				buf.origptr = logical_reader->ReadRecPtr;
-				buf.record = *record;
-				buf.record_data = XLogRecGetData(record);
-
-				DecodeRecordIntoReorderBuffer(logical_reader, apply_state, &buf);
-
-				/* XXX: Is this the right condition? */
-				rp = logical_reader->ReadRecPtr;
-				if (rp >= now)
-				{
-					elog(DEBUG1, "Reached endpoint (wanted: %X/%X, got: %X/%X)",
-						 (uint32)(now>>32), (uint32)now,
-						 (uint32)(rp>>32), (uint32)rp);
-					break;
-				}
+				elog(DEBUG1, "Reached endpoint (wanted: %X/%X, got: %X/%X)",
+					 (uint32)(now>>32), (uint32)now,
+					 (uint32)(rp>>32), (uint32)rp);
+				break;
 			}
 		}
-
-		/* Next time, start where we left off */
-		startpoint = now;
-
-		MemoryContextSwitchTo(oldcontext);
 	}
 
-	ctx = SRF_PERCALL_SETUP();
+	tuplestore_donestoring(tupstore);
 
-	while (output)
-	{
-		StringInfo si = linitial(output);
-		output = list_delete_first(output);
-		SRF_RETURN_NEXT(ctx, CStringGetTextDatum(si->data));
-	}
+	/* Next time, start where we left off */
+	startpoint = now;
 
 	LogicalDecodingReleaseSlot();
-	SRF_RETURN_DONE(ctx);
+
+	return (Datum) 0;
 }
 
 PG_FUNCTION_INFO_V1(stop_logical_replication);
