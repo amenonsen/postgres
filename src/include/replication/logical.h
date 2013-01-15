@@ -109,7 +109,7 @@ typedef struct
 extern Size LogicalDecodingShmemSize(void);
 extern void LogicalDecodingShmemInit(void);
 
-extern void LogicalDecodingAcquireFreeSlot(const char *plugin);
+extern void LogicalDecodingAcquireFreeSlot(const char *name, const char *plugin);
 extern void LogicalDecodingReleaseSlot(void);
 extern void LogicalDecodingReAcquireSlot(const char *name);
 extern void LogicalDecodingFreeSlot(const char *name);

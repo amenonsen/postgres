@@ -257,34 +257,52 @@ CheckLogicalReplicationRequirements(void)
  * Search for a free slot, mark it as used and acquire a valid xmin horizon
  * value.
  */
-void LogicalDecodingAcquireFreeSlot(const char *plugin)
+void LogicalDecodingAcquireFreeSlot(const char *name, const char *plugin)
 {
 	LogicalDecodingSlot *slot = NULL;
+	bool name_in_use = false;
 	int i;
-	char	   *slot_name;
 
 	Assert(!MyLogicalDecodingSlot);
 
 	CheckLogicalReplicationRequirements();
 
+	/*
+	 * Look for the first available (not in_use (=> not active)) slot
+	 * and remember it, but also look for other slots with the same
+	 * name.
+	 */
+
 	for (i = 0; i < max_logical_slots; i++)
 	{
-		slot = &LogicalDecodingCtl->logical_slots[i];
-		SpinLockAcquire(&slot->mutex);
-		if (!slot->in_use)
+		LogicalDecodingSlot *s = &LogicalDecodingCtl->logical_slots[i];
+
+		SpinLockAcquire(&s->mutex);
+		if (!s->in_use && !slot)
 		{
-			Assert(!slot->active);
+			Assert(!s->active);
 			/* NOT releasing the lock yet */
+			slot = s;
+		}
+		else if (strcmp(name, NameStr(s->name)) == 0)
+		{
+			name_in_use = true;
+			if (slot)
+				SpinLockRelease(&slot->mutex);
+			SpinLockRelease(&s->mutex);
 			break;
 		}
-		SpinLockRelease(&slot->mutex);
-		slot = NULL;
+		else
+		{
+			SpinLockRelease(&s->mutex);
+		}
 	}
 
+	if (name_in_use)
+		elog(ERROR, "There is already a logical slot named '%s'", name);
+
 	if (!slot)
-	{
 		elog(ERROR, "couldn't find free logical slot. free one or increase max_logical_slots");
-	}
 
 	MyLogicalDecodingSlot = slot;
 
@@ -295,13 +313,11 @@ void LogicalDecodingAcquireFreeSlot(const char *plugin)
 	/* XXX: do we want to use truncate identifier instead? */
 	strncpy(NameStr(slot->plugin), plugin, NAMEDATALEN);
 	NameStr(slot->plugin)[NAMEDATALEN-1] = '\0';
+	strncpy(NameStr(slot->name), name, NAMEDATALEN);
+	NameStr(slot->name)[NAMEDATALEN-1] = '\0';
 
 	/* Arrange to clean up at exit/error */
 	on_shmem_exit(LogicalSlotKill, 0);
-
-	/* XXX: conflict free algorithm! */
-	slot_name = NameStr(slot->name);
-	sprintf(slot_name, "id-%d-%d", MyDatabaseId, i);
 
 	/* release slot so it can be examined by others */
 	SpinLockRelease(&slot->mutex);

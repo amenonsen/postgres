@@ -617,7 +617,7 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 
 	Assert(!MyLogicalDecodingSlot);
 
-	LogicalDecodingAcquireFreeSlot(cmd->plugin);
+	LogicalDecodingAcquireFreeSlot(cmd->name, cmd->plugin);
 
 	Assert(MyLogicalDecodingSlot);
 

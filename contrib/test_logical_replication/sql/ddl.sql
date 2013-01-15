@@ -5,7 +5,9 @@ SET synchronous_commit = on;
 -- faster startup
 CHECKPOINT;
 
-SELECT 'init' FROM init_logical_replication('test_decoding');
+SELECT 'init' FROM init_logical_replication('test', 'test_decoding');
+
+SELECT 'init' FROM init_logical_replication('test', 'test_decoding');
 
 CREATE TABLE replication_example(id SERIAL PRIMARY KEY, somedata int, text varchar(120));
 BEGIN;
@@ -36,11 +38,11 @@ ALTER TABLE replication_example RENAME COLUMN text TO somenum;
 INSERT INTO replication_example(somedata, somenum) VALUES (4, 1);
 
 -- collect all changes
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
 
 ALTER TABLE replication_example ALTER COLUMN somenum TYPE int4 USING (somenum::int4);
 -- throw away changes, they contain oids
-SELECT count(data) FROM start_logical_replication('now');
+SELECT count(data) FROM start_logical_replication('test', 'now');
 
 INSERT INTO replication_example(somedata, somenum) VALUES (5, 1);
 
@@ -65,18 +67,18 @@ DELETE FROM tr_unique;
 ALTER TABLE tr_unique RENAME TO tr_pkey;
 
 -- show changes
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
 
 -- hide changes bc of oid visible in full table rewrites
 ALTER TABLE tr_pkey ADD COLUMN id serial primary key;
-SELECT count(data) FROM start_logical_replication('now');
+SELECT count(data) FROM start_logical_replication('test', 'now');
 
 INSERT INTO tr_pkey(data) VALUES(1);
 --show deletion with primary key
 DELETE FROM tr_pkey;
 
 /* display results */
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
 
 /*
  * check that disk spooling works
@@ -90,7 +92,7 @@ COMMIT;
 
 /* display results, but hide most of the output */
 SELECT count(*), min(data), max(data)
-FROM start_logical_replication('now')
+FROM start_logical_replication('test', 'now')
 GROUP BY substring(data, 1, 24)
 ORDER BY 1;
 
@@ -117,7 +119,7 @@ INSERT INTO tr_sub(path) VALUES ('1-top-2-#1');
 RELEASE SAVEPOINT b;
 COMMIT;
 
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
 
 -- check that we handle xlog assignments correctly
 BEGIN;
@@ -146,9 +148,9 @@ RELEASE SAVEPOINT subtop;
 INSERT INTO tr_sub(path) VALUES ('2-top-#1');
 COMMIT;
 
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
 
 
 -- done, free logical replication slot
-SELECT data FROM start_logical_replication('now');
-SELECT stop_logical_replication();
+SELECT data FROM start_logical_replication('test', 'now');
+SELECT stop_logical_replication('test');

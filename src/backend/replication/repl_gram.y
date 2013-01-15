@@ -89,6 +89,9 @@ Node *replication_parse_result;
 %type <list>	base_backup_opt_list
 %type <defelt>	base_backup_opt
 %type <intval>	opt_timeline
+%type <list>	init_options init_opt_list
+%type <defelt>	init_opt_elem
+%type <node>	init_opt_arg
 %%
 
 firstcmd: command opt_semicolon
@@ -194,15 +197,46 @@ opt_timeline:
 
 /* FIXME: don't use SCONST */
 init_logical_replication:
-			K_INIT_LOGICAL_REPLICATION SCONST
+			K_INIT_LOGICAL_REPLICATION SCONST SCONST init_options
 				{
 					InitLogicalReplicationCmd *cmd;
 					cmd = makeNode(InitLogicalReplicationCmd);
-					cmd->plugin = $2;
+					cmd->name = $2;
+					cmd->plugin = $3;
+					cmd->options = $4;
 
 					$$ = (Node *) cmd;
 				}
 			;
+
+init_options:
+			'(' init_opt_list ')'			{ $$ = $2; }
+			| /* EMPTY */					{ $$ = NIL; }
+		;
+
+init_opt_list:
+			init_opt_elem
+				{
+					$$ = list_make1($1);
+				}
+			| init_opt_list ',' init_opt_elem
+				{
+					$$ = lappend($1, $3);
+				}
+		;
+
+init_opt_elem:
+			SCONST init_opt_arg
+				{
+					$$ = makeDefElem($1, $2);
+				}
+		;
+
+init_opt_arg:
+			SCONST							{ $$ = (Node *) makeString($1); }
+			| ICONST						{ $$ = (Node *) $1; }
+			| /* EMPTY */					{ $$ = NULL; }
+		;
 
 /* FIXME: don't use SCONST */
 start_logical_replication:

@@ -58,7 +58,9 @@ typedef struct StartReplicationCmd
 typedef struct InitLogicalReplicationCmd
 {
 	NodeTag		type;
+	char       *name;
 	char       *plugin;
+	List       *options;
 } InitLogicalReplicationCmd;
 
 

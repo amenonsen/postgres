@@ -21,7 +21,6 @@ Datum init_logical_replication(PG_FUNCTION_ARGS);
 Datum start_logical_replication(PG_FUNCTION_ARGS);
 Datum stop_logical_replication(PG_FUNCTION_ARGS);
 
-static const char *slot_name = NULL;
 static Tuplestorestate *tupstore = NULL;
 static TupleDesc tupdesc;
 
@@ -130,6 +129,7 @@ PG_FUNCTION_INFO_V1(init_logical_replication);
 Datum
 init_logical_replication(PG_FUNCTION_ARGS)
 {
+	const char *name;
 	const char *plugin;
 	char		xpos[MAXFNAMELEN];
 	XLogReaderState *logical_reader;
@@ -140,18 +140,14 @@ init_logical_replication(PG_FUNCTION_ARGS)
 	Datum       values[2];
 	bool        nulls[2];
 
-	if (slot_name)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 (errmsg("sorry, can't init logical replication twice"))));
-
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		elog(ERROR, "return type must be a row type");
 
 	/* Acquire a logical replication slot */
-	plugin = text_to_cstring(PG_GETARG_TEXT_P(0));
+	name = text_to_cstring(PG_GETARG_TEXT_P(0));
+	plugin = text_to_cstring(PG_GETARG_TEXT_P(1));
 	CheckLogicalReplicationRequirements();
-	LogicalDecodingAcquireFreeSlot(plugin);
+	LogicalDecodingAcquireFreeSlot(name, plugin);
 
 	/*
 	 * Use the same initial_snapshot_reader, but with our own read_page
@@ -186,23 +182,21 @@ init_logical_replication(PG_FUNCTION_ARGS)
 			break;
 	}
 
-	/* Extract the values we want */
+	/* Extract the values we want and build a tuple to return */
 	MyLogicalDecodingSlot->confirmed_flush = logical_reader->EndRecPtr;
-	slot_name = NameStr(MyLogicalDecodingSlot->name);
 	snprintf(xpos, sizeof(xpos), "%X/%X",
 			 (uint32) (MyLogicalDecodingSlot->confirmed_flush >> 32),
 			 (uint32) MyLogicalDecodingSlot->confirmed_flush);
 
-	/* Release the slot and return the values */
-	LogicalDecodingReleaseSlot();
-
-	values[0] = CStringGetTextDatum(slot_name);
+	values[0] = CStringGetTextDatum(NameStr(MyLogicalDecodingSlot->name));
 	values[1] = CStringGetTextDatum(xpos);
 
 	memset(nulls, 0, sizeof(nulls));
 
 	tuple = heap_form_tuple(tupdesc, values, nulls);
 	result = HeapTupleGetDatum(tuple);
+
+	LogicalDecodingReleaseSlot();
 
 	PG_RETURN_DATUM(result);
 }
@@ -212,6 +206,7 @@ PG_FUNCTION_INFO_V1(start_logical_replication);
 Datum
 start_logical_replication(PG_FUNCTION_ARGS)
 {
+	const char *name;
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
@@ -222,11 +217,6 @@ start_logical_replication(PG_FUNCTION_ARGS)
 	ReorderBuffer *reorder;
 
 	ResourceOwner old_resowner = CurrentResourceOwner;
-
-	if (!slot_name)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 (errmsg("sorry, can't start logical replication outside of an init/stop pair"))));
 
 	/* check to see if caller supports us returning a tuplestore */
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
@@ -266,7 +256,8 @@ start_logical_replication(PG_FUNCTION_ARGS)
 	 */
 
 	CheckLogicalReplicationRequirements();
-	LogicalDecodingReAcquireSlot(slot_name);
+	name = text_to_cstring(PG_GETARG_TEXT_P(0));
+	LogicalDecodingReAcquireSlot(name);
 	logical_reader = normal_snapshot_reader(MyLogicalDecodingSlot->last_required_checkpoint,
 											MyLogicalDecodingSlot->xmin,
 											NameStr(MyLogicalDecodingSlot->plugin),
@@ -339,14 +330,11 @@ PG_FUNCTION_INFO_V1(stop_logical_replication);
 Datum
 stop_logical_replication(PG_FUNCTION_ARGS)
 {
-	if (!slot_name)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 (errmsg("sorry, can't stop logical replication before init"))));
+	const char *name;
 
 	CheckLogicalReplicationRequirements();
-	LogicalDecodingFreeSlot(slot_name);
-	slot_name = NULL;
+	name = text_to_cstring(PG_GETARG_TEXT_P(0));
+	LogicalDecodingFreeSlot(name);
 
 	PG_RETURN_INT32(0);
 }

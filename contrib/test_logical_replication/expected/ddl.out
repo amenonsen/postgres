@@ -3,11 +3,14 @@ CREATE EXTENSION test_logical_replication;
 SET synchronous_commit = on;
 -- faster startup
 CHECKPOINT;
-SELECT 'init' FROM init_logical_replication('test_decoding');
+SELECT 'init' FROM init_logical_replication('test', 'test_decoding');
  ?column? 
 ----------
  init
 (1 row)
+
+SELECT 'init' FROM init_logical_replication('test', 'test_decoding');
+ERROR:  There is already a logical slot named 'test'
 
 CREATE TABLE replication_example(id SERIAL PRIMARY KEY, somedata int, text varchar(120));
 BEGIN;
@@ -30,7 +33,7 @@ COMMIT;
 ALTER TABLE replication_example RENAME COLUMN text TO somenum;
 INSERT INTO replication_example(somedata, somenum) VALUES (4, 1);
 -- collect all changes
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
                                                                                                                                          data                                                                                                                                         
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  BEGIN
@@ -68,7 +71,7 @@ SELECT data FROM start_logical_replication('now');
 
 ALTER TABLE replication_example ALTER COLUMN somenum TYPE int4 USING (somenum::int4);
 -- throw away changes, they contain oids
-SELECT count(data) FROM start_logical_replication('now');
+SELECT count(data) FROM start_logical_replication('test', 'now');
  count 
 -------
     12
@@ -92,7 +95,7 @@ INSERT INTO tr_unique(data) VALUES(10);
 DELETE FROM tr_unique;
 ALTER TABLE tr_unique RENAME TO tr_pkey;
 -- show changes
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
                                                                                                                                 data                                                                                                                                
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  BEGIN
@@ -119,7 +122,7 @@ SELECT data FROM start_logical_replication('now');
 
 -- hide changes bc of oid visible in full table rewrites
 ALTER TABLE tr_pkey ADD COLUMN id serial primary key;
-SELECT count(data) FROM start_logical_replication('now');
+SELECT count(data) FROM start_logical_replication('test', 'now');
  count 
 -------
      3
@@ -129,7 +132,7 @@ INSERT INTO tr_pkey(data) VALUES(1);
 --show deletion with primary key
 DELETE FROM tr_pkey;
 /* display results */
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
                              data                             
 --------------------------------------------------------------
  BEGIN
@@ -151,7 +154,7 @@ UPDATE tr_etoomuch SET data = - data WHERE id > 5000;
 COMMIT;
 /* display results, but hide most of the output */
 SELECT count(*), min(data), max(data)
-FROM start_logical_replication('now')
+FROM start_logical_replication('test', 'now')
 GROUP BY substring(data, 1, 24)
 ORDER BY 1;
  count |                                                                                                                                 min                                                                                                                                  |                                                                                                                                 max                                                                                                                                  
@@ -183,7 +186,7 @@ RELEASE SAVEPOINT c;
 INSERT INTO tr_sub(path) VALUES ('1-top-2-#1');
 RELEASE SAVEPOINT b;
 COMMIT;
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
                                                                                                                             data                                                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  BEGIN
@@ -225,7 +228,7 @@ INSERT INTO tr_sub(path) VALUES ('2-top-1...--#3');
 RELEASE SAVEPOINT subtop;
 INSERT INTO tr_sub(path) VALUES ('2-top-#1');
 COMMIT;
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
                              data                             
 --------------------------------------------------------------
  BEGIN
@@ -237,12 +240,12 @@ SELECT data FROM start_logical_replication('now');
 (6 rows)
 
 -- done, free logical replication slot
-SELECT data FROM start_logical_replication('now');
+SELECT data FROM start_logical_replication('test', 'now');
  data 
 ------
 (0 rows)
 
-SELECT stop_logical_replication();
+SELECT stop_logical_replication('test');
  stop_logical_replication 
 --------------------------
                         0
