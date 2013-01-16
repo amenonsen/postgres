@@ -129,8 +129,9 @@ PG_FUNCTION_INFO_V1(init_logical_replication);
 Datum
 init_logical_replication(PG_FUNCTION_ARGS)
 {
-	const char *name;
-	const char *plugin;
+	Name name = PG_GETARG_NAME(0);
+	Name plugin = PG_GETARG_NAME(1);
+
 	char		xpos[MAXFNAMELEN];
 	XLogReaderState *logical_reader;
 
@@ -144,10 +145,8 @@ init_logical_replication(PG_FUNCTION_ARGS)
 		elog(ERROR, "return type must be a row type");
 
 	/* Acquire a logical replication slot */
-	name = text_to_cstring(PG_GETARG_TEXT_P(0));
-	plugin = text_to_cstring(PG_GETARG_TEXT_P(1));
 	CheckLogicalReplicationRequirements();
-	LogicalDecodingAcquireFreeSlot(name, plugin);
+	LogicalDecodingAcquireFreeSlot(NameStr(*name), NameStr(*plugin));
 
 	/*
 	 * Use the same initial_snapshot_reader, but with our own read_page
@@ -206,7 +205,8 @@ PG_FUNCTION_INFO_V1(start_logical_replication);
 Datum
 start_logical_replication(PG_FUNCTION_ARGS)
 {
-	const char *name;
+	Name name = PG_GETARG_NAME(0);
+
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
@@ -256,8 +256,7 @@ start_logical_replication(PG_FUNCTION_ARGS)
 	 */
 
 	CheckLogicalReplicationRequirements();
-	name = text_to_cstring(PG_GETARG_TEXT_P(0));
-	LogicalDecodingReAcquireSlot(name);
+	LogicalDecodingReAcquireSlot(NameStr(*name));
 	logical_reader = normal_snapshot_reader(MyLogicalDecodingSlot->last_required_checkpoint,
 											MyLogicalDecodingSlot->xmin,
 											NameStr(MyLogicalDecodingSlot->plugin),
@@ -330,11 +329,10 @@ PG_FUNCTION_INFO_V1(stop_logical_replication);
 Datum
 stop_logical_replication(PG_FUNCTION_ARGS)
 {
-	const char *name;
+	Name name = PG_GETARG_NAME(0);
 
 	CheckLogicalReplicationRequirements();
-	name = text_to_cstring(PG_GETARG_TEXT_P(0));
-	LogicalDecodingFreeSlot(name);
+	LogicalDecodingFreeSlot(NameStr(*name));
 
 	PG_RETURN_INT32(0);
 }
