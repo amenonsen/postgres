@@ -259,47 +259,47 @@ CheckLogicalReplicationRequirements(void)
  */
 void LogicalDecodingAcquireFreeSlot(const char *name, const char *plugin)
 {
-	LogicalDecodingSlot *slot = NULL;
-	bool name_in_use = false;
+	LogicalDecodingSlot *slot;
+	bool name_in_use;
 	int i;
 
 	Assert(!MyLogicalDecodingSlot);
 
 	CheckLogicalReplicationRequirements();
 
-	/*
-	 * Look for the first available (not in_use (=> not active)) slot
-	 * and remember it, but also look for other slots with the same
-	 * name.
-	 */
+	/* First, make sure the requested name is not in use. */
 
+	name_in_use = false;
+	for (i = 0; i < max_logical_slots && !name_in_use; i++)
+	{
+		LogicalDecodingSlot *s = &LogicalDecodingCtl->logical_slots[i];
+
+		SpinLockAcquire(&s->mutex);
+		if (s->in_use && strcmp(name, NameStr(s->name)) == 0)
+			name_in_use = true;
+		SpinLockRelease(&s->mutex);
+	}
+
+	if (name_in_use)
+		elog(ERROR, "There is already a logical slot named '%s'", name);
+
+	/* Find the first available (not in_use (=> not active)) slot. */
+
+	slot = NULL;
 	for (i = 0; i < max_logical_slots; i++)
 	{
 		LogicalDecodingSlot *s = &LogicalDecodingCtl->logical_slots[i];
 
 		SpinLockAcquire(&s->mutex);
-		if (!s->in_use && !slot)
+		if (!s->in_use)
 		{
 			Assert(!s->active);
 			/* NOT releasing the lock yet */
 			slot = s;
-		}
-		else if (strcmp(name, NameStr(s->name)) == 0)
-		{
-			name_in_use = true;
-			if (slot)
-				SpinLockRelease(&slot->mutex);
-			SpinLockRelease(&s->mutex);
 			break;
 		}
-		else
-		{
-			SpinLockRelease(&s->mutex);
-		}
+		SpinLockRelease(&s->mutex);
 	}
-
-	if (name_in_use)
-		elog(ERROR, "There is already a logical slot named '%s'", name);
 
 	if (!slot)
 		elog(ERROR, "couldn't find free logical slot. free one or increase max_logical_slots");
