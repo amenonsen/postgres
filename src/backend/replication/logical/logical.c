@@ -267,6 +267,8 @@ void LogicalDecodingAcquireFreeSlot(const char *name, const char *plugin)
 
 	CheckLogicalReplicationRequirements();
 
+	LWLockAcquire(LogicalReplicationCtlLock, LW_EXCLUSIVE);
+
 	/* First, make sure the requested name is not in use. */
 
 	name_in_use = false;
@@ -300,6 +302,8 @@ void LogicalDecodingAcquireFreeSlot(const char *name, const char *plugin)
 		}
 		SpinLockRelease(&s->mutex);
 	}
+
+	LWLockRelease(LogicalReplicationCtlLock);
 
 	if (!slot)
 		elog(ERROR, "couldn't find free logical slot. free one or increase max_logical_slots");
