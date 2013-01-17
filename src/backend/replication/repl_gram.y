@@ -65,7 +65,7 @@ Node *replication_parse_result;
 }
 
 /* Non-keyword tokens */
-%token <str> SCONST
+%token <str> SCONST NAME
 %token <intval> ICONST
 %token <recptr> RECPTR
 
@@ -195,9 +195,8 @@ opt_timeline:
 				| /* nothing */			{ $$ = 0; }
 			;
 
-/* FIXME: don't use SCONST */
 init_logical_replication:
-			K_INIT_LOGICAL_REPLICATION SCONST SCONST init_options
+			K_INIT_LOGICAL_REPLICATION NAME NAME init_options
 				{
 					InitLogicalReplicationCmd *cmd;
 					cmd = makeNode(InitLogicalReplicationCmd);
@@ -238,9 +237,8 @@ init_opt_arg:
 			| /* EMPTY */					{ $$ = NULL; }
 		;
 
-/* FIXME: don't use SCONST */
 start_logical_replication:
-			K_START_LOGICAL_REPLICATION SCONST RECPTR
+			K_START_LOGICAL_REPLICATION NAME RECPTR
 				{
 					StartLogicalReplicationCmd *cmd;
 					cmd = makeNode(StartLogicalReplicationCmd);
@@ -251,9 +249,8 @@ start_logical_replication:
 				}
 			;
 
-/* FIXME: don't use SCONST */
 free_logical_replication:
-			K_FREE_LOGICAL_REPLICATION SCONST
+			K_FREE_LOGICAL_REPLICATION NAME
 				{
 					FreeLogicalReplicationCmd *cmd;
 					cmd = makeNode(FreeLogicalReplicationCmd);

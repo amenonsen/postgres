@@ -99,6 +99,12 @@ TIMELINE_HISTORY	{ return K_TIMELINE_HISTORY; }
 					return RECPTR;
 				}
 
+'[a-zA-Z][a-zA-Z0-9._-]*' 		{
+					yylval.str = strdup(yytext+1);
+					yylval.str[strlen(yytext)-2] = '\0';
+					return NAME;
+				}
+
 {xqstart}		{
 					BEGIN(xq);
 					startlit();
