@@ -100,8 +100,10 @@ TIMELINE_HISTORY	{ return K_TIMELINE_HISTORY; }
 				}
 
 '[a-zA-Z][a-zA-Z0-9._-]*' 		{
+					if (yyleng-2 > NAMEDATALEN-1)
+						yyerror("name too long");
 					yylval.str = strdup(yytext+1);
-					yylval.str[strlen(yytext)-2] = '\0';
+					yylval.str[yyleng-2] = '\0';
 					return NAME;
 				}
 
