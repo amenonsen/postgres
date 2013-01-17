@@ -60,7 +60,6 @@ typedef struct InitLogicalReplicationCmd
 	NodeTag		type;
 	char       *name;
 	char       *plugin;
-	List       *options;
 } InitLogicalReplicationCmd;
 
 
@@ -73,6 +72,7 @@ typedef struct StartLogicalReplicationCmd
 	NodeTag		type;
 	char       *name;
 	XLogRecPtr	startpoint;
+	List       *options;
 } StartLogicalReplicationCmd;
 
 /* ----------------------
