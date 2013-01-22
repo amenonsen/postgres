@@ -1,5 +1,5 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
-\echo Use "CREATE EXTENSION test_logical_replication" to load this file. \quit
+\echo Use "CREATE EXTENSION test_logical_decoding" to load this file. \quit
 
 CREATE FUNCTION init_logical_replication (slotname name, plugin name, OUT slotname text, OUT xlog_position text)
 AS 'MODULE_PATHNAME', 'init_logical_replication'
