@@ -112,10 +112,6 @@ init_logical_replication(PG_FUNCTION_ARGS)
 	{
 		XLogRecPtr startptr;
 
-		/*
-		 * Use the same initial_snapshot_reader, but with our own read_page
-		 * callback that does not depend on walsender.
-		 */
 		MyLogicalDecodingSlot->last_required_checkpoint = GetRedoRecPtr();
 
 		ctx = CreateLogicalDecodingContext(MyLogicalDecodingSlot, true, NIL,
@@ -222,7 +218,7 @@ start_logical_replication(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("start_logical_replication only accept one dimension of arguments")));
+				 errmsg("start_logical_replication only accepts one dimension of arguments")));
 	}
 	else if (array_contains_nulls(arr))
 	{
@@ -269,9 +265,8 @@ start_logical_replication(PG_FUNCTION_ARGS)
 	now = GetFlushRecPtr();
 
 	/*
-	 * We need to create a normal_snapshot_reader, but adjust it to use
-	 * our page_read callback, and also make its reorder buffer use our
-	 * callback wrappers that don't depend on walsender.
+	 * We reacquire the named slot, and create a decoding context using
+	 * our callbacks above.
 	 */
 
 	CheckLogicalReplicationRequirements();
@@ -311,11 +306,10 @@ start_logical_replication(PG_FUNCTION_ARGS)
 			buf.record_data = XLogRecGetData(record);
 
 			/*
-			 * The {begin_txn,change,commit_txn}_wrapper callbacks above
-			 * will store the description into our tuplestore.
+			 * The LogicalOutputWrite callback above will store the
+			 * decoded descriptions into our tuplestore.
 			 */
 			DecodeRecordIntoReorderBuffer(ctx, &buf);
-
 		}
 	}
 
