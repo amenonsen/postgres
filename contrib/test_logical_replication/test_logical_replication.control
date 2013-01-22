@@ -1,5 +1,0 @@
-# test_logical_replication extension
-comment = 'test logical replication'
-default_version = '1.0'
-module_pathname = '$libdir/test_logical_replication'
-relocatable = true

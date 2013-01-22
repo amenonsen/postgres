@@ -1,4 +1,4 @@
-CREATE EXTENSION test_logical_replication;
+CREATE EXTENSION test_logical_decoding;
 -- predictability
 SET synchronous_commit = on;
 -- faster startup
