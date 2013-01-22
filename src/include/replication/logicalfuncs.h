@@ -9,4 +9,6 @@
 #ifndef LOGICALFUNCS_H
 #define LOGICALFUNCS_H
 
+extern Datum pg_stat_get_logical_replication_slots(PG_FUNCTION_ARGS);
+
 #endif
