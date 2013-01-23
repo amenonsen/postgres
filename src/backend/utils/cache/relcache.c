@@ -4718,7 +4718,7 @@ RelationIsDoingTimetravelInternal(Relation relation)
 	Assert(wal_level >= WAL_LEVEL_LOGICAL);
 
 	/*
-	 * XXX: Doing this test instead of using IsSystemNamespace has the frak
+	 * XXX: Doing this test instead of using IsSystemNamespace has the
 	 * advantage of classifying toast tables correctly.
 	 */
 	if (RelationGetRelid(relation) < FirstNormalObjectId)
