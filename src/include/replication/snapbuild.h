@@ -57,10 +57,10 @@ typedef struct Snapstate
 	/* private memory context used to allocate memory for this module. */
 	MemoryContext context;
 
-	/* all transactions smaller than this have committed/aborted */
+	/* all transactions < than this have committed/aborted */
 	TransactionId xmin;
 
-	/* all transactions bigger than this are uncommitted */
+	/* all transactions >= than this are uncommitted */
 	TransactionId xmax;
 
 	/*
