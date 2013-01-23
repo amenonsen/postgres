@@ -248,7 +248,8 @@ StreamLog(void)
 	/*
 	 * Connect in replication mode to the server
 	 */
-	conn = GetConnection();
+	if (!conn)
+		conn = GetConnection();
 	if (!conn)
 		/* Error message already written in GetConnection() */
 		return;
@@ -516,6 +517,7 @@ StreamLog(void)
 	outfd = -1;
 error:
 	PQfinish(conn);
+	conn = NULL;
 }
 
 /*
@@ -769,11 +771,6 @@ main(int argc, char **argv)
 	{
 		char		query[256];
 
-		conn = GetConnection();
-		if (!conn)
-			/* Error message already written in GetConnection() */
-			exit(1);
-
 		snprintf(query, sizeof(query), "FREE_LOGICAL_REPLICATION '%s'",
 				 slot);
 		res = PQexec(conn, query);
@@ -807,11 +804,6 @@ main(int argc, char **argv)
 			fprintf(stderr,
 					_("%s: init replication slot\n"),
 					progname);
-
-		conn = GetConnection();
-		if (!conn)
-			/* Error message already written in GetConnection() */
-			exit(1);
 
 		snprintf(query, sizeof(query), "INIT_LOGICAL_REPLICATION '%s' '%s'",
 				 slot, plugin);
