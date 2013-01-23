@@ -219,6 +219,7 @@ typedef struct StdRdOptions
 	int			fillfactor;		/* page fill factor in percent (0..100) */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		security_barrier;		/* for views */
+	bool        treat_as_catalog_table; /* treat as timetraveleable table */
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
@@ -253,6 +254,14 @@ typedef struct StdRdOptions
 #define RelationIsSecurityView(relation)	\
 	((relation)->rd_options ?				\
 	 ((StdRdOptions *) (relation)->rd_options)->security_barrier : false)
+
+/*
+ * RelationIsTreatedAsCatalogTable
+ *		Returns whether the relation is security view, or not
+ */
+#define RelationIsTreatedAsCatalogTable(relation)	\
+	((relation)->rd_options ?				\
+	 ((StdRdOptions *) (relation)->rd_options)->treat_as_catalog_table : false)
 
 /*
  * RelationIsValid
