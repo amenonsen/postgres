@@ -1998,11 +1998,10 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 		 * For that to work we add another rdata entry for the buffer in that
 		 * case.
 		 */
-		bool        need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL
-			&& RelationGetRelid(relation)  >= FirstNormalObjectId;
+		bool        need_tuple_data = RelationIsLogicallyLogged(relation);
 
-		/* For logical decode we need combocids to properly decode the catalog */
-		if (wal_level >= WAL_LEVEL_LOGICAL && RelationGetRelid(relation)  < FirstNormalObjectId)
+		/* For logical decoding we need combocids to properly decode the catalog */
+		if (RelationIsDoingTimetravel(relation))
 			log_heap_new_cid(relation, heaptup);
 
 		xlrec.all_visible_cleared = all_visible_cleared;
@@ -2185,10 +2184,8 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 	Page		page;
 	bool		needwal;
 	Size		saveFreeSpace;
-	bool        need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL
-		&& RelationGetRelid(relation)  >= FirstNormalObjectId;
-	bool        need_cids = wal_level >= WAL_LEVEL_LOGICAL &&
-		RelationGetRelid(relation)  < FirstNormalObjectId;
+	bool        need_tuple_data = RelationIsLogicallyLogged(relation);
+	bool        need_cids = RelationIsDoingTimetravel(relation);
 
 	needwal = !(options & HEAP_INSERT_SKIP_WAL) && RelationNeedsWAL(relation);
 	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
@@ -2343,9 +2340,7 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 				 * better be prepared...
 				 */
 				if (need_cids)
-				{
 					log_heap_new_cid(relation, heaptup);
-				}
 			}
 			totaldatalen = scratchptr - tupledata;
 			Assert((scratchptr - scratch) < BLCKSZ);
@@ -2691,11 +2686,10 @@ l1:
 		XLogRecPtr	recptr;
 		XLogRecData rdata[4];
 
-		bool need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL &&
-			RelationGetRelid(relation) >= FirstNormalObjectId;
+		bool need_tuple_data = RelationIsLogicallyLogged(relation);
 
 		/* For logical decode we need combocids to properly decode the catalog */
-		if (wal_level >= WAL_LEVEL_LOGICAL && RelationGetRelid(relation)  < FirstNormalObjectId)
+		if (RelationIsDoingTimetravel(relation))
 			log_heap_new_cid(relation, &tp);
 
 		xlrec.all_visible_cleared = all_visible_cleared;
@@ -3367,8 +3361,7 @@ l2:
 		XLogRecPtr	recptr;
 
 		/* For logical decode we need combocids to properly decode the catalog */
-		if (wal_level >= WAL_LEVEL_LOGICAL &&
-			RelationGetRelid(relation)  < FirstNormalObjectId)
+		if (RelationIsDoingTimetravel(relation))
 		{
 			log_heap_new_cid(relation, &oldtup);
 			log_heap_new_cid(relation, heaptup);
@@ -4622,8 +4615,7 @@ log_heap_update(Relation reln, Buffer oldbuf, ItemPointerData from,
 	/*
 	 * Just as for XLOG_HEAP_INSERT we need to make sure the tuple
 	 */
-	bool        need_tuple_data = wal_level >= WAL_LEVEL_LOGICAL
-		&& RelationGetRelid(reln) >= FirstNormalObjectId;
+	bool        need_tuple_data = RelationIsLogicallyLogged(reln);
 
 	/* Caller should not call me on a non-WAL-logged relation */
 	Assert(RelationNeedsWAL(reln));
@@ -4824,6 +4816,10 @@ log_heap_new_cid(Relation relation, HeapTuple tup)
 	xlrec.target.node = relation->rd_node;
 	xlrec.target.tid = tup->t_self;
 
+	/*
+	 * if the tuple got inserted & deleted in the same TX we definitely have a
+	 * combocid.
+	 */
 	if (hdr->t_infomask & HEAP_COMBOCID)
 	{
 		xlrec.cmin = HeapTupleHeaderGetCmin(hdr);

@@ -4711,3 +4711,34 @@ unlink_initfile(const char *initfilename)
 			elog(LOG, "could not remove cache file \"%s\": %m", initfilename);
 	}
 }
+
+bool
+RelationIsDoingTimetravelInternal(Relation relation)
+{
+	Assert(wal_level >= WAL_LEVEL_LOGICAL);
+
+	/*
+	 * XXX: Doing this test instead of using IsSystemNamespace has the
+	 * advantage of classifying toast tables correctly.
+	 */
+	if (RelationGetRelid(relation) < FirstNormalObjectId)
+		return true;
+
+	return false;
+}
+
+bool
+RelationIsLogicallyLoggedInternal(Relation relation)
+{
+	Assert(wal_level >= WAL_LEVEL_LOGICAL);
+
+	/*
+	 * XXX: In addition to the above comment, we could decide to always log
+	 * data even for real system catalogs, although the benefits of that seem
+	 * unclear.
+	 */
+	if (RelationGetRelid(relation) < FirstNormalObjectId)
+		return false;
+
+	return true;
+}

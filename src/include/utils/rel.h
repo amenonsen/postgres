@@ -406,6 +406,25 @@ typedef struct StdRdOptions
 	((relation)->rd_rel->relpersistence == RELPERSISTENCE_TEMP && \
 	 !(relation)->rd_islocaltemp)
 
+/*
+ * RelationIsDoingTimetravel
+ *		True if we need to log enough information to provide timetravel access
+ */
+#define RelationIsDoingTimetravel(relation) \
+	(wal_level >= WAL_LEVEL_LOGICAL && \
+	 RelationIsDoingTimetravelInternal(relation))
+
+/*
+ * RelationIsLogicallyLogged
+ *		True if we need to log enough information to provide timetravel access
+ */
+#define RelationIsLogicallyLogged(relation) \
+	(wal_level >= WAL_LEVEL_LOGICAL && \
+	 RelationIsLogicallyLoggedInternal(relation))
+
+extern bool RelationIsDoingTimetravelInternal(Relation relation);
+extern bool RelationIsLogicallyLoggedInternal(Relation relation);
+
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);
 extern void RelationDecrementReferenceCount(Relation rel);
