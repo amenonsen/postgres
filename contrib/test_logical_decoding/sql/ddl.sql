@@ -156,6 +156,40 @@ COMMIT;
 
 SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
 
+/*
+ * Check whether treating a table as a catalog table works somewhat
+ */
+CREATE TABLE replication_metadata (
+    id serial primary key,
+    relation name NOT NULL,
+    options text[]
+)
+WITH (treat_as_catalog_table = true)
+;
+\d+ replication_metadata
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('foo', ARRAY['a', 'b']);
+
+ALTER TABLE replication_metadata RESET (treat_as_catalog_table);
+\d+ replication_metadata
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('bar', ARRAY['a', 'b']);
+
+ALTER TABLE replication_metadata SET (treat_as_catalog_table = true);
+\d+ replication_metadata
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('blub', NULL);
+
+ALTER TABLE replication_metadata SET (treat_as_catalog_table = false);
+\d+ replication_metadata
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('zaphod', NULL);
+
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
 
 -- done, free logical replication slot
 SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
