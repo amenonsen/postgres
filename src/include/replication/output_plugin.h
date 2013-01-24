@@ -9,8 +9,6 @@
 #ifndef OUTPUT_PLUGIN_H
 #define OUTPUT_PLUGIN_H
 
-#include "lib/stringinfo.h"
-
 #include "replication/reorderbuffer.h"
 
 struct LogicalDecodingContext;
