@@ -255,6 +255,100 @@ SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
  COMMIT
 (6 rows)
 
+/*
+ * Check whether treating a table as a catalog table works somewhat
+ */
+CREATE TABLE replication_metadata (
+    id serial primary key,
+    relation name NOT NULL,
+    options text[]
+)
+WITH (treat_as_catalog_table = true)
+;
+\d+ replication_metadata
+                                              Table "public.replication_metadata"
+  Column  |  Type   |                             Modifiers                             | Storage  | Stats target | Description 
+----------+---------+-------------------------------------------------------------------+----------+--------------+-------------
+ id       | integer | not null default nextval('replication_metadata_id_seq'::regclass) | plain    |              | 
+ relation | name    | not null                                                          | plain    |              | 
+ options  | text[]  |                                                                   | extended |              | 
+Indexes:
+    "replication_metadata_pkey" PRIMARY KEY, btree (id)
+Has OIDs: no
+Options: treat_as_catalog_table=true
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('foo', ARRAY['a', 'b']);
+ALTER TABLE replication_metadata RESET (treat_as_catalog_table);
+\d+ replication_metadata
+                                              Table "public.replication_metadata"
+  Column  |  Type   |                             Modifiers                             | Storage  | Stats target | Description 
+----------+---------+-------------------------------------------------------------------+----------+--------------+-------------
+ id       | integer | not null default nextval('replication_metadata_id_seq'::regclass) | plain    |              | 
+ relation | name    | not null                                                          | plain    |              | 
+ options  | text[]  |                                                                   | extended |              | 
+Indexes:
+    "replication_metadata_pkey" PRIMARY KEY, btree (id)
+Has OIDs: no
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('bar', ARRAY['a', 'b']);
+ALTER TABLE replication_metadata SET (treat_as_catalog_table = true);
+\d+ replication_metadata
+                                              Table "public.replication_metadata"
+  Column  |  Type   |                             Modifiers                             | Storage  | Stats target | Description 
+----------+---------+-------------------------------------------------------------------+----------+--------------+-------------
+ id       | integer | not null default nextval('replication_metadata_id_seq'::regclass) | plain    |              | 
+ relation | name    | not null                                                          | plain    |              | 
+ options  | text[]  |                                                                   | extended |              | 
+Indexes:
+    "replication_metadata_pkey" PRIMARY KEY, btree (id)
+Has OIDs: no
+Options: treat_as_catalog_table=true
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('blub', NULL);
+ALTER TABLE replication_metadata SET (treat_as_catalog_table = false);
+\d+ replication_metadata
+                                              Table "public.replication_metadata"
+  Column  |  Type   |                             Modifiers                             | Storage  | Stats target | Description 
+----------+---------+-------------------------------------------------------------------+----------+--------------+-------------
+ id       | integer | not null default nextval('replication_metadata_id_seq'::regclass) | plain    |              | 
+ relation | name    | not null                                                          | plain    |              | 
+ options  | text[]  |                                                                   | extended |              | 
+Indexes:
+    "replication_metadata_pkey" PRIMARY KEY, btree (id)
+Has OIDs: no
+Options: treat_as_catalog_table=false
+
+INSERT INTO replication_metadata(relation, options)
+VALUES ('zaphod', NULL);
+SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
+                                                                                                                                          data                                                                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ BEGIN
+ table "replication_metadata_id_seq": INSERT: sequence_name[name]:replication_metadata_id_seq last_value[int8]:1 start_value[int8]:1 increment_by[int8]:1 max_value[int8]:9223372036854775807 min_value[int8]:1 cache_value[int8]:1 log_cnt[int8]:0 is_cycled[bool]:f is_called[bool]:f
+ COMMIT
+ BEGIN
+ table "replication_metadata": INSERT: id[int4]:1 relation[name]:foo options[_text]:{a,b}
+ COMMIT
+ BEGIN
+ COMMIT
+ BEGIN
+ table "replication_metadata": INSERT: id[int4]:2 relation[name]:bar options[_text]:{a,b}
+ COMMIT
+ BEGIN
+ COMMIT
+ BEGIN
+ table "replication_metadata": INSERT: id[int4]:3 relation[name]:blub options[_text]:(null)
+ COMMIT
+ BEGIN
+ COMMIT
+ BEGIN
+ table "replication_metadata": INSERT: id[int4]:4 relation[name]:zaphod options[_text]:(null)
+ COMMIT
+(21 rows)
+
 -- done, free logical replication slot
 SELECT data FROM start_logical_replication('test', 'now', 'hide-xids', '1');
  data 

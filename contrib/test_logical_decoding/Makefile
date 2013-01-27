@@ -18,3 +18,14 @@ include $(top_srcdir)/contrib/contrib-global.mk
 endif
 
 test_logical_decoding.o: test_logical_decoding.c
+
+# Disabled because these tests require "wal_level=logical", which
+# typical installcheck users do not have (e.g. buildfarm clients).
+
+installcheck:;
+
+check: all
+	$(pg_regress_check) --temp-config logical.conf --temp-install=./tmp_check \
+	    --extra-install=contrib/test_decoding \
+	    --extra-install=contrib/test_logical_decoding \
+	    ddl
