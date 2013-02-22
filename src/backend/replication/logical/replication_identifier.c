@@ -212,11 +212,7 @@ ReplicationIdentifierShmemInit(void)
 
 	if (!found)
 	{
-		int i;
-		for (i = 0; i < max_logical_slots; i++)
-		{
-			MemSet(ReplicationStates, 0, ReplicationIdentifierShmemSize());
-		}
+		MemSet(ReplicationStates, 0, ReplicationIdentifierShmemSize());
 	}
 }
 
