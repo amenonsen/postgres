@@ -218,6 +218,7 @@
 				# (but not receivers) also consume a
 				# max_wal_senders slot.
 				# (change requires restart)
+#enable_commit_timestamp = off
 
 # - Master Server -
 
