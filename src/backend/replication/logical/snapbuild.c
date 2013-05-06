@@ -105,6 +105,14 @@
 #include "storage/standby.h"
 #include "storage/sinval.h"
 
+
+/*
+ * Starting a transaction -- which we need to do while exporting a snapshot --
+ * removes knowledge about the previously used resowner, so we save it here.
+ */
+ResourceOwner SavedResourceOwnerDuringExport = NULL;
+
+
 /* transaction state manipulation functions */
 static void SnapBuildEndTxn(Snapstate *snapstate, TransactionId xid);
 
@@ -205,23 +213,19 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder)
 
 	snapstate = MemoryContextAllocZero(context, sizeof(Snapstate));
 
-	snapstate->context = context;
-
 	snapstate->state = SNAPBUILD_START;
+	snapstate->context = context;
+	/* Other struct members initialized by zeroing, above */
 
-	snapstate->running.xcnt = 0;
-	snapstate->running.xip = NULL;
+	/* snapstate->running is initialized by zeroing, above */
 
 	snapstate->committed.xcnt = 0;
 	snapstate->committed.xcnt_space = 128; /* arbitrary number */
-	snapstate->committed.xip = MemoryContextAlloc(context,
-												  snapstate->committed.xcnt_space
-												  * sizeof(TransactionId));
 	snapstate->committed.includes_all_transactions = true;
-
-	snapstate->transactions_after = InvalidXLogRecPtr;
-
-	snapstate->snapshot = NULL;
+	snapstate->committed.xip =
+		MemoryContextAlloc(context,
+						   snapstate->committed.xcnt_space *
+						   sizeof(TransactionId));
 
 	return snapstate;
 }
@@ -237,11 +241,11 @@ FreeSnapshotBuilder(Snapstate *snapstate)
 	if (snapstate->snapshot)
 		SnapBuildFreeSnapshot(snapstate->snapshot);
 
-	if (snapstate->committed.xip)
-		pfree(snapstate->committed.xip);
-
 	if (snapstate->running.xip)
 		pfree(snapstate->running.xip);
+
+	if (snapstate->committed.xip)
+		pfree(snapstate->committed.xip);
 
 	pfree(snapstate);
 
@@ -263,12 +267,12 @@ SnapBuildFreeSnapshot(Snapshot snap)
 	Assert(!snap->takenDuringRecovery);
 	Assert(!snap->regd_count);
 
-	/* slightly more likely, so its checked even without casserts */
+	/* slightly more likely, so it's checked even without c-asserts */
 	if (snap->copied)
-		elog(ERROR, "we don't deal with copied snapshots here.");
+		elog(ERROR, "can't free a copied snapshot");
 
 	if (snap->active_count)
-		elog(ERROR, "freeing active snapshot");
+		elog(ERROR, "can't free an active snapshot");
 
 	pfree(snap);
 }
@@ -307,7 +311,7 @@ SnapBuildSnapDecRefcount(Snapshot snap)
 
 	/* slightly more likely, so its checked even without casserts */
 	if (snap->copied)
-		elog(ERROR, "we don't deal with copied snapshots here.");
+		elog(ERROR, "can't free a copied snapshot");
 
 	snap->active_count--;
 	if (!snap->active_count)
@@ -315,11 +319,11 @@ SnapBuildSnapDecRefcount(Snapshot snap)
 }
 
 /*
- * Build a new snapshot, based on currently committed, catalog modifying
+ * Build a new snapshot, based on currently committed catalog-modifying
  * transactions.
  *
- * In-Progress transaction with catalog access are *not* allowed to modify
- * these snapshots, they have to copy them and fill in appropriate ->curcid and
+ * In-progress transactions with catalog access are *not* allowed to modify
+ * these snapshots; they have to copy them and fill in appropriate ->curcid and
  * ->subxip/subxcnt values.
  */
 static Snapshot
@@ -329,14 +333,15 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 
 	Assert(snapstate->state >= SNAPBUILD_FULL_SNAPSHOT);
 
-	snapshot = MemoryContextAllocZero(snapstate->context,
-									  sizeof(SnapshotData)
-									  + sizeof(TransactionId) * snapstate->committed.xcnt
-									  + sizeof(TransactionId) * 1 /* toplevel xid */);
+	snapshot =
+		MemoryContextAllocZero(snapstate->context,
+							   sizeof(SnapshotData) +
+							   sizeof(TransactionId) * snapstate->committed.xcnt +
+							   sizeof(TransactionId) * 1 /* toplevel xid */);
 
 	snapshot->satisfies = HeapTupleSatisfiesMVCCDuringDecoding;
 
-	/* ---
+	/*
 	 * We misuse the original meaning of SnapshotData's xip and subxip fields
 	 * to make the more fitting for our needs.
 	 *
@@ -355,11 +360,9 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 	 * need to treat any uncommitted rows as visible, so there is no need for
 	 * those xids.
 	 *
-	 * Both arrays are ordered in a way that allows them to be search via
-	 * bsearch().
+	 * Both arrays are qsort'ed so that we can use bsearch() on them.
 	 *
 	 * XXX: Do we want extra fields instead of misusing existing ones instead?
-	 * ---
 	 */
 	Assert(TransactionIdIsNormal(snapstate->xmin));
 	Assert(TransactionIdIsNormal(snapstate->xmax));
@@ -367,7 +370,7 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 	snapshot->xmin = snapstate->xmin;
 	snapshot->xmax = snapstate->xmax;
 
-	/* store all transaction to be treated as committed by this snapshot */
+	/* store all transactions to be treated as committed by this snapshot */
 	snapshot->xip = (TransactionId *) ((char *) snapshot + sizeof(SnapshotData));
 	snapshot->xcnt = snapstate->committed.xcnt;
 	memcpy(snapshot->xip, snapstate->committed.xip,
@@ -377,8 +380,9 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 	qsort(snapshot->xip, snapshot->xcnt, sizeof(TransactionId), xidComparator);
 
 	/*
-	 * empty as this for now is a snapshot used in transactions that don't
-	 * modify the catalog and will be copied if used differently.
+	 * Initially, subxip is empty, i.e. it's a snapshot to be used by
+	 * transactions that don't modify the catalog.  Might be changed later.
+	 * XXX how and by whom?
 	 */
 	snapshot->subxcnt = 0;
 	snapshot->subxip = NULL;
@@ -392,12 +396,6 @@ SnapBuildBuildSnapshot(Snapstate *snapstate, TransactionId xid)
 
 	return snapshot;
 }
-
-/*
- * Starting a transaction - which we need to do while exporting a snapshot -
- * removes knowledge about the previously used resowner, so we save it here.
- */
-ResourceOwner SavedResourceOwnerDuringExport = NULL;
 
 /*
  * Export a snapshot so it can be set in another session with SET TRANSACTION
@@ -455,7 +453,7 @@ SnapBuildExportSnapshot(Snapstate *snapstate)
 	MyPgXact->xmin = snap->xmin;
 
 	/* allocate in transaction context */
-	newxip = (TransactionId*)
+	newxip = (TransactionId *)
 		palloc(sizeof(TransactionId) * GetMaxSnapshotXidCount());
 
 	/*
@@ -464,7 +462,7 @@ SnapBuildExportSnapshot(Snapstate *snapstate)
 	 * classical snapshot by marking all non-committed transactions as
 	 * in-progress.
 	 */
-	for (xid = snap->xmin; NormalTransactionIdPrecedes(xid, snap->xmax);)
+	for (xid = snap->xmin; NormalTransactionIdPrecedes(xid, snap->xmax); )
 	{
 		void *test;
 
@@ -480,15 +478,17 @@ SnapBuildExportSnapshot(Snapstate *snapstate)
 
 		if (test == NULL)
 		{
-			if (newxcnt == GetMaxSnapshotXidCount())
-				elog(ERROR, "too large snapshot");
+			if (newxcnt >= GetMaxSnapshotXidCount())
+				elog(ERROR, "snapshot too large");
 
 			newxip[newxcnt++] = xid;
 
 			elog(DEBUG2, "treat %u as in-progress", xid);
 		}
+
 		TransactionIdAdvance(xid);
 	}
+
 	snap->xcnt = newxcnt;
 	snap->xip = newxip;
 
@@ -550,7 +550,8 @@ SnapBuildProcessChange(ReorderBuffer *reorder, Snapstate *snapstate,
 
 		if (!old_tx || !ReorderBufferXidHasBaseSnapshot(reorder, xid))
 		{
-			if (!snapstate->snapshot) {
+			if (!snapstate->snapshot)
+			{
 				snapstate->snapshot = SnapBuildBuildSnapshot(snapstate, xid);
 				/* refcount of the snapshot builder */
 				SnapBuildSnapIncRefcount(snapstate->snapshot);
@@ -610,7 +611,7 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 				 */
 				if (snapstate->transactions_after == InvalidXLogRecPtr ||
 					snapstate->transactions_after < buf->origptr)
-				snapstate->transactions_after = buf->origptr;
+					snapstate->transactions_after = buf->origptr;
 
 				snapstate->xmin = running->oldestRunningXid;
 				snapstate->xmax = running->latestCompletedXid;
@@ -1403,11 +1404,7 @@ typedef struct SnapstateOnDisk
 static void
 SnapBuildSerialize(Snapstate *state, ReorderBuffer *reorder, XLogRecPtr lsn)
 {
-	Size needed_size =
-		sizeof(SnapstateOnDisk) +
-		sizeof(TransactionId) * state->running.xcnt_space +
-		sizeof(TransactionId) * state->committed.xcnt;
-
+	Size needed_size;
 	SnapstateOnDisk *ondisk;
 	char *ondisk_c;
 	int fd;
@@ -1415,6 +1412,10 @@ SnapBuildSerialize(Snapstate *state, ReorderBuffer *reorder, XLogRecPtr lsn)
 	char path[MAXPGPATH];
 	int ret;
 	struct stat stat_buf;
+
+	needed_size = sizeof(SnapstateOnDisk) +
+		sizeof(TransactionId) * state->running.xcnt_space +
+		sizeof(TransactionId) * state->committed.xcnt;
 
 	Assert(lsn != InvalidXLogRecPtr);
 	Assert(state->last_serialized_snapshot == InvalidXLogRecPtr ||

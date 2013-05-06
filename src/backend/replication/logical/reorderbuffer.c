@@ -61,7 +61,7 @@ const Size max_cached_transactions = 512;
  * harder to add to new user visible values.
  *
  * This needs to be synchronized with ReorderBufferChangeType! Adjust the
- * StatisAssertExpr's in ReorderBufferAllocate if you add anything!
+ * StaticAssertExpr's in ReorderBufferAllocate if you add anything!
  */
 typedef enum
 {

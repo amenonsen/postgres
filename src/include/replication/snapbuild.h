@@ -92,9 +92,9 @@ typedef struct Snapstate
 	 * Information about initially running transactions
 	 *
 	 * When we start building a snapshot there already may be transactions in
-	 * progress. We don't have enough information about those to decode their
-	 * contents, so until they are finished we cannot switch to a CONSISTENT
-	 * state.
+	 * progress.  Those are stored in running.xip.  We don't have enough
+	 * information about those to decode their contents, so until they are
+	 * finished (xcnt=0) we cannot switch to a CONSISTENT state.
 	 */
 	struct
 	{
@@ -105,23 +105,9 @@ typedef struct Snapstate
 		TransactionId xmin;
 		TransactionId xmax;
 
-		/*
-		 * how many transactions are still running. When this reaches zero we
-		 * can switch to a consistent state.
-		 */
-		size_t		xcnt;
-
-		/*
-		 * we need to keep track of the amount of tracked transactions
-		 * separately from nrrunning_space as nrunning_initial gives the range
-		 * of valid xids in the array so a bsearch() can work.
-		 */
-		size_t		xcnt_space;
-
-		/*
-		 * xidComparator sorted array of running transactions.
-		 */
-		TransactionId *xip;
+		size_t		xcnt;	/* number of used xip entries */
+		size_t		xcnt_space;	/* allocated size of xip */
+		TransactionId *xip;	/* running xacts array, xidComparator-sorted */
 	} running;
 
 	/*
@@ -157,11 +143,9 @@ typedef struct Snapstate
 		 */
 		TransactionId *xip;
 	} committed;
-
 } Snapstate;
 
 extern Snapstate *AllocateSnapshotBuilder(ReorderBuffer *cache);
-
 extern void	FreeSnapshotBuilder(Snapstate *cache);
 
 struct XLogRecordBuffer;
@@ -171,7 +155,7 @@ extern SnapBuildAction SnapBuildDecodeCallback(ReorderBuffer *cache, Snapstate *
 extern Relation LookupRelationByRelFileNode(RelFileNode *r);
 
 extern bool SnapBuildHasCatalogChanges(Snapstate *snapstate, TransactionId xid,
-                                       RelFileNode *relfilenode);
+									   RelFileNode *relfilenode);
 
 extern void SnapBuildSnapDecRefcount(Snapshot snap);
 

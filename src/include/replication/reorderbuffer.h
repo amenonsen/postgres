@@ -91,7 +91,7 @@ typedef struct ReorderBufferChange
 
 	/*
 	 * While in use this is how a change is linked into a transactions,
-	 * otherwise its the preallocated list.
+	 * otherwise it's the preallocated list.
 	 */
 	dlist_node node;
 } ReorderBufferChange;
@@ -157,14 +157,10 @@ typedef struct ReorderBufferTXN
 	/*
 	 * List of (relation, ctid) => (cmin, cmax) mappings for catalog
 	 * tuples. Those are always assigned to the toplevel transaction.
+	 * (Keep track of #entries to create a hash of the right size)
 	 */
-	dlist_head tuplecids;
-
-	/*
-	 * Numer of stored mappings in ->tuplecids. Used to create the
-	 * tuplecid_hash with the correct size.
-	 */
-	Size       ntuplecids;
+	dlist_head	tuplecids;
+	size_t ntuplecids;
 
 	/*
 	 * On-demand built hash for looking up the above values.
@@ -182,7 +178,7 @@ typedef struct ReorderBufferTXN
 	 * used in toplevel transactions.
 	 */
 	dlist_head subtxns;
-	Size nsubtxns;
+	size_t nsubtxns;
 
 	/*
 	 * Position in one of three lists:
@@ -193,15 +189,11 @@ typedef struct ReorderBufferTXN
 	dlist_node node;
 
 	/*
-	 * Number of stored cache invalidations.
-	 */
-	Size ninvalidations;
-
-	/*
 	 * Stored cache invalidations. This is not a linked list because we get all
 	 * the invalidations at once.
 	 */
 	SharedInvalidationMessage *invalidations;
+	size_t ninvalidations;
 
 	/*
 	 * Original commit time of a top level transaction if known.

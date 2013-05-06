@@ -55,8 +55,9 @@ static void DecodeAbort(ReorderBuffer * cache, XLogRecPtr lsn, TransactionId xid
 						TransactionId *sub_xids, int nsubxacts);
 
 
-void DecodeRecordIntoReorderBuffer(LogicalDecodingContext *ctx,
-								   XLogRecordBuffer *buf)
+void
+DecodeRecordIntoReorderBuffer(LogicalDecodingContext *ctx,
+							  XLogRecordBuffer *buf)
 {
 	XLogRecord *r = &buf->record;
 	uint8 info = r->xl_info & ~XLR_INFO_MASK;

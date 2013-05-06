@@ -2098,17 +2098,17 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 		XLogRecData rdata[4];
 		Page		page = BufferGetPage(buffer);
 		uint8		info = XLOG_HEAP_INSERT;
+		bool		need_tuple_data;
 
 		/*
-		 * For the logical replication case we need the tuple even if were
-		 * doing a full page write. We could alternatively store a pointer into
-		 * the fpw though.
-		 * For that to work we add another rdata entry for the buffer in that
-		 * case.
+		 * For logical replication, we need the tuple even if we're doing a
+		 * full page write, so make sure to log it separately. (XXX We could
+		 * alternatively store a pointer into the FPW).
+		 *
+		 * Also, if this is a catalog, we need to transmit combocids to
+		 * properly decode, so log that as well.
 		 */
-		bool        need_tuple_data = RelationIsLogicallyLogged(relation);
-
-		/* For logical decoding we need combocids to properly decode the catalog */
+		need_tuple_data = RelationIsLogicallyLogged(relation);
 		if (RelationIsDoingTimetravel(relation))
 			log_heap_new_cid(relation, heaptup);
 

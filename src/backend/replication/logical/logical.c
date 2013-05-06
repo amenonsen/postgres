@@ -287,20 +287,25 @@ ComputeLogicalXmin(void)
 }
 
 /*
- * Make sure the current settings & environment is capable of doing logical
+ * Make sure the current settings & environment are capable of doing logical
  * replication.
  */
 void
 CheckLogicalReplicationRequirements(void)
 {
 	if (wal_level < WAL_LEVEL_LOGICAL)
-		ereport(ERROR, (errmsg("logical replication requires wal_level=logical")));
+		ereport(ERROR,
+				/* XXX invent class 51 for code 51028? */
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("logical replication requires wal_level=logical")));
 
 	if (MyDatabaseId == InvalidOid)
-		ereport(ERROR, (errmsg("logical replication requires to be connected to a database")));
+		ereport(ERROR,
+				(errmsg("logical replication requires to be connected to a database")));
 
 	if (max_logical_slots == 0)
-		ereport(ERROR, (errmsg("logical replication requires needs max_logical_slots > 0")));
+		ereport(ERROR,
+				(errmsg("logical replication requires needs max_logical_slots > 0")));
 }
 
 /*
