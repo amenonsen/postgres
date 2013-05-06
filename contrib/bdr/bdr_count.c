@@ -90,7 +90,7 @@ static BdrCountControl *bdr_count_shmem_ctl = NULL;
 static size_t bdr_count_nnodes = 0;
 
 /* offset in the BdrCountControl->slots "our" backend is in */
-static int bdr_count_current_offset = -1;
+static int MyCountOffsetIdx = -1;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -182,7 +182,7 @@ void
 bdr_count_set_current_node(RepNodeId node_id)
 {
 	size_t i;
-	bdr_count_current_offset = -1;
+	MyCountOffsetIdx = -1;
 
 	LWLockAcquire(bdr_count_shmem_ctl->lock, LW_EXCLUSIVE);
 
@@ -191,12 +191,12 @@ bdr_count_set_current_node(RepNodeId node_id)
 	{
 		if (bdr_count_shmem_ctl->slots[i].node_id == node_id)
 		{
-			bdr_count_current_offset = i;
+			MyCountOffsetIdx = i;
 			break;
 		}
 	}
 
-	if (bdr_count_current_offset != -1)
+	if (MyCountOffsetIdx != -1)
 		goto out;
 
 	/* ok, get a new slot */
@@ -204,13 +204,13 @@ bdr_count_set_current_node(RepNodeId node_id)
 	{
 		if (bdr_count_shmem_ctl->slots[i].node_id == InvalidRepNodeId)
 		{
-			bdr_count_current_offset = i;
+			MyCountOffsetIdx = i;
 			bdr_count_shmem_ctl->slots[i].node_id = node_id;
 			break;
 		}
 	}
 
-	if (bdr_count_current_offset == -1)
+	if (MyCountOffsetIdx == -1)
 		elog(PANIC, "could not find a bdr count slot for %u", node_id);
 out:
 	LWLockRelease(bdr_count_shmem_ctl->lock);
@@ -225,57 +225,57 @@ out:
 void
 bdr_count_commit(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_commit++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_commit++;
 }
 
 void
 bdr_count_rollback(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_rollback++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_rollback++;
 }
 
 void
 bdr_count_insert(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_insert++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_insert++;
 }
 
 void
 bdr_count_insert_conflict(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_insert_conflict++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_insert_conflict++;
 }
 
 void
 bdr_count_update(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_update++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_update++;
 }
 
 void
 bdr_count_update_conflict(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_update_conflict++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_update_conflict++;
 }
 
 void
 bdr_count_delete(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_delete++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_delete++;
 }
 
 void
 bdr_count_delete_conflict(void)
 {
-	Assert(bdr_count_current_offset != -1);
-	bdr_count_shmem_ctl->slots[bdr_count_current_offset].nr_delete_conflict++;
+	Assert(MyCountOffsetIdx != -1);
+	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_delete_conflict++;
 }
 
 Datum
