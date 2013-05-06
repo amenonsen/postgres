@@ -161,6 +161,7 @@ process_remote_action(char *data, size_t r)
 
 	action = data[0];
 	data += 1;
+	r--;
 
 	switch (action)
 	{
