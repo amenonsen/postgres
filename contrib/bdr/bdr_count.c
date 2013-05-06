@@ -338,6 +338,9 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 		memset(nulls, 0, sizeof(nulls));
 
 		repTup = GetReplicationInfoByIdentifier(slot->node_id);
+		if (!HeapTupleIsValid(repTup))
+			elog(ERROR, "unknown replication identifier %u", slot->node_id);
+
 		repClass = (Form_pg_replication_identifier) GETSTRUCT(repTup);
 
 		values[ 0] = ObjectIdGetDatum(slot->node_id);
