@@ -430,9 +430,13 @@ bdr_main(void *main_arg)
 				elog(ERROR, "could not read COPY data: %s",
 					 PQerrorMessage(streamConn));
 			}
-			/* need to wait for new data */
+			else if (r < 0)
+				elog(ERROR, "invalid COPY status %d", r);
 			else if (r == 0)
+			{
+				/* need to wait for new data */
 				break;
+			}
 			else
 			{
 				if (copybuf[0] == 'w')
