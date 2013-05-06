@@ -415,6 +415,9 @@ bdr_main(void *main_arg)
 
 		for (;;)
 		{
+			if (got_sigterm)
+				break;
+
 			r = PQgetCopyData(streamConn, &copybuf, 1);
 
 			if (r == -1)
