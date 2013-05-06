@@ -84,7 +84,7 @@ static const uint32 bdr_count_magic = 0x5e51A7;
 static const uint32 bdr_count_version = 2;
 
 /* shortcut for the finding BdrCountControl in memory */
-static BdrCountControl *bdr_count_shmem_ctl = NULL;
+static BdrCountControl *BdrCountCtl = NULL;
 
 /* how many nodes have we built shmem for */
 static size_t bdr_count_nnodes = 0;
@@ -106,7 +106,8 @@ static void bdr_count_unserialize(void);
 extern Datum pg_stat_bdr(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(pg_stat_bdr);
 
-static Size bdr_count_shmem_size(void)
+static Size
+bdr_count_shmem_size(void)
 {
 	Size		size = 0;
 
@@ -116,7 +117,8 @@ static Size bdr_count_shmem_size(void)
 	return size;
 }
 
-void bdr_count_shmem_init(size_t nnodes)
+void
+bdr_count_shmem_init(size_t nnodes)
 {
 	Assert(process_shared_preload_libraries_in_progress);
 
@@ -139,14 +141,15 @@ bdr_count_shmem_startup(void)
 		prev_shmem_startup_hook();
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-	bdr_count_shmem_ctl = ShmemInitStruct("bdr_count",
+	BdrCountCtl = ShmemInitStruct("bdr_count",
 										  bdr_count_shmem_size(),
 										  &found);
 	if (!found)
 	{
 		/* initialize */
-		memset(bdr_count_shmem_ctl, 0, bdr_count_shmem_size());
-		bdr_count_shmem_ctl->lock = LWLockAssign();
+
+		memset(BdrCountCtl, 0, bdr_count_shmem_size());
+		BdrCountCtl->lock = LWLockAssign();
 		bdr_count_unserialize();
 	}
 	LWLockRelease(AddinShmemInitLock);
@@ -184,12 +187,12 @@ bdr_count_set_current_node(RepNodeId node_id)
 	size_t i;
 	MyCountOffsetIdx = -1;
 
-	LWLockAcquire(bdr_count_shmem_ctl->lock, LW_EXCLUSIVE);
+	LWLockAcquire(BdrCountCtl->lock, LW_EXCLUSIVE);
 
 	/* check whether stats already are counted for this node */
 	for (i = 0; i < bdr_count_nnodes; i++)
 	{
-		if (bdr_count_shmem_ctl->slots[i].node_id == node_id)
+		if (BdrCountCtl->slots[i].node_id == node_id)
 		{
 			MyCountOffsetIdx = i;
 			break;
@@ -202,10 +205,10 @@ bdr_count_set_current_node(RepNodeId node_id)
 	/* ok, get a new slot */
 	for (i = 0; i < bdr_count_nnodes; i++)
 	{
-		if (bdr_count_shmem_ctl->slots[i].node_id == InvalidRepNodeId)
+		if (BdrCountCtl->slots[i].node_id == InvalidRepNodeId)
 		{
 			MyCountOffsetIdx = i;
-			bdr_count_shmem_ctl->slots[i].node_id = node_id;
+			BdrCountCtl->slots[i].node_id = node_id;
 			break;
 		}
 	}
@@ -213,7 +216,7 @@ bdr_count_set_current_node(RepNodeId node_id)
 	if (MyCountOffsetIdx == -1)
 		elog(PANIC, "could not find a bdr count slot for %u", node_id);
 out:
-	LWLockRelease(bdr_count_shmem_ctl->lock);
+	LWLockRelease(BdrCountCtl->lock);
 }
 
 /*
@@ -226,56 +229,56 @@ void
 bdr_count_commit(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_commit++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_commit++;
 }
 
 void
 bdr_count_rollback(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_rollback++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_rollback++;
 }
 
 void
 bdr_count_insert(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_insert++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_insert++;
 }
 
 void
 bdr_count_insert_conflict(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_insert_conflict++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_insert_conflict++;
 }
 
 void
 bdr_count_update(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_update++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_update++;
 }
 
 void
 bdr_count_update_conflict(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_update_conflict++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_update_conflict++;
 }
 
 void
 bdr_count_delete(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_delete++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_delete++;
 }
 
 void
 bdr_count_delete_conflict(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	bdr_count_shmem_ctl->slots[MyCountOffsetIdx].nr_delete_conflict++;
+	BdrCountCtl->slots[MyCountOffsetIdx].nr_delete_conflict++;
 }
 
 Datum
@@ -316,7 +319,7 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 
 	/* don't let a node get created/vanish below us */
-	LWLockAcquire(bdr_count_shmem_ctl->lock, LW_SHARED);
+	LWLockAcquire(BdrCountCtl->lock, LW_SHARED);
 
 	for (current_offset = 0; current_offset < bdr_count_nnodes;
 		 current_offset++)
@@ -327,7 +330,7 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 		Datum		values[BDR_COUNT_STAT_COLS];
 		bool		nulls[BDR_COUNT_STAT_COLS];
 
-		slot = &bdr_count_shmem_ctl->slots[current_offset];
+		slot = &BdrCountCtl->slots[current_offset];
 
 		/* no stats here */
 	    if (slot->node_id == InvalidRepNodeId)
@@ -359,7 +362,7 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 		ReleaseSysCache(repTup);
 	}
-	LWLockRelease(bdr_count_shmem_ctl->lock);
+	LWLockRelease(BdrCountCtl->lock);
 
 	tuplestore_donestoring(tupstore);
 
@@ -375,7 +378,7 @@ bdr_count_serialize(void)
 	BdrCountSerialize serial;
 	Size write_size;
 
-	LWLockAcquire(bdr_count_shmem_ctl->lock, LW_EXCLUSIVE);
+	LWLockAcquire(BdrCountCtl->lock, LW_EXCLUSIVE);
 
 	if (unlink(tpath) < 0 && errno != ENOENT)
 		ereport(ERROR, (errcode_for_file_access(),
@@ -405,7 +408,7 @@ bdr_count_serialize(void)
 
 	/* write data */
 	write_size = sizeof(BdrCountSlot) * bdr_count_nnodes;
-	if ((write(fd, &bdr_count_shmem_ctl->slots, write_size)) != write_size)
+	if ((write(fd, &BdrCountCtl->slots, write_size)) != write_size)
 	{
 		CloseTransientFile(fd);
 		ereport(ERROR,
@@ -420,7 +423,7 @@ bdr_count_serialize(void)
 				(errcode_for_file_access(),
 				 errmsg("could not rename bdr stat file \"%s\" to \"%s\": %m",
 						tpath, path)));
-	LWLockRelease(bdr_count_shmem_ctl->lock);
+	LWLockRelease(BdrCountCtl->lock);
 }
 
 static void
@@ -431,10 +434,10 @@ bdr_count_unserialize(void)
 	BdrCountSerialize serial;
 	Size read_size;
 
-	if (bdr_count_shmem_ctl == NULL)
+	if (BdrCountCtl == NULL)
 		elog(ERROR, "cannot use bdr statistics function without loading bdr");
 
-	LWLockAcquire(bdr_count_shmem_ctl->lock, LW_EXCLUSIVE);
+	LWLockAcquire(BdrCountCtl->lock, LW_EXCLUSIVE);
 
 	fd = OpenTransientFile((char *) path,
 						   O_RDONLY | PG_BINARY, 0);
@@ -443,7 +446,7 @@ bdr_count_unserialize(void)
 
 	if (fd < 0)
 	{
-		LWLockRelease(bdr_count_shmem_ctl->lock);
+		LWLockRelease(BdrCountCtl->lock);
 		ereport(ERROR, (errcode_for_file_access(),
 						errmsg("%s cannot be opened: %m", path)));
 	}
@@ -451,7 +454,7 @@ bdr_count_unserialize(void)
 	read_size = sizeof(serial);
 	if (read(fd, &serial, read_size) != read_size)
 	{
-		LWLockRelease(bdr_count_shmem_ctl->lock);
+		LWLockRelease(BdrCountCtl->lock);
 		CloseTransientFile(fd);
 		ereport(ERROR,
 				(errcode_for_file_access(),
@@ -461,7 +464,7 @@ bdr_count_unserialize(void)
 
 	if (serial.magic != bdr_count_magic)
 	{
-		LWLockRelease(bdr_count_shmem_ctl->lock);
+		LWLockRelease(BdrCountCtl->lock);
 		CloseTransientFile(fd);
 		elog(ERROR, "expected magic %u doesn't match read magic %u",
 			 bdr_count_magic, serial.magic);
@@ -481,7 +484,7 @@ bdr_count_unserialize(void)
 
 	/* read actual data, directly into shmem */
 	read_size = sizeof(BdrCountSlot) * bdr_count_nnodes;
-	if (read(fd, &bdr_count_shmem_ctl->slots, read_size) != read_size)
+	if (read(fd, &BdrCountCtl->slots, read_size) != read_size)
 	{
 		CloseTransientFile(fd);
 		ereport(ERROR,
@@ -492,11 +495,11 @@ bdr_count_unserialize(void)
 
 out:
 	CloseTransientFile(fd);
-	LWLockRelease(bdr_count_shmem_ctl->lock);
+	LWLockRelease(BdrCountCtl->lock);
 	return;
 zero_file:
 	CloseTransientFile(fd);
-	LWLockRelease(bdr_count_shmem_ctl->lock);
+	LWLockRelease(BdrCountCtl->lock);
 	/* write out a new file without data in it */
 	bdr_count_serialize();
 }
