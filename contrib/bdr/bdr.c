@@ -72,7 +72,7 @@ sendint64(int64 i, char *buf)
 /*
  * Converts an int64 from network byte order to native format.
  *
- * FIXME: replace with pg_getmsgint64
+ * FIXME: replace with pq_getmsgint64
  */
 static int64
 recvint64(char *buf)
