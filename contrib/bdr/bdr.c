@@ -459,6 +459,7 @@ bdr_main(void *main_arg)
 
 					process_remote_action(data, r);
 				}
+				/* XXX no "else" error here? */
 			}
 		}
 
@@ -473,8 +474,6 @@ bdr_main(void *main_arg)
 
 /*
  * Entrypoint of this module.
- *
- * We register two worker processes here, to demonstrate how that can be done.
  */
 void
 _PG_init(void)
