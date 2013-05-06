@@ -459,11 +459,14 @@ bdr_main(void *main_arg)
 
 					process_remote_action(data, r);
 				}
-				/* XXX no "else" error here? */
+				/* other message types are purposely ignored */
 			}
 		}
 
 		/* confirm all writes at once */
+		/*
+		 * FIXME: we should only do that after an xlog flush... Yuck.
+		 */
 		if (last_received != InvalidXLogRecPtr)
 			sendFeedback(streamConn, last_received,
 						 GetCurrentTimestamp(), false);
