@@ -324,8 +324,8 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 		HeapTuple repTup;
 		Form_pg_replication_identifier repClass;
 		BdrCountSlot *slot;
-		Datum		values[12];
-		bool		nulls[12];
+		Datum		values[BDR_COUNT_STAT_COLS];
+		bool		nulls[BDR_COUNT_STAT_COLS];
 
 		slot = &bdr_count_shmem_ctl->slots[current_offset];
 
