@@ -27,7 +27,7 @@
  */
 #define ReplicationIdentifierRelationId 3458
 
-CATALOG(pg_replication_identifier,3458) BKI_WITHOUT_OIDS
+CATALOG(pg_replication_identifier,3458) BKI_SHARED_RELATION BKI_WITHOUT_OIDS
 {
 	/*
 	 * locally known identifier that gets included into wal.
