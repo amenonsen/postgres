@@ -589,6 +589,8 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 		/*
 		 * Build snapshot incrementally using information about the currently
 		 * running transactions. As soon as all of those have finished
+		 *
+		 * FIXME: Also restore state from shutdown checkpoints.
 		 */
 		if (r->xl_rmid == RM_STANDBY_ID && info == XLOG_RUNNING_XACTS)
 		{
@@ -699,29 +701,21 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 				switch (info)
 				{
 					case XLOG_CHECKPOINT_SHUTDOWN:
-#ifdef NOT_YET
-						{
-							/*
-							 * FIXME: abort everything but prepared xacts, we
-							 * don't track prepared xacts though so far.  It
-							 * might alo be neccesary to do this to handle
-							 * subtxn ids that haven't been assigned to a
-							 * toplevel xid after a crash.
-							 */
-							for ( /* FIXME */ )
-							{
-							}
-						}
-#endif
+						/*
+						 * FIXME: abort everything but prepared xacts, we don't
+						 * track prepared xacts though so far.  It might alo be
+						 * neccesary to do this to handle subtxn ids that
+						 * haven't been assigned to a toplevel xid after a
+						 * crash.
+						 */
 						SnapBuildSerialize(snapstate, reorder, buf->origptr);
+						break;
 					case XLOG_CHECKPOINT_ONLINE:
-						{
-							/*
-							 * FIXME: dump state to disk so we can restart
-							 * from here later
-							 */
-							break;
-						}
+						/*
+						 * a RUNNING_XACTS record will have been logged around
+						 * this, we can restart from there.
+						 */
+						break;
 				}
 				break;
 			}
@@ -924,6 +918,7 @@ SnapBuildDecodeCallback(ReorderBuffer *reorder, Snapstate *snapstate,
 						 * xacts so we can use shutdown checkpoints to abort
 						 * in-progress transactions...
 						 */
+						break;
 					default:
 						break;
 				}

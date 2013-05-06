@@ -11,6 +11,7 @@
  * IDENTIFICATION
  *	  src/backend/replication/reorderbuffer.c
  *
+ *-------------------------------------------------------------------------
  */
 #include "postgres.h"
 
