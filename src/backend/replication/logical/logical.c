@@ -33,6 +33,19 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 
+/*
+ * logical replication on-disk data structures.
+ */
+/* FIXME: rename */
+typedef struct LogicalDecodingCheckpointData
+{
+	uint32 magic;
+	LogicalDecodingSlot slot;
+} LogicalDecodingCheckpointData;
+
+#define LOGICAL_MAGIC	0x1051CA1		/* format identifier */
+
+
 /* Control array for logical decoding */
 LogicalDecodingCtlData *LogicalDecodingCtl = NULL;
 

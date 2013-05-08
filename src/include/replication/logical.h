@@ -158,24 +158,14 @@ typedef struct LogicalDecodingContext
 	void *output_writer_private;
 } LogicalDecodingContext;
 
-/*
- * logical replication on-disk data
- */
-#define LOGICAL_MAGIC	0x1051CA1		/* format identifier */
-
-/* FIXME: rename */
-typedef struct LogicalDecodingCheckpointData
-{
-	uint32 magic;
-	LogicalDecodingSlot slot;
-} LogicalDecodingCheckpointData;
-
 #define InvalidRepNodeId 0
 extern PGDLLIMPORT RepNodeId guc_replication_node_id;
 extern PGDLLIMPORT RepNodeId guc_replication_origin_id;
 extern PGDLLIMPORT XLogRecPtr replication_origin_lsn;
 extern PGDLLIMPORT TimestampTz replication_origin_timestamp;
 
+/* GUCs */
+extern PGDLLIMPORT int max_logical_slots;
 
 extern Size LogicalDecodingShmemSize(void);
 extern void LogicalDecodingShmemInit(void);
@@ -197,9 +187,6 @@ extern void LogicalConfirmReceivedLocation(XLogRecPtr lsn);
 extern void CheckLogicalReplicationRequirements(void);
 
 extern void StartupLogicalReplication(XLogRecPtr checkPointRedo);
-
-/* GUCs */
-extern PGDLLIMPORT int max_logical_slots;
 
 extern LogicalDecodingContext *CreateLogicalDecodingContext(
 	LogicalDecodingSlot *slot,
