@@ -33,6 +33,7 @@ enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_DELETE
 };
 
+/* an individual tuple, stored in one chunk of memory */
 typedef struct ReorderBufferTupleBuf
 {
 	/* position in preallocated list */
@@ -44,6 +45,13 @@ typedef struct ReorderBufferTupleBuf
 	char		data[MaxHeapTupleSize];
 }	ReorderBufferTupleBuf;
 
+/*
+ * a single 'change', can be an insert (with one tuple), an update (old, new),
+ * or a delete (old).
+ *
+ * The same struct is also used internally for other purposes but that should
+ * never be visible outside reorderbuffer.c.
+ */
 typedef struct ReorderBufferChange
 {
 	XLogRecPtr	lsn;

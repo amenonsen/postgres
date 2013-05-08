@@ -46,14 +46,6 @@
 #include "utils/tqual.h"
 #include "utils/syscache.h"
 
-
-
-const Size max_memtries = 4096;
-
-const Size max_cached_changes = 4096 * 2;
-const Size max_cached_tuplebufs = 1024; /* ~8MB */
-const Size max_cached_transactions = 512;
-
 /*
  * For efficiency and simplicity reasons we want to keep Snapshots, CommandIds
  * and ComboCids in the same list with the user visible INSERT/UPDATE/DELETE
@@ -129,7 +121,20 @@ typedef struct ReorderBufferToastEnt
 	struct varlena *reconstructed; /* reconstructed varlena now pointed to in main tup */
 } ReorderBufferToastEnt;
 
-/* primary reorderbuffer support routines */
+
+/* number of changes kept in memory, per transaction */
+const Size max_memtries = 4096;
+
+/* Size of the slab caches used for frequently allocated objects */
+const Size max_cached_changes = 4096 * 2;
+const Size max_cached_tuplebufs = 1024; /* ~8MB */
+const Size max_cached_transactions = 512;
+
+
+/* ---------------------------------------
+ * primary reorderbuffer support routines
+ * ---------------------------------------
+ */
 static ReorderBufferTXN *ReorderBufferGetTXN(ReorderBuffer *buffer);
 static void ReorderBufferReturnTXN(ReorderBuffer *buffer, ReorderBufferTXN *txn);
 static ReorderBufferTXN *ReorderBufferTXNByXid(ReorderBuffer *buffer, TransactionId xid,
@@ -138,14 +143,14 @@ static ReorderBufferTXN *ReorderBufferTXNByXid(ReorderBuffer *buffer, Transactio
 
 static void AssertTXNLsnOrder(ReorderBuffer *buffer);
 
-/*
+/* ---------------------------------------
  * support functions for lsn-order iterating over the ->changes of a
  * transaction and its subtransactions
  *
  * used for iteration over the k-way heap merge of a transaction and its
  * subtransactions
+ * ---------------------------------------
  */
-
 static ReorderBufferIterTXNState *
 ReorderBufferIterTXNInit(ReorderBuffer *buffer, ReorderBufferTXN *txn);
 static ReorderBufferChange *
@@ -154,7 +159,11 @@ static void ReorderBufferIterTXNFinish(ReorderBuffer *buffer,
 									   ReorderBufferIterTXNState *state);
 static void ReorderBufferExecuteInvalidations(ReorderBuffer *buffer, ReorderBufferTXN *txn);
 
-/* persistency support */
+/*
+ * ---------------------------------------
+ * Disk serialization support functions
+ * ---------------------------------------
+ */
 static void ReorderBufferCheckSerializeTXN(ReorderBuffer *buffer, ReorderBufferTXN *txn);
 static void ReorderBufferSerializeTXN(ReorderBuffer *buffer, ReorderBufferTXN *txn);
 static void ReorderBufferSerializeChange(ReorderBuffer *buffer, ReorderBufferTXN *txn,
@@ -169,7 +178,10 @@ static void ReorderBufferFreeSnap(ReorderBuffer *buffer, Snapshot snap);
 static Snapshot ReorderBufferCopySnap(ReorderBuffer *buffer, Snapshot orig_snap,
 									  ReorderBufferTXN *txn, CommandId cid);
 
-/* toast support */
+/* ---------------------------------------
+ * toast reassembly support
+ * ---------------------------------------
+ */
 static void ReorderBufferToastInitHash(ReorderBuffer *buffer, ReorderBufferTXN *txn);
 static void ReorderBufferToastReset(ReorderBuffer *buffer, ReorderBufferTXN *txn);
 static void ReorderBufferToastReplace(ReorderBuffer *buffer, ReorderBufferTXN *txn,
