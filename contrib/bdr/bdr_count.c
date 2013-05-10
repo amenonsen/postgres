@@ -41,21 +41,21 @@
  */
 typedef struct BdrCountSlot
 {
-	RepNodeId node_id;
+	RepNodeId	node_id;
 
 	/* we use int64 to make sure we can export to sql, there is uint64 there */
-	int64 nr_commit;
-	int64 nr_rollback;
+	int64		nr_commit;
+	int64		nr_rollback;
 
-	int64 nr_insert;
-	int64 nr_insert_conflict;
-	int64 nr_update;
-	int64 nr_update_conflict;
-	int64 nr_delete;
-	int64 nr_delete_conflict;
+	int64		nr_insert;
+	int64		nr_insert_conflict;
+	int64		nr_update;
+	int64		nr_update_conflict;
+	int64		nr_delete;
+	int64		nr_delete_conflict;
 
-	int64 nr_disconnect;
-} BdrCountSlot;
+	int64		nr_disconnect;
+}	BdrCountSlot;
 
 /*
  * Shared memory header for the stats module.
@@ -64,7 +64,7 @@ typedef struct BdrCountControl
 {
 	LWLockId	lock;
 	BdrCountSlot slots[FLEXIBLE_ARRAY_MEMBER];
-} BdrCountControl;
+}	BdrCountControl;
 
 /*
  * Header of a stats disk serialization, used to detect old files, changed
@@ -72,10 +72,10 @@ typedef struct BdrCountControl
  */
 typedef struct BdrCountSerialize
 {
-	uint32 magic;
-	uint32 version;
-	uint32 nr_slots;
-} BdrCountSerialize;
+	uint32		magic;
+	uint32		version;
+	uint32		nr_slots;
+}	BdrCountSerialize;
 
 /* magic number of the stats file, don't change */
 static const uint32 bdr_count_magic = 0x5e51A7;
@@ -90,7 +90,7 @@ static BdrCountControl *BdrCountCtl = NULL;
 static size_t bdr_count_nnodes = 0;
 
 /* offset in the BdrCountControl->slots "our" backend is in */
-static int MyCountOffsetIdx = -1;
+static int	MyCountOffsetIdx = -1;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -104,6 +104,7 @@ static void bdr_count_unserialize(void);
 #define BDR_COUNT_STAT_COLS 13
 
 extern Datum pg_stat_bdr(PG_FUNCTION_ARGS);
+
 PG_FUNCTION_INFO_V1(pg_stat_bdr);
 
 static Size
@@ -135,15 +136,15 @@ bdr_count_shmem_init(size_t nnodes)
 static void
 bdr_count_shmem_startup(void)
 {
-	bool found;
+	bool		found;
 
 	if (prev_shmem_startup_hook)
 		prev_shmem_startup_hook();
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 	BdrCountCtl = ShmemInitStruct("bdr_count",
-										  bdr_count_shmem_size(),
-										  &found);
+								  bdr_count_shmem_size(),
+								  &found);
 	if (!found)
 	{
 		/* initialize */
@@ -184,7 +185,8 @@ bdr_count_shmem_shutdown(int code, Datum arg)
 void
 bdr_count_set_current_node(RepNodeId node_id)
 {
-	size_t i;
+	size_t		i;
+
 	MyCountOffsetIdx = -1;
 
 	LWLockAcquire(BdrCountCtl->lock, LW_EXCLUSIVE);
@@ -289,7 +291,7 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
-	int current_offset;
+	int			current_offset;
 
 	if (!superuser())
 		elog(ERROR, "blarg");
@@ -324,7 +326,7 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 	for (current_offset = 0; current_offset < bdr_count_nnodes;
 		 current_offset++)
 	{
-		HeapTuple repTup;
+		HeapTuple	repTup;
 		Form_pg_replication_identifier repClass;
 		BdrCountSlot *slot;
 		Datum		values[BDR_COUNT_STAT_COLS];
@@ -333,7 +335,7 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 		slot = &BdrCountCtl->slots[current_offset];
 
 		/* no stats here */
-	    if (slot->node_id == InvalidRepNodeId)
+		if (slot->node_id == InvalidRepNodeId)
 			continue;
 
 		memset(values, 0, sizeof(values));
@@ -345,16 +347,16 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 
 		repClass = (Form_pg_replication_identifier) GETSTRUCT(repTup);
 
-		values[ 0] = ObjectIdGetDatum(slot->node_id);
-		values[ 1] = NameGetDatum(&repClass->riremotesysid);
-		values[ 2] = ObjectIdGetDatum(repClass->rilocaldb);
-		values[ 3] = ObjectIdGetDatum(repClass->riremotedb);
-		values[ 4] = Int64GetDatumFast(slot->nr_commit);
-		values[ 5] = Int64GetDatumFast(slot->nr_rollback);
-		values[ 6] = Int64GetDatumFast(slot->nr_insert);
-		values[ 7] = Int64GetDatumFast(slot->nr_insert_conflict);
-		values[ 8] = Int64GetDatumFast(slot->nr_update);
-		values[ 9] = Int64GetDatumFast(slot->nr_update_conflict);
+		values[0] = ObjectIdGetDatum(slot->node_id);
+		values[1] = NameGetDatum(&repClass->riremotesysid);
+		values[2] = ObjectIdGetDatum(repClass->rilocaldb);
+		values[3] = ObjectIdGetDatum(repClass->riremotedb);
+		values[4] = Int64GetDatumFast(slot->nr_commit);
+		values[5] = Int64GetDatumFast(slot->nr_rollback);
+		values[6] = Int64GetDatumFast(slot->nr_insert);
+		values[7] = Int64GetDatumFast(slot->nr_insert_conflict);
+		values[8] = Int64GetDatumFast(slot->nr_update);
+		values[9] = Int64GetDatumFast(slot->nr_update_conflict);
 		values[10] = Int64GetDatumFast(slot->nr_delete);
 		values[11] = Int64GetDatumFast(slot->nr_delete_conflict);
 		values[12] = Int64GetDatumFast(slot->nr_disconnect);
@@ -372,17 +374,17 @@ pg_stat_bdr(PG_FUNCTION_ARGS)
 static void
 bdr_count_serialize(void)
 {
-	int fd;
-	const char* tpath = "global/bdr.stat.tmp";
-	const char* path = "global/bdr.stat";
+	int			fd;
+	const char *tpath = "global/bdr.stat.tmp";
+	const char *path = "global/bdr.stat";
 	BdrCountSerialize serial;
-	Size write_size;
+	Size		write_size;
 
 	LWLockAcquire(BdrCountCtl->lock, LW_EXCLUSIVE);
 
 	if (unlink(tpath) < 0 && errno != ENOENT)
 		ereport(ERROR, (errcode_for_file_access(),
-						errmsg("failed while unlinking %s",  tpath)));
+						errmsg("failed while unlinking %s", tpath)));
 
 	fd = OpenTransientFile((char *) tpath,
 						   O_WRONLY | O_CREAT | O_EXCL | PG_BINARY,
@@ -429,10 +431,10 @@ bdr_count_serialize(void)
 static void
 bdr_count_unserialize(void)
 {
-	int fd;
-	const char* path = "global/bdr.stat";
+	int			fd;
+	const char *path = "global/bdr.stat";
 	BdrCountSerialize serial;
-	Size read_size;
+	Size		read_size;
 
 	if (BdrCountCtl == NULL)
 		elog(ERROR, "cannot use bdr statistics function without loading bdr");
@@ -447,8 +449,9 @@ bdr_count_unserialize(void)
 	if (fd < 0)
 	{
 		LWLockRelease(BdrCountCtl->lock);
-		ereport(ERROR, (errcode_for_file_access(),
-						errmsg("%s cannot be opened: %m", path)));
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("%s cannot be opened: %m", path)));
 	}
 
 	read_size = sizeof(serial);

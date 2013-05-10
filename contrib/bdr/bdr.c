@@ -40,15 +40,15 @@
 
 #define MAXCONNINFO		1024
 
-static bool	got_sigterm = false;
+static bool got_sigterm = false;
 ResourceOwner bdr_saved_resowner;
-static char* connections = NULL;
-static char* bdr_synchronous_commit = NULL;
-BDRCon *bdr_connection;
+static char *connections = NULL;
+static char *bdr_synchronous_commit = NULL;
+BDRCon	   *bdr_connection;
 
 PG_MODULE_MAGIC;
 
-void	_PG_init(void);
+void		_PG_init(void);
 
 /*
  * Converts an int64 to network byte order.
@@ -108,19 +108,19 @@ sendFeedback(PGconn *conn, XLogRecPtr blockpos, int64 now, bool replyRequested)
 
 	replybuf[len] = 'r';
 	len += 1;
-	sendint64(blockpos, &replybuf[len]);			/* write */
+	sendint64(blockpos, &replybuf[len]);		/* write */
 	len += 8;
-	sendint64(blockpos, &replybuf[len]);			/* flush */
+	sendint64(blockpos, &replybuf[len]);		/* flush */
 	len += 8;
-	sendint64(InvalidXLogRecPtr, &replybuf[len]);	/* apply */
+	sendint64(InvalidXLogRecPtr, &replybuf[len]);		/* apply */
 	len += 8;
-	sendint64(now, &replybuf[len]);					/* sendTime */
+	sendint64(now, &replybuf[len]);		/* sendTime */
 	len += 8;
-	replybuf[len] = replyRequested ? 1 : 0;			/* replyRequested */
+	replybuf[len] = replyRequested ? 1 : 0;		/* replyRequested */
 	len += 1;
 
 	elog(LOG, "sending feedback to %X/%X",
-		 (uint32)(blockpos >> 32), (uint32)blockpos);
+		 (uint32) (blockpos >> 32), (uint32) blockpos);
 
 	lastpos = blockpos;
 
@@ -157,7 +157,7 @@ bdr_sighup(SIGNAL_ARGS)
 static void
 process_remote_action(char *data, size_t r)
 {
-	char action;
+	char		action;
 
 	action = data[0];
 	data += 1;
@@ -165,23 +165,23 @@ process_remote_action(char *data, size_t r)
 
 	switch (action)
 	{
-		/* BEGIN */
+			/* BEGIN */
 		case 'B':
 			process_remote_begin(data, r);
 			break;
-		/* COMMIT */
+			/* COMMIT */
 		case 'C':
 			process_remote_commit(data, r);
 			break;
-		/* INSERT */
+			/* INSERT */
 		case 'I':
 			process_remote_insert(data, r);
 			break;
-		/* UPDATE */
+			/* UPDATE */
 		case 'U':
 			process_remote_update(data, r);
 			break;
-		/* DELETE */
+			/* DELETE */
 		case 'D':
 			process_remote_delete(data, r);
 			break;
@@ -193,13 +193,14 @@ process_remote_action(char *data, size_t r)
 static void
 bdr_main(void *main_arg)
 {
-	PGconn *streamConn;
+	PGconn	   *streamConn;
 	PGresult   *res;
-	int fd;
+	int			fd;
 	char	   *remote_sysid;
 	uint64		remote_sysid_i;
 	char	   *remote_tlid;
 	TimeLineID	remote_tlid_i;
+
 #ifdef NOT_USED
 	char	   *remote_dbname;
 #endif
@@ -209,10 +210,10 @@ bdr_main(void *main_arg)
 	char		query[256];
 	char		conninfo_repl[MAXCONNINFO + 75];
 	XLogRecPtr	last_received = InvalidXLogRecPtr;
-	char		*sqlstate;
+	char	   *sqlstate;
 	NameData	replication_name;
 	Oid			replication_identifier;
-	XLogRecPtr  start_from;
+	XLogRecPtr	start_from;
 	NameData	slot_name;
 
 	bdr_connection = (BDRCon *) main_arg;
@@ -222,10 +223,10 @@ bdr_main(void *main_arg)
 	/* We're now ready to receive signals */
 	BackgroundWorkerUnblockSignals();
 
-	/* setup synchronous commit according to the user's wishes*/
+	/* setup synchronous commit according to the user's wishes */
 	if (bdr_synchronous_commit != NULL)
 		SetConfigOption("synchronous_commit", bdr_synchronous_commit,
-						PGC_BACKEND, PGC_S_OVERRIDE); /* other context? */
+						PGC_BACKEND, PGC_S_OVERRIDE);	/* other context? */
 
 	/* Connect to our database */
 	BackgroundWorkerInitializeConnection(bdr_connection->dbname, NULL);
@@ -258,7 +259,7 @@ bdr_main(void *main_arg)
 	if (PQntuples(res) != 1 || PQnfields(res) != 5)
 	{
 		elog(FATAL, "could not identify system: got %d rows and %d fields, expected %d rows and %d fields\n",
-				PQntuples(res), PQnfields(res), 1, 5);
+			 PQntuples(res), PQnfields(res), 1, 5);
 	}
 
 	remote_sysid = PQgetvalue(res, 0, 0);
@@ -298,9 +299,9 @@ bdr_main(void *main_arg)
 	 * somewhat longer...
 	 */
 	snprintf(NameStr(slot_name), NAMEDATALEN, "bdr: %u:%s-%u-%u:%s",
-	         remote_dboid_i, local_sysid, ThisTimeLineID,
-	         MyDatabaseId, NameStr(replication_name));
-	NameStr(slot_name)[NAMEDATALEN-1] = '\0';
+			 remote_dboid_i, local_sysid, ThisTimeLineID,
+			 MyDatabaseId, NameStr(replication_name));
+	NameStr(slot_name)[NAMEDATALEN - 1] = '\0';
 
 	replication_identifier =
 		GetReplicationIdentifier(remote_sysid_i, remote_tlid_i, remote_dboid_i,
@@ -323,18 +324,18 @@ bdr_main(void *main_arg)
 
 		/* acquire new local identifier, but don't commit */
 		replication_identifier =
-			CreateReplicationIdentifier(remote_sysid_i,remote_tlid_i, remote_dboid_i,
+			CreateReplicationIdentifier(remote_sysid_i, remote_tlid_i, remote_dboid_i,
 										&replication_name, MyDatabaseId);
 
 		/* acquire remote decoding slot */
 		snprintf(query, sizeof(query), "INIT_LOGICAL_REPLICATION \"%s\" %s",
-		         NameStr(slot_name), "bdr_output");
+				 NameStr(slot_name), "bdr_output");
 		res = PQexec(streamConn, query);
 
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
 		{
 			elog(FATAL, "could not send replication command \"%s\": %s: %d\n",
-			     query, PQresultErrorMessage(res), PQresultStatus(res));
+				 query, PQresultErrorMessage(res), PQresultStatus(res));
 		}
 		PQclear(res);
 
@@ -368,7 +369,7 @@ bdr_main(void *main_arg)
 		 (uint32) (start_from >> 32), (uint32) start_from);
 
 	snprintf(query, sizeof(query), "START_LOGICAL_REPLICATION \"%s\" %X/%X",
-			 NameStr(slot_name), (uint32) (start_from >> 32), (uint32) start_from);
+	   NameStr(slot_name), (uint32) (start_from >> 32), (uint32) start_from);
 	res = PQexec(streamConn, query);
 
 	sqlstate = PQresultErrorField(res, PG_DIAG_SQLSTATE);
@@ -376,7 +377,7 @@ bdr_main(void *main_arg)
 	if (PQresultStatus(res) != PGRES_COPY_BOTH)
 	{
 		elog(FATAL, "could not send replication command \"%s\": %s\n, sqlstate: %s",
-		     query, PQresultErrorMessage(res), sqlstate);
+			 query, PQresultErrorMessage(res), sqlstate);
 	}
 	PQclear(res);
 
@@ -386,10 +387,10 @@ bdr_main(void *main_arg)
 
 	while (!got_sigterm)
 	{
-		/*int		ret;*/
-		int		rc;
-		int		r;
-		char	*copybuf = NULL;
+		/* int		 ret; */
+		int			rc;
+		int			r;
+		char	   *copybuf = NULL;
 
 		/*
 		 * Background workers mustn't call usleep() or any direct equivalent:
@@ -398,7 +399,7 @@ bdr_main(void *main_arg)
 		 * background process goes away immediately in an emergency.
 		 */
 		rc = WaitLatchOrSocket(&MyProc->procLatch,
-							   WL_SOCKET_READABLE | WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+		WL_SOCKET_READABLE | WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
 							   fd, 1000L);
 
 		ResetLatch(&MyProc->procLatch);
@@ -441,14 +442,14 @@ bdr_main(void *main_arg)
 			{
 				if (copybuf[0] == 'w')
 				{
-					int hdr_len = 0;
-					char *data;
-					XLogRecPtr temp;
+					int			hdr_len = 0;
+					char	   *data;
+					XLogRecPtr	temp;
 
 					hdr_len = 1;	/* msgtype 'w' */
-					hdr_len += 8;	/* dataStart */
-					hdr_len += 8;	/* walEnd */
-					hdr_len += 8;	/* sendTime */
+					hdr_len += 8;		/* dataStart */
+					hdr_len += 8;		/* walEnd */
+					hdr_len += 8;		/* sendTime */
 
 					temp = recvint64(&copybuf[1]);
 
@@ -481,12 +482,12 @@ bdr_main(void *main_arg)
 void
 _PG_init(void)
 {
-	BackgroundWorker	worker;
-	BDRCon             *con;
-	List *cons;
+	BackgroundWorker worker;
+	BDRCon	   *con;
+	List	   *cons;
 	ListCell   *c;
 	MemoryContext old_context;
-	Size nregistered = 0;
+	Size		nregistered = 0;
 
 	if (!process_shared_preload_libraries_in_progress)
 		elog(ERROR, "bdr can only be loaded via shared_preload_libraries");
@@ -499,7 +500,7 @@ _PG_init(void)
 							   NULL,
 							   &connections,
 							   NULL, PGC_POSTMASTER,
-							   GUC_LIST_INPUT|GUC_LIST_QUOTE,
+							   GUC_LIST_INPUT | GUC_LIST_QUOTE,
 							   NULL, NULL, NULL);
 
 	/* XXX: make it changeable at SIGHUP? */
@@ -519,8 +520,8 @@ _PG_init(void)
 	{
 		/* syntax error in list */
 		ereport(FATAL,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("invalid list syntax for \"bdr.connections\"")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid list syntax for \"bdr.connections\"")));
 	}
 
 	/* register the worker processes.  These values are common for all of them */
@@ -535,12 +536,13 @@ _PG_init(void)
 	foreach(c, cons)
 	{
 		const char *name = (char *) lfirst(c);
-		char *errmsg = NULL;
+		char	   *errmsg = NULL;
 		PQconninfoOption *options;
 		PQconninfoOption *cur_option;
+
 		/* don't free, referenced by the guc machinery! */
-		char *optname_dsn = palloc(strlen(name) + 30);
-		char *optname_delay = palloc(strlen(name) + 30);
+		char	   *optname_dsn = palloc(strlen(name) + 30);
+		char	   *optname_delay = palloc(strlen(name) + 30);
 
 		con = palloc(sizeof(BDRCon));
 		con->dsn = (char *) lfirst(c);
@@ -576,7 +578,8 @@ _PG_init(void)
 		options = PQconninfoParse(con->dsn, &errmsg);
 		if (errmsg != NULL)
 		{
-			char *str = pstrdup(errmsg);
+			char	   *str = pstrdup(errmsg);
+
 			PQfreemem(errmsg);
 			elog(ERROR, "msg: %s", str);
 		}
@@ -611,11 +614,12 @@ _PG_init(void)
 	EmitWarningsOnPlaceholders("bdr");
 
 out:
+
 	/*
 	 * initialize other modules that need shared memory
 	 *
-	 * Do so even if we haven't any remote nodes setup, the shared memory might
-	 * still be needed for some sql callable functions or such.
+	 * Do so even if we haven't any remote nodes setup, the shared memory
+	 * might still be needed for some sql callable functions or such.
 	 */
 
 	/* register a slot for every remote node */

@@ -45,7 +45,7 @@ static HeapTuple ExtractKeyTuple(Relation rel, Relation idx_rel, HeapTuple tp);
 static void build_scan_key(ScanKey skey, Relation rel, Relation idx_rel, HeapTuple key);
 static bool find_pkey_tuple(ScanKey skey, Relation rel, Relation idx_rel, ItemPointer tid);
 static void UserTableUpdateIndexes(Relation rel, HeapTuple tuple);
-static char * read_tuple(char *data, size_t len, HeapTuple tuple, Oid *reloid);
+static char *read_tuple(char *data, size_t len, HeapTuple tuple, Oid *reloid);
 static void tuple_to_stringinfo(StringInfo s, TupleDesc tupdesc, HeapTuple tuple);
 
 void
@@ -57,7 +57,7 @@ process_remote_begin(char *data, size_t r)
 
 	Assert(bdr_connection != NULL);
 
-	origlsn = (XLogRecPtr *)data;
+	origlsn = (XLogRecPtr *) data;
 	data += sizeof(XLogRecPtr);
 
 	committime = (TimestampTz *) data;
@@ -68,7 +68,7 @@ process_remote_begin(char *data, size_t r)
 	replication_origin_timestamp = *committime;
 
 	elog(LOG, "BEGIN origin(lsn, timestamp): %X/%X, %s",
-	     (uint32)(*origlsn>>32), (uint32)*origlsn,
+		 (uint32) (*origlsn >> 32), (uint32) *origlsn,
 		 timestamptz_to_str(*committime));
 
 	/* don't want the overhead otherwise */
@@ -81,8 +81,8 @@ process_remote_begin(char *data, size_t r)
 		/* ensure no weirdness due to clock drift */
 		if (current > replication_origin_timestamp)
 		{
-			long sec;
-			int usec;
+			long		sec;
+			int			usec;
 
 			current = TimestampTzPlusMilliseconds(current, -bdr_connection->apply_delay);
 
@@ -103,14 +103,14 @@ process_remote_commit(char *data, size_t r)
 	XLogRecPtr *origlsn;
 	TimestampTz *committime;
 
-	origlsn = (XLogRecPtr *)data;
+	origlsn = (XLogRecPtr *) data;
 	data += sizeof(XLogRecPtr);
 
 	committime = (TimestampTz *) data;
 	data += sizeof(TimestampTz);
 
 	elog(LOG, "COMMIT origin(lsn, timestamp): %X/%X, %s",
-	     (uint32)(*origlsn>>32), (uint32)*origlsn,
+		 (uint32) (*origlsn >> 32), (uint32) *origlsn,
 		 timestamptz_to_str(*committime));
 
 	Assert(*origlsn == replication_origin_lsn);
@@ -133,17 +133,17 @@ process_remote_insert(char *data, size_t r)
 #ifdef VERBOSE_INSERT
 	StringInfoData s;
 #endif
-	char action;
+	char		action;
 	HeapTupleData tup;
-	Oid reloid;
-	Relation rel;
+	Oid			reloid;
+	Relation	rel;
 
 	action = data[0];
 	data++;
 
 	if (action != 'N')
 		elog(ERROR, "expected new tuple but got %c",
-		     action);
+			 action);
 
 	data = read_tuple(data, r, &tup, &reloid);
 
@@ -151,7 +151,7 @@ process_remote_insert(char *data, size_t r)
 
 	if (rel->rd_rel->relkind != RELKIND_RELATION)
 		elog(ERROR, "unexpected relkind '%c' rel \"%s\"",
-		     rel->rd_rel->relkind, RelationGetRelationName(rel));
+			 rel->rd_rel->relkind, RelationGetRelationName(rel));
 
 	simple_heap_insert(rel, &tup);
 	UserTableUpdateIndexes(rel, &tup);
@@ -169,17 +169,18 @@ process_remote_insert(char *data, size_t r)
 }
 
 static void
-fetch_sysid_via_node_id(RepNodeId node_id, uint64 *sysid, TimeLineID *tlid)
+fetch_sysid_via_node_id(RepNodeId node_id, uint64 *sysid, TimeLineID *tli)
 {
 	if (node_id == InvalidRepNodeId)
 	{
 		*sysid = GetSystemIdentifier();
-		*tlid = ThisTimeLineID;
+		*tli = ThisTimeLineID;
 	}
 	else
 	{
-		HeapTuple node;
+		HeapTuple	node;
 		Form_pg_replication_identifier node_class;
+
 		node = GetReplicationInfoByIdentifier(node_id);
 		if (!HeapTupleIsValid(node))
 			elog(ERROR, "could not find replication identifier %u?", node_id);
@@ -188,7 +189,7 @@ fetch_sysid_via_node_id(RepNodeId node_id, uint64 *sysid, TimeLineID *tlid)
 
 		if (sscanf(NameStr(node_class->riremotesysid),
 				   UINT64_FORMAT "-%u",
-				   sysid, tlid) != 2)
+				   sysid, tli) != 2)
 			elog(ERROR, "could not parse sysid: %s",
 				 NameStr(node_class->riremotesysid));
 		ReleaseSysCache(node);
@@ -199,18 +200,18 @@ void
 process_remote_update(char *data, size_t r)
 {
 	StringInfoData s_key;
-	char action;
+	char		action;
 	HeapTupleData old_key;
 	HeapTupleData new_tuple;
-	Oid reloid;
-	Oid idxoid = InvalidOid;
-	HeapTuple generated_key = NULL;
+	Oid			reloid;
+	Oid			idxoid = InvalidOid;
+	HeapTuple	generated_key = NULL;
 	ItemPointerData oldtid;
-	Relation rel;
-	Relation idxrel;
-	bool found_old;
+	Relation	rel;
+	Relation	idxrel;
+	bool		found_old;
 	ScanKeyData skey[INDEX_MAX_KEYS];
-	bool primary_key_changed = false;
+	bool		primary_key_changed = false;
 
 	action = data[0];
 	data++;
@@ -224,12 +225,12 @@ process_remote_update(char *data, size_t r)
 		primary_key_changed = idxoid != InvalidOid;
 	}
 	else if (action != 'N')
-		elog(ERROR, "expected action N or K got %c",
+		elog(ERROR, "expected action 'N' or 'K', got %c",
 			 action);
 
 	/* check for new  tuple */
 	if (action != 'N')
-		elog(ERROR, "expected action N got %c",
+		elog(ERROR, "expected action 'N', got %c",
 			 action);
 
 	/* read new tuple */
@@ -240,10 +241,10 @@ process_remote_update(char *data, size_t r)
 
 	if (rel->rd_rel->relkind != RELKIND_RELATION)
 		elog(ERROR, "unexpected relkind '%c' rel \"%s\"",
-		     rel->rd_rel->relkind, RelationGetRelationName(rel));
+			 rel->rd_rel->relkind, RelationGetRelationName(rel));
 
 	/*
-	 * if there's no separate primary key (i.e. pkey hasn't changed), extrakt
+	 * if there's no separate primary key (i.e. pkey hasn't changed), extract
 	 * pkey from the new tuple so we can find the old version of the row.
 	 */
 	if (!primary_key_changed)
@@ -254,8 +255,8 @@ process_remote_update(char *data, size_t r)
 
 		if (!OidIsValid(idxoid))
 		{
-			elog(ERROR, "Could not find primary key for table with oid %u",
-			     RelationGetRelid(rel));
+			elog(ERROR, "could not find primary key for table with oid %u",
+				 RelationGetRelid(rel));
 			return;
 		}
 
@@ -287,86 +288,104 @@ process_remote_update(char *data, size_t r)
 	if (found_old)
 	{
 		HeapTupleData oldtuple;
-		Buffer buf;
-		bool found;
+		Buffer		buf;
+		bool		found;
 		TransactionId xmin;
 		TimestampTz ts;
-		RepNodeId local_node_id;
-		bool apply_update;
-		bool log_update;
+		RepNodeId	local_node_id;
+		bool		apply_update;
+		bool		log_update;
 
-		uint64 local_sysid, remote_sysid;
-		TimeLineID local_tlid, remote_tlid;
+		uint64		local_sysid,
+					remote_sysid;
+		TimeLineID	local_tli,
+					remote_tli;
 
 		ItemPointerCopy(&oldtid, &oldtuple.t_self);
 
 		/* refetch tuple, check for old commit ts & origin */
 		found = heap_fetch(rel, SnapshotAny, &oldtuple, &buf, false, NULL);
 		if (!found)
-			elog(ERROR, "could not refind tuple?");
+			elog(ERROR, "could not refetch tuple %u/%u, relation %u",
+				 ItemPointerGetBlockNumber(&oldtid),
+				 ItemPointerGetOffsetNumber(&oldtid),
+				 RelationGetRelid(rel));
 		xmin = HeapTupleHeaderGetXmin(oldtuple.t_data);
 		ReleaseBuffer(buf);
 
-		/* fetch the old row version and check whether we conflict */
-		TransactionIdGetCommitTimestampAndOrigin(xmin, &ts, &local_node_id);
-
 		/*
-		 * Row got updated twice within a single node, thats ok, don't
-		 * conflict. Don't warn/log either independent of the timing, thats
-		 * just too common and valid.
+		 * We now need to determine whether to keep the original version of the
+		 * row, or apply the update we received.  We use the last-update-wins
+		 * strategy for this, except when the new update comes from the same
+		 * node that originated the previous version of the tuple.
 		 */
+		TransactionIdGetCommitTimestampAndOrigin(xmin, &ts, &local_node_id);
 		if (local_node_id == bdr_connection->origin_id)
 		{
+			/*
+			 * If the row got updated twice within a single node, just apply
+			 * the update with no conflict.  Don't warn/log either, regardless
+			 * of the timing; that's just too common and valid.
+			 */
 			apply_update = true;
 			log_update = false;
 		}
-		/*
-		 * Decide based on transaction timestamp difference. The later
-		 * transaction wins.
-		 */
-		else if (timestamptz_cmp_internal(replication_origin_timestamp, ts) > 0)
+		else
 		{
-			apply_update = true;
-			log_update = false;
-		}
-		else if (timestamptz_cmp_internal(replication_origin_timestamp, ts) == 0)
-		{
-			/* same timestamp, use sysid + tlid id to discern */
-			log_update = true;
+			int		cmp;
 
-			fetch_sysid_via_node_id(local_node_id,
-									&local_sysid, &local_tlid);
-			fetch_sysid_via_node_id(bdr_connection->origin_id,
-									&remote_sysid, &remote_tlid);
+			/*
+			 * Decide what update wins based on transaction timestamp difference.
+			 * The later transaction wins.  If the timestamps compare equal,
+			 * use sysid + TLI to discern.
+			 */
 
-			if (local_sysid < remote_sysid)
+			cmp = timestamptz_cmp_internal(replication_origin_timestamp, ts);
+
+			if (cmp > 0)
+			{
 				apply_update = true;
-			else if (local_sysid > remote_sysid)
-				apply_update = false;
-			else if (local_tlid < remote_tlid)
-				apply_update = true;
-			else if (local_tlid > remote_tlid)
-				apply_update = false;
+				log_update = false;
+			}
+			else if (cmp == 0)
+			{
+				log_update = true;
+
+				fetch_sysid_via_node_id(local_node_id,
+										&local_sysid, &local_tli);
+				fetch_sysid_via_node_id(bdr_connection->origin_id,
+										&remote_sysid, &remote_tli);
+
+				if (local_sysid < remote_sysid)
+					apply_update = true;
+				else if (local_sysid > remote_sysid)
+					apply_update = false;
+				else if (local_tli < remote_tli)
+					apply_update = true;
+				else if (local_tli > remote_tli)
+					apply_update = false;
+				else
+					/* shouldn't happen */
+					elog(ERROR, "unsuccessful node comparison");
+			}
 			else
-				elog(ERROR, "unsuccessfully node comparison");
-		}
-		else if (timestamptz_cmp_internal(replication_origin_timestamp, ts) < 0)
-		{
-			apply_update = false;
-			log_update = true;
+			{
+				apply_update = false;
+				log_update = true;
+			}
 		}
 
 		if (log_update)
 		{
-			char remote_ts[MAXDATELEN + 1];
-			char local_ts[MAXDATELEN + 1];
+			char		remote_ts[MAXDATELEN + 1];
+			char		local_ts[MAXDATELEN + 1];
 
 			fetch_sysid_via_node_id(local_node_id,
-									&local_sysid, &local_tlid);
+									&local_sysid, &local_tli);
 			fetch_sysid_via_node_id(bdr_connection->origin_id,
-									&remote_sysid, &remote_tlid);
+									&remote_sysid, &remote_tli);
 			Assert(remote_sysid == bdr_connection->sysid);
-			Assert(remote_tlid == bdr_connection->timeline);
+			Assert(remote_tli == bdr_connection->timeline);
 
 			memcpy(remote_ts, timestamptz_to_str(replication_origin_timestamp),
 				   MAXDATELEN);
@@ -378,13 +397,11 @@ process_remote_update(char *data, size_t r)
 
 			ereport(LOG,
 					(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
-					 errmsg("CONFLICT: %s remote update originating at node " UINT64_FORMAT ":%u at ts %s; row was previously updated at %s node "UINT64_FORMAT":%u at ts %s. PKEY:%s",
+					 errmsg("CONFLICT: %s remote update originating at node " UINT64_FORMAT ":%u at ts %s; row was previously updated at %s node " UINT64_FORMAT ":%u at ts %s. PKEY:%s",
 							apply_update ? "applying" : "skipping",
-							remote_sysid,  remote_tlid, remote_ts,
-							local_node_id == InvalidRepNodeId ? "local" : "remote",
-							local_sysid, local_tlid, local_ts,
-							s_key.data
-						 )));
+							remote_sysid, remote_tli, remote_ts,
+					  local_node_id == InvalidRepNodeId ? "local" : "remote",
+							local_sysid, local_tli, local_ts, s_key.data)));
 			resetStringInfo(&s_key);
 		}
 
@@ -406,8 +423,8 @@ process_remote_update(char *data, size_t r)
 
 		ereport(ERROR,
 				(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
-				 errmsg("CONFLICT: could not find existing tuple for pkey %s", s_key.data)
-				 ));
+				 errmsg("CONFLICT: could not find existing tuple for pkey %s", s_key.data)));
+		/* XXX dead code */
 		resetStringInfo(&s_key);
 		goto err;
 	}
@@ -427,14 +444,14 @@ process_remote_delete(char *data, size_t r)
 #ifdef VERBOSE_DELETE
 	StringInfoData s;
 #endif
-	char action;
+	char		action;
 
-	Oid idxoid;
+	Oid			idxoid;
 	HeapTupleData old_key;
-	Relation rel;
-	Relation idxrel;
+	Relation	rel;
+	Relation	idxrel;
 	ScanKeyData skey[INDEX_MAX_KEYS];
-	bool found_old;
+	bool		found_old;
 	ItemPointerData oldtid;
 
 	action = data[0];
@@ -457,7 +474,7 @@ process_remote_delete(char *data, size_t r)
 
 	if (rel->rd_rel->relkind != RELKIND_RELATION)
 		elog(ERROR, "unexpected relkind '%c' rel \"%s\"",
-		     rel->rd_rel->relkind, RelationGetRelationName(rel));
+			 rel->rd_rel->relkind, RelationGetRelationName(rel));
 
 	build_scan_key(skey, rel, idxrel, &old_key);
 
@@ -473,6 +490,7 @@ process_remote_delete(char *data, size_t r)
 	else
 	{
 		StringInfoData s_key;
+
 		bdr_count_delete_conflict();
 
 		initStringInfo(&s_key);
@@ -480,8 +498,7 @@ process_remote_delete(char *data, size_t r)
 
 		ereport(ERROR,
 				(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
-				 errmsg("CONFLICT: DELETE could not find existing tuple for pkey %s", s_key.data)
-				 ));
+				 errmsg("CONFLICT: DELETE could not find existing tuple for pkey %s", s_key.data)));
 		resetStringInfo(&s_key);
 	}
 
@@ -521,18 +538,23 @@ recvint64(char *buf)
 	return result;
 }
 
-
-char *
+/*
+ * Read a tuple specification from the given data of the given len, filling
+ * the HeapTuple with it.  Also, reloid is set to the OID of the relation
+ * that this tuple is related to.  (The passed data contains schema and
+ * relation names; they are resolved to the corresponding local OID.)
+ */
+static char *
 read_tuple(char *data, size_t len, HeapTuple tuple, Oid *reloid)
 {
-	int64 tablenamelen;
-	char *tablename;
-	Oid tableoid;
-	int64 nspnamelen;
-	char *nspname;
-	int64 tuplelen;
-	Oid nspoid;
-	char t;
+	int64		relnamelen;
+	char	   *relname;
+	Oid			relid;
+	int64		nspnamelen;
+	char	   *nspname;
+	int64		tuplelen;
+	Oid			nspoid;
+	char		t;
 
 	*reloid = InvalidOid;
 
@@ -547,10 +569,10 @@ read_tuple(char *data, size_t len, HeapTuple tuple, Oid *reloid)
 	nspname = data;
 	data += nspnamelen;
 
-	tablenamelen = recvint64(&data[0]);
+	relnamelen = recvint64(&data[0]);
 	data += 8;
-	tablename = data;
-	data += tablenamelen;
+	relname = data;
+	data += relnamelen;
 
 	tuplelen = recvint64(&data[0]);
 	data += 8;
@@ -559,24 +581,23 @@ read_tuple(char *data, size_t len, HeapTuple tuple, Oid *reloid)
 	tuple->t_len = tuplelen;
 	data += tuplelen;
 
+	/* resolve the names into a relation OID */
 	nspoid = get_namespace_oid(nspname, false);
+	relid = get_relname_relid(relname, nspoid);
+	if (relid == InvalidOid)
+		elog(ERROR, "could not resolve relation name %s.%s", nspname, relname);
 
-	tableoid = get_relname_relid(tablename, nspoid);
-	if (tableoid == InvalidOid)
-		elog(ERROR, "could not resolve tablename %s", tablename);
-
-	*reloid = tableoid;
+	*reloid = relid;
 
 	return data;
 }
-
 
 /* print the tuple 'tuple' into the StringInfo s */
 static void
 tuple_to_stringinfo(StringInfo s, TupleDesc tupdesc, HeapTuple tuple)
 {
-	int	natt;
-	Oid oid;
+	int			natt;
+	Oid			oid;
 
 	/* print oid of tuple, it's not included in the TupleDesc */
 	if ((oid = HeapTupleHeaderGetOid(tuple->t_data)) != InvalidOid)
@@ -588,17 +609,18 @@ tuple_to_stringinfo(StringInfo s, TupleDesc tupdesc, HeapTuple tuple)
 	for (natt = 0; natt < tupdesc->natts; natt++)
 	{
 		Form_pg_attribute attr; /* the attribute itself */
-		Oid			typid; /* type of current attribute */
+		Oid			typid;		/* type of current attribute */
 		HeapTuple	type_tuple; /* information about a type */
 		Form_pg_type type_form;
-		Oid			typoutput; /* output function */
+		Oid			typoutput;	/* output function */
 		bool		typisvarlena;
-		Datum		origval; /* possibly toasted Datum */
-		Datum		val; /* definitely detoasted Datum */
-		char        *outputstr = NULL;
-		bool        isnull; /* column is null? */
+		Datum		origval;	/* possibly toasted Datum */
+		Datum		val;		/* definitely detoasted Datum */
+		char	   *outputstr = NULL;
+		bool		isnull;		/* column is null? */
 
 		attr = tupdesc->attrs[natt];
+
 		/*
 		 * don't print dropped columns, we can't be sure everything is
 		 * available for them
@@ -667,40 +689,41 @@ typedef struct ResultRelInfo *UserTableIndexState;
 static void
 UserTableUpdateIndexes(Relation rel, HeapTuple tuple)
 {
-   /* this is largely copied together from copy.c's CopyFrom */
-   EState *estate = CreateExecutorState();
-   ResultRelInfo *resultRelInfo;
-   List *recheckIndexes = NIL;
-   TupleDesc tupleDesc = RelationGetDescr(rel);
+	/* this is largely copied together from copy.c's CopyFrom */
+	EState	   *estate = CreateExecutorState();
+	ResultRelInfo *resultRelInfo;
+	List	   *recheckIndexes = NIL;
+	TupleDesc	tupleDesc = RelationGetDescr(rel);
 
-   resultRelInfo = makeNode(ResultRelInfo);
-   resultRelInfo->ri_RangeTableIndex = 1;      /* dummy */
-   resultRelInfo->ri_RelationDesc = rel;
-   resultRelInfo->ri_TrigInstrument = NULL;
+	resultRelInfo = makeNode(ResultRelInfo);
+	resultRelInfo->ri_RangeTableIndex = 1;		/* dummy */
+	resultRelInfo->ri_RelationDesc = rel;
+	resultRelInfo->ri_TrigInstrument = NULL;
 
-   ExecOpenIndices(resultRelInfo);
+	ExecOpenIndices(resultRelInfo);
 
-   estate->es_result_relations = resultRelInfo;
-   estate->es_num_result_relations = 1;
-   estate->es_result_relation_info = resultRelInfo;
+	estate->es_result_relations = resultRelInfo;
+	estate->es_num_result_relations = 1;
+	estate->es_result_relation_info = resultRelInfo;
 
-   if (resultRelInfo->ri_NumIndices > 0)
-   {
-       TupleTableSlot *slot = ExecInitExtraTupleSlot(estate);
-       ExecSetSlotDescriptor(slot, tupleDesc);
-       ExecStoreTuple(tuple, slot, InvalidBuffer, false);
+	if (resultRelInfo->ri_NumIndices > 0)
+	{
+		TupleTableSlot *slot = ExecInitExtraTupleSlot(estate);
 
-       recheckIndexes = ExecInsertIndexTuples(slot, &tuple->t_self,
-                                              estate);
-   }
+		ExecSetSlotDescriptor(slot, tupleDesc);
+		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
-   ExecResetTupleTable(estate->es_tupleTable, false);
+		recheckIndexes = ExecInsertIndexTuples(slot, &tuple->t_self,
+											   estate);
+	}
 
-   ExecCloseIndices(resultRelInfo);
+	ExecResetTupleTable(estate->es_tupleTable, false);
 
-   FreeExecutorState(estate);
-   /* FIXME: recheck the indexes */
-   list_free(recheckIndexes);
+	ExecCloseIndices(resultRelInfo);
+
+	FreeExecutorState(estate);
+	/* FIXME: recheck the indexes */
+	list_free(recheckIndexes);
 }
 
 /*
@@ -709,12 +732,12 @@ UserTableUpdateIndexes(Relation rel, HeapTuple tuple)
 static HeapTuple
 ExtractKeyTuple(Relation relation, Relation idx_rel, HeapTuple tp)
 {
-	HeapTuple idx_tuple = NULL;
-	TupleDesc desc = RelationGetDescr(relation);
-	TupleDesc idx_desc;
-	Datum idx_vals[INDEX_MAX_KEYS];
-	bool idx_isnull[INDEX_MAX_KEYS];
-	int natt;
+	HeapTuple	idx_tuple = NULL;
+	TupleDesc	desc = RelationGetDescr(relation);
+	TupleDesc	idx_desc;
+	Datum		idx_vals[INDEX_MAX_KEYS];
+	bool		idx_isnull[INDEX_MAX_KEYS];
+	int			natt;
 
 
 	idx_rel = RelationIdGetRelation(relation->rd_primary);
@@ -722,7 +745,8 @@ ExtractKeyTuple(Relation relation, Relation idx_rel, HeapTuple tp)
 
 	for (natt = 0; natt < idx_desc->natts; natt++)
 	{
-		int attno = idx_rel->rd_index->indkey.values[natt];
+		int			attno = idx_rel->rd_index->indkey.values[natt];
+
 		if (attno == ObjectIdAttributeNumber)
 		{
 			idx_vals[natt] = HeapTupleGetOid(tp);
@@ -749,10 +773,10 @@ ExtractKeyTuple(Relation relation, Relation idx_rel, HeapTuple tp)
 static void
 build_scan_key(ScanKey skey, Relation rel, Relation idxrel, HeapTuple key)
 {
-	int attoff;
-	Datum indclassDatum;
-	bool isnull;
-	oidvector *opclass;
+	int			attoff;
+	Datum		indclassDatum;
+	bool		isnull;
+	oidvector  *opclass;
 
 	indclassDatum = SysCacheGetAttr(INDEXRELID, idxrel->rd_indextuple,
 									Anum_pg_index_indclass, &isnull);
@@ -762,22 +786,21 @@ build_scan_key(ScanKey skey, Relation rel, Relation idxrel, HeapTuple key)
 
 	for (attoff = 0; attoff < RelationGetNumberOfAttributes(idxrel); attoff++)
 	{
-		Oid operator;
-		Oid opfamily;
+		Oid			operator;
+		Oid			opfamily;
 		RegProcedure regop;
-		int pkattno = attoff + 1;
+		int			pkattno = attoff + 1;
 
 		opfamily = get_opclass_family(opclass->values[attoff]);
 
 		operator = get_opfamily_member(opfamily, attnumTypeId(idxrel, pkattno),
 									   attnumTypeId(idxrel, pkattno),
-		                               BTEqualStrategyNumber);
+									   BTEqualStrategyNumber);
 
 		regop = get_opcode(operator);
 
 		/*
-		 * FIXME: deform index tuple instead of fastgetattr'ing
-		 * everything
+		 * FIXME: deform index tuple instead of fastgetattr'ing everything
 		 */
 		ScanKeyInit(&skey[attoff],
 					pkattno,
@@ -798,8 +821,8 @@ build_scan_key(ScanKey skey, Relation rel, Relation idxrel, HeapTuple key)
 static bool
 find_pkey_tuple(ScanKey skey, Relation rel, Relation idxrel, ItemPointer tid)
 {
-	HeapTuple tuple;
-	bool found = false;
+	HeapTuple	tuple;
+	bool		found = false;
 	IndexScanDesc scan;
 
 	/*

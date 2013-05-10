@@ -36,20 +36,22 @@
 
 PG_MODULE_MAGIC;
 
-void _PG_init(void);
+void		_PG_init(void);
 
 typedef struct
 {
 	MemoryContext context;
-	bool include_xids;
+	bool		include_xids;
 } TestDecodingData;
-extern void pg_decode_init(struct LogicalDecodingContext *ctx, bool is_init);
 
-extern bool pg_decode_begin_txn(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn);
-extern bool pg_decode_commit_txn(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn, XLogRecPtr commit_lsn);
-extern bool pg_decode_change(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn, Relation rel, ReorderBufferChange *change);
-
-
+extern void pg_decode_init(LogicalDecodingContext *ctx, bool is_init);
+extern bool pg_decode_begin_txn(LogicalDecodingContext *ctx,
+					ReorderBufferTXN *txn);
+extern bool pg_decode_commit_txn(LogicalDecodingContext *ctx,
+					 ReorderBufferTXN *txn, XLogRecPtr commit_lsn);
+extern bool pg_decode_change(LogicalDecodingContext *ctx,
+				 ReorderBufferTXN *txn, Relation rel,
+				 ReorderBufferChange *change);
 static void write_tuple(StringInfo out, Relation rel, HeapTuple tuple);
 
 void
@@ -59,7 +61,7 @@ _PG_init(void)
 
 /* initialize this plugin */
 void
-pg_decode_init(struct LogicalDecodingContext *ctx, bool is_init)
+pg_decode_init(LogicalDecodingContext * ctx, bool is_init)
 {
 	TestDecodingData *data;
 
@@ -67,17 +69,17 @@ pg_decode_init(struct LogicalDecodingContext *ctx, bool is_init)
 
 	data = palloc(sizeof(TestDecodingData));
 	data->context = AllocSetContextCreate(TopMemoryContext,
-								 "text conversion context",
-								 ALLOCSET_DEFAULT_MINSIZE,
-								 ALLOCSET_DEFAULT_INITSIZE,
-								 ALLOCSET_DEFAULT_MAXSIZE);
+										  "bdr conversion context",
+										  ALLOCSET_DEFAULT_MINSIZE,
+										  ALLOCSET_DEFAULT_INITSIZE,
+										  ALLOCSET_DEFAULT_MAXSIZE);
 
 	ctx->output_plugin_private = data;
 }
 
 /* BEGIN callback */
 bool
-pg_decode_begin_txn(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn)
+pg_decode_begin_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn)
 {
 #ifdef NOT_YET
 	TestDecodingData *data = ctx->output_plugin_private;
@@ -88,16 +90,16 @@ pg_decode_begin_txn(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn)
 		return false;
 
 	ctx->prepare_write(ctx, txn->lsn, txn->xid);
-	appendStringInfoChar(ctx->out, 'B');/*  BEGIN */
-	appendBinaryStringInfo(ctx->out, (char *)&txn->last_lsn, sizeof(XLogRecPtr));
-	appendBinaryStringInfo(ctx->out, (char *)&txn->commit_time, sizeof(TimestampTz));
+	appendStringInfoChar(ctx->out, 'B');		/* BEGIN */
+	appendBinaryStringInfo(ctx->out, (char *) &txn->last_lsn, sizeof(XLogRecPtr));
+	appendBinaryStringInfo(ctx->out, (char *) &txn->commit_time, sizeof(TimestampTz));
 	ctx->write(ctx, txn->lsn, txn->xid);
 	return true;
 }
 
 /* COMMIT callback */
 bool
-pg_decode_commit_txn(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn, XLogRecPtr commit_lsn)
+pg_decode_commit_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn, XLogRecPtr commit_lsn)
 {
 #ifdef NOT_YET
 	TestDecodingData *data = ctx->output_plugin_private;
@@ -108,28 +110,29 @@ pg_decode_commit_txn(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn, 
 		return false;
 
 	ctx->prepare_write(ctx, txn->lsn, txn->xid);
-	appendStringInfoChar(ctx->out, 'C');/* sending COMMIT */
-	appendBinaryStringInfo(ctx->out, (char *)&commit_lsn, sizeof(XLogRecPtr));
-	appendBinaryStringInfo(ctx->out, (char *)&txn->commit_time, sizeof(TimestampTz));
+	appendStringInfoChar(ctx->out, 'C');		/* sending COMMIT */
+	appendBinaryStringInfo(ctx->out, (char *) &commit_lsn, sizeof(XLogRecPtr));
+	appendBinaryStringInfo(ctx->out, (char *) &txn->commit_time, sizeof(TimestampTz));
 	ctx->write(ctx, txn->lsn, txn->xid);
 	return true;
 }
 
 bool
-pg_decode_change(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn,
+pg_decode_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 				 Relation relation, ReorderBufferChange *change)
 {
-	TestDecodingData *data = ctx->output_plugin_private;
-	MemoryContext context = data->context;
-	/*
-	 * switch to our own context we can reset after the tuple is printed,
-	 * otherwise we will leak memory in via many of the output routines.
-	 */
-	MemoryContext old = MemoryContextSwitchTo(context);
-	Relation index_rel = NULL;
+	TestDecodingData *data;
+	MemoryContext old;
+	Relation	index_rel = NULL;
+
+	AssertVariableIsOfType(&pg_decode_change, LogicalDecodeChangeCB);
+
+	data = ctx->output_plugin_private;
+
+	/* Avoid leaking memory by using and resetting our own context */
+	old = MemoryContextSwitchTo(data->context);
 
 	Assert(change->origin_id == txn->origin_id);
-	AssertVariableIsOfType(&pg_decode_change, LogicalDecodeChangeCB);
 
 	/* only log changes originating locally */
 	if (txn->origin_id != InvalidRepNodeId)
@@ -139,59 +142,59 @@ pg_decode_change(struct LogicalDecodingContext *ctx, ReorderBufferTXN* txn,
 
 	switch (change->action)
 	{
-	case REORDER_BUFFER_CHANGE_INSERT:
-		appendStringInfoChar(ctx->out, 'I');/* action INSERT */
-		appendStringInfoChar(ctx->out, 'N');/* new tuple follows */
-		write_tuple(ctx->out, relation, &change->newtuple->tuple);
-		break;
-	case REORDER_BUFFER_CHANGE_UPDATE:
-		appendStringInfoChar(ctx->out, 'U');/* action UPDATE */
+		case REORDER_BUFFER_CHANGE_INSERT:
+			appendStringInfoChar(ctx->out, 'I');		/* action INSERT */
+			appendStringInfoChar(ctx->out, 'N');		/* new tuple follows */
+			write_tuple(ctx->out, relation, &change->newtuple->tuple);
+			break;
+		case REORDER_BUFFER_CHANGE_UPDATE:
+			appendStringInfoChar(ctx->out, 'U');		/* action UPDATE */
 
-		if (change->oldtuple != NULL)
-		{
-			if (relation->rd_indexvalid == 0)
-				RelationGetIndexList(relation);
+			if (change->oldtuple != NULL)
+			{
+				if (relation->rd_indexvalid == 0)
+					RelationGetIndexList(relation);
 
-			Assert(relation->rd_primary);
-			index_rel = RelationIdGetRelation(relation->rd_primary);
-			appendStringInfoChar(ctx->out, 'K');/* old key follows */
-			write_tuple(ctx->out, index_rel, &change->oldtuple->tuple);
-			RelationClose(index_rel);
-		}
-		appendStringInfoChar(ctx->out, 'N');/* new tuple follows */
-		write_tuple(ctx->out, relation, &change->newtuple->tuple);
-		break;
-	case REORDER_BUFFER_CHANGE_DELETE:
-		appendStringInfoChar(ctx->out, 'D');/* action DELETE */
-		RelationGetIndexList(relation);
-		if (relation->rd_primary != InvalidOid)
-		{
-			index_rel = RelationIdGetRelation(relation->rd_primary);
-			appendStringInfoChar(ctx->out, 'K');/* old key follows */
-			write_tuple(ctx->out, index_rel, &change->oldtuple->tuple);
-			RelationClose(index_rel);
-		}
-		else
-			appendStringInfoChar(ctx->out, 'E');/* empty */
+				Assert(relation->rd_primary);
+				index_rel = RelationIdGetRelation(relation->rd_primary);
+				appendStringInfoChar(ctx->out, 'K');	/* old key follows */
+				write_tuple(ctx->out, index_rel, &change->oldtuple->tuple);
+				RelationClose(index_rel);
+			}
+			appendStringInfoChar(ctx->out, 'N');		/* new tuple follows */
+			write_tuple(ctx->out, relation, &change->newtuple->tuple);
+			break;
+		case REORDER_BUFFER_CHANGE_DELETE:
+			appendStringInfoChar(ctx->out, 'D');		/* action DELETE */
+			RelationGetIndexList(relation);
+			if (relation->rd_primary != InvalidOid)
+			{
+				index_rel = RelationIdGetRelation(relation->rd_primary);
+				appendStringInfoChar(ctx->out, 'K');	/* old key follows */
+				write_tuple(ctx->out, index_rel, &change->oldtuple->tuple);
+				RelationClose(index_rel);
+			}
+			else
+				appendStringInfoChar(ctx->out, 'E');	/* empty */
 
-		break;
+			break;
 	}
 	ctx->write(ctx, change->lsn, txn->xid);
 
 	MemoryContextSwitchTo(old);
-	MemoryContextReset(context);
+	MemoryContextReset(data->context);
 	return true;
 }
 
 static void
 write_tuple(StringInfo out, Relation rel, HeapTuple tuple)
 {
-	HeapTuple cache;
+	HeapTuple	cache;
 	Form_pg_namespace classNsp;
 	const char *nspname;
-	int64 nspnamelen;
+	int64		nspnamelen;
 	const char *relname;
-	int64 relnamelen;
+	int64		relnamelen;
 
 	cache = SearchSysCache1(NAMESPACEOID,
 							ObjectIdGetDatum(rel->rd_rel->relnamespace));
@@ -206,15 +209,14 @@ write_tuple(StringInfo out, Relation rel, HeapTuple tuple)
 	relname = NameStr(rel->rd_rel->relname);
 	relnamelen = strlen(relname) + 1;
 
-	appendStringInfoChar(out, 'T');/* tuple follows */
+	appendStringInfoChar(out, 'T');		/* tuple follows */
 
-	pq_sendint64(out, nspnamelen);	/* schema name length */
+	pq_sendint64(out, nspnamelen);		/* schema name length */
 	appendBinaryStringInfo(out, nspname, nspnamelen);
 
-	pq_sendint64(out, relnamelen);	/* table name length */
+	pq_sendint64(out, relnamelen);		/* table name length */
 	appendBinaryStringInfo(out, relname, relnamelen);
 
 	pq_sendint64(out, tuple->t_len);	/* tuple length */
-	appendBinaryStringInfo(out, (char *)tuple->t_data, tuple->t_len);
-
+	appendBinaryStringInfo(out, (char *) tuple->t_data, tuple->t_len);
 }
