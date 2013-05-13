@@ -431,7 +431,7 @@ bdr_count_serialize(void)
 static void
 bdr_count_unserialize(void)
 {
-	int			fd;
+	int			fd = -1;
 	const char *path = "global/bdr.stat";
 	BdrCountSerialize serial;
 	Size		read_size;
@@ -497,7 +497,8 @@ bdr_count_unserialize(void)
 	}
 
 out:
-	CloseTransientFile(fd);
+	if (fd >= 0)
+		CloseTransientFile(fd);
 	LWLockRelease(BdrCountCtl->lock);
 	return;
 zero_file:
