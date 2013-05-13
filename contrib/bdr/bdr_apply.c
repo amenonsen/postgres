@@ -43,7 +43,7 @@
 
 static HeapTuple ExtractKeyTuple(Relation rel, Relation idx_rel, HeapTuple tp);
 static void build_scan_key(ScanKey skey, Relation rel, Relation idx_rel, HeapTuple key);
-static bool find_pkey_tuple(ScanKey skey, Relation rel, Relation idx_rel, ItemPointer tid);
+static bool find_pkey_tuple(ScanKey skey, Relation rel, Relation idx_rel, ItemPointer tid, bool lock);
 static void UserTableUpdateIndexes(Relation rel, HeapTuple tuple);
 static char *read_tuple(char *data, size_t len, HeapTuple tuple, Oid *reloid);
 static void tuple_to_stringinfo(StringInfo s, TupleDesc tupdesc, HeapTuple tuple);
@@ -283,7 +283,7 @@ process_remote_update(char *data, size_t r)
 	build_scan_key(skey, rel, idxrel, &old_key);
 
 	/* look for tuple identified by the (old) primary key */
-	found_old = find_pkey_tuple(skey, rel, idxrel, &oldtid);
+	found_old = find_pkey_tuple(skey, rel, idxrel, &oldtid, true);
 
 	if (found_old)
 	{
@@ -325,7 +325,8 @@ process_remote_update(char *data, size_t r)
 			/*
 			 * If the row got updated twice within a single node, just apply
 			 * the update with no conflict.  Don't warn/log either, regardless
-			 * of the timing; that's just too common and valid.
+			 * of the timing; that's just too common and valid since normal row
+			 * level locking guarantees are met.
 			 */
 			apply_update = true;
 			log_update = false;
@@ -479,7 +480,7 @@ process_remote_delete(char *data, size_t r)
 	build_scan_key(skey, rel, idxrel, &old_key);
 
 	/* try to find tuple via a (candidate|primary) key */
-	found_old = find_pkey_tuple(skey, rel, idxrel, &oldtid);
+	found_old = find_pkey_tuple(skey, rel, idxrel, &oldtid, true);
 
 	if (found_old)
 	{
@@ -819,11 +820,13 @@ build_scan_key(ScanKey skey, Relation rel, Relation idxrel, HeapTuple key)
  * false is returned otherwise.
  */
 static bool
-find_pkey_tuple(ScanKey skey, Relation rel, Relation idxrel, ItemPointer tid)
+find_pkey_tuple(ScanKey skey, Relation rel, Relation idxrel,
+				ItemPointer tid, bool lock)
 {
 	HeapTuple	tuple;
 	bool		found = false;
 	IndexScanDesc scan;
+	Snapshot snap = GetActiveSnapshot();
 
 	/*
 	 * XXX: should we use a different snapshot here to be able to get more
@@ -832,7 +835,7 @@ find_pkey_tuple(ScanKey skey, Relation rel, Relation idxrel, ItemPointer tid)
 	 */
 
 	scan = index_beginscan(rel, idxrel,
-						   GetActiveSnapshot(),
+						   snap,
 						   RelationGetNumberOfAttributes(idxrel),
 						   0);
 	index_rescan(scan, skey, RelationGetNumberOfAttributes(idxrel), NULL, 0);
@@ -847,5 +850,32 @@ find_pkey_tuple(ScanKey skey, Relation rel, Relation idxrel, ItemPointer tid)
 
 	index_endscan(scan);
 
+	if (lock && found)
+	{
+		Buffer buf;
+		HeapUpdateFailureData hufd;
+		HTSU_Result res;
+		HeapTupleData locktup;
+		ItemPointerCopy(tid, &locktup.t_self);
+
+		res = heap_lock_tuple(rel, &locktup, snap->curcid, LockTupleExclusive,
+							  false /* wait */,
+							  false /* don't follow updates */,
+							  &buf, &hufd);
+		switch (res)
+		{
+			case HeapTupleMayBeUpdated:
+				break;
+			case HeapTupleUpdated:
+				/* XXX: Improve handling here */
+				ereport(ERROR,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("concurrent update, retrying")));
+			default:
+				elog(ERROR, "unexpected HTSU_Result after locking: %u", res);
+				break;
+		}
+		ReleaseBuffer(buf);
+	}
 	return found;
 }
