@@ -1,0 +1,72 @@
+Parsed test spec with 5 sessions
+
+starting permutation: s1a s2a s3a s1b s2b s3b sr1d sr2d s1c sr1a sr2a sr1d sr2d s2c sr1b sr2b sr1d sr2d s3c sr1c sr2c sr1d sr2d
+step s1a: BEGIN;
+step s2a: BEGIN;
+step s3a: BEGIN;
+step s1b: INSERT INTO x(a,b) values (1,'foo');
+step s2b: INSERT INTO x(a,b) values (2,'bar');
+step s3b: INSERT INTO x(a,b) values (3,'baz');
+step sr1d: SELECT * from x order by a;
+a              b              
+
+step sr2d: SELECT * from x order by a;
+a              b              
+
+step s1c: COMMIT;
+step sr1a: SELECT wait_for(1);
+wait_for       
+
+1              
+step sr2a: SELECT wait_for(1);
+wait_for       
+
+1              
+step sr1d: SELECT * from x order by a;
+a              b              
+
+1              foo            
+step sr2d: SELECT * from x order by a;
+a              b              
+
+1              foo            
+step s2c: COMMIT;
+step sr1b: SELECT wait_for(2);
+wait_for       
+
+2              
+step sr2b: SELECT wait_for(2);
+wait_for       
+
+2              
+step sr1d: SELECT * from x order by a;
+a              b              
+
+1              foo            
+2              bar            
+step sr2d: SELECT * from x order by a;
+a              b              
+
+1              foo            
+2              bar            
+step s3c: COMMIT;
+step sr1c: SELECT wait_for(3);
+wait_for       
+
+3              
+step sr2c: SELECT wait_for(3);
+wait_for       
+
+3              
+step sr1d: SELECT * from x order by a;
+a              b              
+
+1              foo            
+2              bar            
+3              baz            
+step sr2d: SELECT * from x order by a;
+a              b              
+
+1              foo            
+2              bar            
+3              baz            

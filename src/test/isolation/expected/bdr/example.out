@@ -6,11 +6,11 @@ step s2a: INSERT INTO x(a,b) values (2,'bar');
 step s1b: SELECT wait_for(2);
 wait_for       
 
-               
+2              
 step s2b: SELECT wait_for(1);
 wait_for       
 
-               
+1              
 step s1c: SELECT * from x order by a;
 a              b              
 

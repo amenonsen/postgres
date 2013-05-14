@@ -36,7 +36,7 @@ extern int	optind;
 #define PREP_WAITING "isolationtester_waiting"
 
 /*
- * conns[0..testspec->nconninfos] are the global setup, teardown, and
+ * conns[0..testspec->nservers] are the global setup, teardown, and
  * watchdog connections, and sconns[0..testspec->nsessions] represent
  * spec-defined sessions. The counters are for exit_nicely().
  */
@@ -97,21 +97,10 @@ main(int argc, char **argv)
 				dry_run = true;
 				break;
 			default:
-				fprintf(stderr, "Usage: isolationtester [-n] [CONNINFO]\n");
+				fprintf(stderr, "Usage: isolationtester [-n] [[NAME] CONNINFO [NAME CONNINFO ...]]\n");
 				return EXIT_FAILURE;
 		}
 	}
-
-	/*
-	 * If the user supplies a non-option parameter on the command line, use it
-	 * as the conninfo string; otherwise default to setting dbname=postgres
-	 * and using environment variables or defaults for all other connection
-	 * parameters.
-	 */
-	if (argc > optind)
-		conninfo = argv[optind];
-	else
-		conninfo = "dbname = postgres";
 
 	/* Read the test spec from stdin */
 	spec_yyparse();
@@ -129,9 +118,48 @@ main(int argc, char **argv)
 
 	printf("Parsed test spec with %d sessions\n", testspec->nsessions);
 
+	/* Any remaining non-option parameters on the command line should be
+	 * either one conninfo string or pairs of server names and conninfo
+	 * strings. We match them up to the servers named in the spec file,
+	 * but it's OK if the command line specifies conninfo strings for
+	 * servers not named in the spec file. We can just ignore them.
+	 */
+
+	if (optind == argc)
+		conninfo = "dbname=postgres";
+	else if (optind == argc-1)
+		conninfo = argv[optind];
+	else
+	{
+		for (i = optind; i < argc; i += 2)
+		{
+			int j;
+			const char *name = argv[i];
+
+			if (argc == i+1)
+			{
+				fprintf(stderr, "Server name %s given without conninfo\n",
+						name);
+				return EXIT_FAILURE;
+			}
+
+			conninfo = argv[i+1];
+
+			for (j = 0; j < testspec->nservers; j++)
+			{
+				Server *srv = testspec->servers[j];
+				if (strcmp(name, srv->name) == 0)
+				{
+					srv->conninfo = conninfo;
+					break;
+				}
+			}
+		}
+	}
+
 	/*
 	 * Set session->connidx, so that we can look up
-	 * testspec->conninfos[connidx] and conns[connidx].
+	 * testspec->servers[connidx] and conns[connidx].
 	 */
 
 	for (i = 0; i < testspec->nsessions; i++)
@@ -140,24 +168,24 @@ main(int argc, char **argv)
 		int j;
 
 		s->connidx = -1;
-		for (j = 0; j < testspec->nconninfos; j++)
+		for (j = 0; j < testspec->nservers; j++)
 		{
-			Connection *c = testspec->conninfos[j];
+			Server *srv = testspec->servers[j];
 
-			if (s->connection && strcmp(s->connection, c->name) == 0)
+			if (s->server && strcmp(s->server, srv->name) == 0)
 			{
 				s->connidx = j;
-				c->npids++;
+				srv->npids++;
 				break;
 			}
 		}
 
 		if (s->connidx < 0)
 		{
-			if (s->connection)
+			if (s->server)
 			{
-				fprintf(stderr, "Session %s wants to use undefined connection %s\n",
-						s->name, s->connection);
+				fprintf(stderr, "Session %s wants to use undefined server %s\n",
+						s->name, s->server);
 				return EXIT_FAILURE;
 			}
 			else
@@ -171,26 +199,37 @@ main(int argc, char **argv)
 	 * command line (or a default) as a fallback.
 	 */
 
-	if (testspec->nconninfos == 0)
+	if (testspec->nservers == 0)
 	{
-		testspec->conninfos = malloc(sizeof(Connection *));
-		testspec->conninfos[0] = malloc(sizeof(Connection));
-		testspec->conninfos[0]->name = "default";
-		testspec->conninfos[0]->conninfo = conninfo;
-		testspec->nconninfos++;
+		testspec->servers = malloc(sizeof(Server *));
+		testspec->servers[0] = malloc(sizeof(Server));
+		testspec->servers[0]->name = "default";
+		testspec->servers[0]->conninfo = conninfo;
+		testspec->nservers++;
 	}
 
-	nconns = testspec->nconninfos;
+	nconns = testspec->nservers;
 	conns = calloc(nconns, sizeof(PGconn *));
 	for (i = 0; i < nconns; i++)
 	{
-		Connection *c = testspec->conninfos[i];
+		Server *srv = testspec->servers[i];
 
-		conns[i] = PQconnectdb(c->conninfo);
+		/* We can ignore servers that aren't used by any session. */
+		if (srv->npids == 0)
+			continue;
+
+		if (!srv->conninfo)
+		{
+			fprintf(stderr, "No conninfo specified for server %s\n",
+					srv->name);
+			exit_nicely();
+		}
+
+		conns[i] = PQconnectdb(srv->conninfo);
 		if (PQstatus(conns[i]) != CONNECTION_OK)
 		{
 			fprintf(stderr, "Couldn't connect to %s ('%s'): %s",
-					c->name, c->conninfo, PQerrorMessage(conns[i]));
+					srv->name, srv->conninfo, PQerrorMessage(conns[i]));
 			exit_nicely();
 		}
 
@@ -206,9 +245,8 @@ main(int argc, char **argv)
 		}
 		PQclear(res);
 
-		c->pidlist = "";
-		if (c->npids)
-			c->pids = calloc(c->npids, sizeof(char *));
+		if (srv->npids)
+			srv->pids = calloc(srv->npids, sizeof(char *));
 	}
 
 	/* Next, set up one connection per defined session. */
@@ -218,13 +256,13 @@ main(int argc, char **argv)
 	for (i = 0; i < nsconns; i++)
 	{
 		Session *s = testspec->sessions[i];
-		Connection *c = testspec->conninfos[s->connidx];
+		Server *srv = testspec->servers[s->connidx];
 
-		sconns[i] = PQconnectdb(c->conninfo);
+		sconns[i] = PQconnectdb(srv->conninfo);
 		if (PQstatus(sconns[i]) != CONNECTION_OK)
 		{
 			fprintf(stderr, "Couldn't connect to %s ('%s') for session %s: %s",
-					c->name, c->conninfo, s->name, PQerrorMessage(sconns[i]));
+					srv->name, srv->conninfo, s->name, PQerrorMessage(sconns[i]));
 			exit_nicely();
 		}
 
@@ -244,10 +282,10 @@ main(int argc, char **argv)
 			if (PQntuples(res) == 1 && PQnfields(res) == 1)
 			{
 				int j = 0;
-				while (c->pids[j] != 0)
+				while (srv->pids[j] != 0)
 					j++;
-				c->pids[j] = strdup(PQgetvalue(res, 0, 0));
-				s->backend_pid = c->pids[j];
+				srv->pids[j] = strdup(PQgetvalue(res, 0, 0));
+				s->backend_pid = srv->pids[j];
 			}
 			else
 			{
@@ -265,26 +303,27 @@ main(int argc, char **argv)
 		PQclear(res);
 	}
 
+	/* Build a list of backend pids for each server. */
 	for (i = 0; i < nconns; i++)
 	{
-		Connection *c = testspec->conninfos[i];
-		if (c->npids)
+		Server *srv = testspec->servers[i];
+		if (srv->npids)
 		{
 			int j;
 			int n = 2;
 
-			for (j = 0; j < c->npids; j++)
-				n += strlen(c->pids[j]) + 1;
+			for (j = 0; j < srv->npids; j++)
+				n += strlen(srv->pids[j]) + 1;
 
-			c->pidlist = malloc(n);
-			*c->pidlist = '\0';
-			strcat(c->pidlist, "{");
-			for (j = 0; j < c->npids; j++)
+			srv->pidlist = malloc(n);
+			*srv->pidlist = '\0';
+			strcat(srv->pidlist, "{");
+			for (j = 0; j < srv->npids; j++)
 			{
-				strcat(c->pidlist, c->pids[j]);
-				strcat(c->pidlist, ",");
+				strcat(srv->pidlist, srv->pids[j]);
+				strcat(srv->pidlist, ",");
 			}
-			c->pidlist[strlen(c->pidlist)-1] = '}';
+			srv->pidlist[strlen(srv->pidlist)-1] = '}';
 		}
 	}
 
@@ -626,15 +665,25 @@ run_permutation(TestSpec * testspec, int nsteps, Step ** steps)
 	printf("\n");
 
 	/* Perform setup */
-	for (i = 0; i < testspec->nsetupsqls; i++)
+	for (i = 0; i < nconns; i++)
 	{
-		res = PQexec(conns[0], testspec->setupsqls[i]);
-		if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		int j;
+
+		if (testspec->servers[i]->mode &&
+			strcmp(testspec->servers[i]->mode, "readonly") == 0)
+			continue;
+
+		for (j = 0; j < testspec->nsetupsqls; j++)
 		{
-			fprintf(stderr, "setup failed: %s", PQerrorMessage(conns[0]));
-			exit_nicely();
+			res = PQexec(conns[i], testspec->setupsqls[j]);
+			if (PQresultStatus(res) != PGRES_COMMAND_OK)
+			{
+				fprintf(stderr, "setup on connection %s failed: %s",
+						testspec->servers[i]->name, PQerrorMessage(conns[i]));
+				exit_nicely();
+			}
+			PQclear(res);
 		}
-		PQclear(res);
 	}
 
 	/* Perform per-session setup */
@@ -773,19 +822,22 @@ teardown:
 	/* Perform teardown */
 	if (testspec->teardownsql)
 	{
-		res = PQexec(conns[0], testspec->teardownsql);
-		if (PQresultStatus(res) == PGRES_TUPLES_OK)
+		for (i = 0; i < nconns; i++)
 		{
-			printResultSet(res);
+			if (testspec->servers[i]->mode &&
+				strcmp(testspec->servers[i]->mode, "readonly") == 0)
+				continue;
+
+			res = PQexec(conns[i], testspec->teardownsql);
+			if (PQresultStatus(res) != PGRES_COMMAND_OK)
+			{
+				fprintf(stderr, "teardown on connection %s failed: %s",
+						testspec->servers[i]->name, PQerrorMessage(conns[i]));
+				/* don't exit on teardown failure */
+				fflush(stderr);
+			}
+			PQclear(res);
 		}
-		else if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		{
-			fprintf(stderr, "teardown failed: %s",
-					PQerrorMessage(conns[0]));
-			/* don't exit on teardown failure */
-			fflush(stderr);
-		}
-		PQclear(res);
 	}
 }
 
@@ -838,7 +890,7 @@ try_complete_step(TestSpec * testspec, Step * step, int flags)
 			char **params = malloc(2*sizeof(char *));
 
 			params[0] = s->backend_pid;
-			params[1] = testspec->conninfos[s->connidx]->pidlist;
+			params[1] = testspec->servers[s->connidx]->pidlist;
 
 			res = PQexecPrepared(conns[s->connidx], PREP_WAITING,
 								 2, (const char * const *)params,

@@ -20,7 +20,7 @@ typedef struct Step Step;
 struct Session
 {
 	char	   *name;
-	char	   *connection;
+	char	   *server;
 	int         connidx;
 	char       *backend_pid;
 	char	   *setupsql;
@@ -47,15 +47,16 @@ typedef struct
 {
 	char       *name;
 	const char *conninfo;
+	char       *mode;
 	char      **pids;
 	int         npids;
 	char       *pidlist;
-} Connection;
+} Server;
 
 typedef struct
 {
-	Connection **conninfos;
-	int         nconninfos;
+	Server    **servers;
+	int         nservers;
 	char	  **setupsqls;
 	int         nsetupsqls;
 	char	   *teardownsql;

@@ -25,7 +25,7 @@ TestSpec		parseresult;			/* result of parsing is left here */
 %union
 {
 	char	   *str;
-	Connection *connection;
+	Server     *server;
 	Session	   *session;
 	Step	   *step;
 	Permutation *permutation;
@@ -36,30 +36,30 @@ TestSpec		parseresult;			/* result of parsing is left here */
 	}			ptr_list;
 }
 
-%type <ptr_list> setup_list conninfo_list
-%type <str> opt_setup opt_teardown opt_connection
-%type <str> setup connection
+%type <ptr_list> setup_list server_list
+%type <str> opt_setup opt_teardown opt_connect_to opt_mode
+%type <str> setup connect_to
 %type <ptr_list> step_list session_list permutation_list opt_permutation_list
 %type <ptr_list> string_list
 %type <session> session
 %type <step> step
 %type <permutation> permutation
-%type <connection> conninfo
+%type <server> server
 
 %token <str> sqlblock string
-%token CONNINFO PERMUTATION SESSION CONNECTION SETUP STEP TEARDOWN TEST
+%token SERVER READONLY PERMUTATION SESSION CONNECT_TO SETUP STEP TEARDOWN TEST
 
 %%
 
 TestSpec:
-			conninfo_list
+			server_list
 			setup_list
 			opt_teardown
 			session_list
 			opt_permutation_list
 			{
-				parseresult.conninfos = (char **) $1.elements;
-				parseresult.nconninfos = $1.nelements;
+				parseresult.servers = (Server **) $1.elements;
+				parseresult.nservers = $1.nelements;
 				parseresult.setupsqls = (char **) $2.elements;
 				parseresult.nsetupsqls = $2.nelements;
 				parseresult.teardownsql = $3;
@@ -70,13 +70,13 @@ TestSpec:
 			}
 		;
 
-conninfo_list:
+server_list:
 			/* EMPTY */
 			{
 				$$.elements = NULL;
 				$$.nelements = 0;
 			}
-			| conninfo_list conninfo
+			| server_list server
 			{
 				$$.elements = realloc($1.elements,
 									  ($1.nelements + 1) * sizeof(void *));
@@ -85,13 +85,18 @@ conninfo_list:
 			}
 		;
 
-conninfo:
-			CONNINFO string string
+server:
+			SERVER string opt_mode
 			{
-				$$ = malloc(sizeof(Connection));
+				$$ = malloc(sizeof(Server));
 				$$->name = $2;
-				$$->conninfo = $3;
+				$$->mode = $3;
 			}
+		;
+
+opt_mode:
+			/* EMPTY */			{ $$ = NULL; }
+			| READONLY			{ $$ = "readonly"; }
 		;
 
 setup_list:
@@ -139,21 +144,21 @@ session_list:
 			}
 		;
 
-opt_connection:
+opt_connect_to:
 			/* EMPTY */         { $$ = NULL; }
-			| connection        { $$ = $1; }
+			| connect_to        { $$ = $1; }
 		;
 
-connection:
-			CONNECTION string   { $$ = $2; }
+connect_to:
+			CONNECT_TO string   { $$ = $2; }
 		;
 
 session:
-			SESSION string opt_connection opt_setup step_list opt_teardown
+			SESSION string opt_connect_to opt_setup step_list opt_teardown
 			{
 				$$ = malloc(sizeof(Session));
 				$$->name = $2;
-				$$->connection = $3;
+				$$->server = $3;
 				$$->setupsql = $4;
 				$$->steps = (Step **) $5.elements;
 				$$->nsteps = $5.nelements;
