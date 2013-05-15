@@ -16,8 +16,7 @@
 #include "replication/logical.h"
 
 
-extern bool	track_commit_ts;
-
+extern PGDLLIMPORT bool	track_commit_ts;
 
 extern void TransactionTreeSetCommitTimestamp(TransactionId xid, int nsubxids,
 											  TransactionId *subxids,
