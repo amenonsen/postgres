@@ -27,6 +27,7 @@
 
 /* these headers are used by this particular worker's code */
 
+#include "access/committs.h"
 #include "access/xact.h"
 #include "catalog/pg_index.h"
 #include "lib/stringinfo.h"
@@ -491,6 +492,11 @@ _PG_init(void)
 
 	if (!process_shared_preload_libraries_in_progress)
 		elog(ERROR, "bdr can only be loaded via shared_preload_libraries");
+
+	if (!track_commit_ts)
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("bdr requires \"track_commit_timestamp\" to be enabled")));
 
 	/* guc's et al need to survive this */
 	old_context = MemoryContextSwitchTo(TopMemoryContext);
