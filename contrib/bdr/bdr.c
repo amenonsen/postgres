@@ -113,7 +113,7 @@ sendFeedback(PGconn *conn, XLogRecPtr blockpos, int64 now, bool replyRequested)
 	len += 8;
 	sendint64(blockpos, &replybuf[len]);		/* flush */
 	len += 8;
-	sendint64(InvalidXLogRecPtr, &replybuf[len]);		/* apply */
+	sendint64(blockpos, &replybuf[len]);		/* apply */
 	len += 8;
 	sendint64(now, &replybuf[len]);		/* sendTime */
 	len += 8;
