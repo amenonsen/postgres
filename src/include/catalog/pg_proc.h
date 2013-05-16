@@ -4732,6 +4732,10 @@ DESCR("SP-GiST support for quad tree over range");
 DATA(insert OID = 3473 (  spg_range_quad_leaf_consistent	PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "2281 2281" _null_ _null_ _null_ _null_  spg_range_quad_leaf_consistent _null_ _null_ _null_ ));
 DESCR("SP-GiST support for quad tree over range");
 
+DATA(insert OID = 3779 (  init_logical_replication PGNSP PGUID 12 1 1 0 0 f f f f f f v 2 0 2249 "19 19" "{19,19,25,25}" "{i,i,o,o}" "{slotname,plugin,slotname,xlog_position}" _null_ init_logical_replication _null_ _null_ _null_ ));
+DESCR("set up a logical replication slot");
+DATA(insert OID = 3780 (  stop_logical_replication PGNSP PGUID 12 1 1 0 0 f f f f f f v 1 0 23 "19" _null_ _null_ _null_ _null_ stop_logical_replication _null_ _null_ _null_ ));
+DESCR("stop logical replication");
 
 /* event triggers */
 DATA(insert OID = 3566 (  pg_event_trigger_dropped_objects		PGNSP PGUID 12 10 100 0 0 f f f f t t s 0 0 2249 "" "{26,26,23,25,25,25,25}" "{o,o,o,o,o,o,o}" "{classid, objid, objsubid, object_type, schema_name, object_name, object_identity}" _null_ pg_event_trigger_dropped_objects _null_ _null_ _null_ ));

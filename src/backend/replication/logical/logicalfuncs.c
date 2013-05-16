@@ -14,15 +14,256 @@
 
 #include "postgres.h"
 
+#include <unistd.h>
+
 #include "fmgr.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
+#include "storage/fd.h"
 
+#include "replication/decode.h"
 #include "replication/logical.h"
 #include "replication/logicalfuncs.h"
 #include "replication/snapbuild.h"
 
+Datum init_logical_replication(PG_FUNCTION_ARGS);
+Datum stop_logical_replication(PG_FUNCTION_ARGS);
+Datum pg_stat_get_logical_replication_slots(PG_FUNCTION_ARGS);
+
+/* FIXME: duplicate code with pg_xlogdump, similar to walsender.c */
+static void
+XLogRead(char *buf, XLogRecPtr startptr, Size count)
+{
+	char	   *p;
+	XLogRecPtr	recptr;
+	Size		nbytes;
+
+	static int	sendFile = -1;
+	static XLogSegNo sendSegNo = 0;
+	static uint32 sendOff = 0;
+
+	p = buf;
+	recptr = startptr;
+	nbytes = count;
+
+	while (nbytes > 0)
+	{
+		uint32		startoff;
+		int			segbytes;
+		int			readbytes;
+
+		startoff = recptr % XLogSegSize;
+
+		if (sendFile < 0 || !XLByteInSeg(recptr, sendSegNo))
+		{
+			char		path[MAXPGPATH];
+
+			/* Switch to another logfile segment */
+			if (sendFile >= 0)
+				close(sendFile);
+
+			XLByteToSeg(recptr, sendSegNo);
+
+			XLogFilePath(path, ThisTimeLineID, sendSegNo);
+
+			sendFile = BasicOpenFile(path, O_RDONLY | PG_BINARY, 0);
+
+			if (sendFile < 0)
+			{
+				if (errno == ENOENT)
+					ereport(ERROR,
+							(errcode_for_file_access(),
+							 errmsg("requested WAL segment %s has already been removed",
+									path)));
+				else
+					ereport(ERROR,
+							(errcode_for_file_access(),
+							 errmsg("could not open file \"%s\": %m",
+									path)));
+			}
+			sendOff = 0;
+		}
+
+		/* Need to seek in the file? */
+		if (sendOff != startoff)
+		{
+			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0)
+			{
+				char	path[MAXPGPATH];
+				XLogFilePath(path, ThisTimeLineID, sendSegNo);
+
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not seek in log segment %s to offset %u: %m",
+								path, startoff)));
+			}
+			sendOff = startoff;
+		}
+
+		/* How many bytes are within this segment? */
+		if (nbytes > (XLogSegSize - startoff))
+			segbytes = XLogSegSize - startoff;
+		else
+			segbytes = nbytes;
+
+		readbytes = read(sendFile, p, segbytes);
+		if (readbytes <= 0)
+		{
+			char	path[MAXPGPATH];
+			XLogFilePath(path, ThisTimeLineID, sendSegNo);
+
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not read from log segment %s, offset %u, length %lu: %m",
+							path, sendOff, (unsigned long) segbytes)));
+		}
+
+		/* Update state for read */
+		recptr += readbytes;
+
+		sendOff += readbytes;
+		nbytes -= readbytes;
+		p += readbytes;
+	}
+}
+
+static int
+test_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
+			   XLogRecPtr targetRecPtr, char* cur_page, TimeLineID *pageTLI)
+{
+    XLogRecPtr flushptr, loc;
+    int count;
+
+	loc = targetPagePtr + reqLen;
+	while (1) {
+		flushptr = GetFlushRecPtr();
+		if (loc <= flushptr)
+			break;
+		pg_usleep(1000L);
+	}
+
+    /* more than one block available */
+    if (targetPagePtr + XLOG_BLCKSZ <= flushptr)
+        count = XLOG_BLCKSZ;
+    /* not enough data there */
+    else if (targetPagePtr + reqLen > flushptr)
+        return -1;
+    /* part of the page available */
+    else
+        count = flushptr - targetPagePtr;
+
+    /* FIXME: more sensible/efficient implementation */
+    XLogRead(cur_page, targetPagePtr, XLOG_BLCKSZ);
+
+    return count;
+}
+
+static void
+DummyWrite(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid)
+{
+	elog(ERROR, "init_logical_replication shouldn't be writing anything");
+}
+
+Datum
+init_logical_replication(PG_FUNCTION_ARGS)
+{
+	Name name = PG_GETARG_NAME(0);
+	Name plugin = PG_GETARG_NAME(1);
+
+	char		xpos[MAXFNAMELEN];
+
+	TupleDesc   tupdesc;
+	HeapTuple   tuple;
+	Datum       result;
+	Datum       values[2];
+	bool        nulls[2];
+	LogicalDecodingContext *ctx = NULL;
+
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		elog(ERROR, "return type must be a row type");
+
+	/* Acquire a logical replication slot */
+	CheckLogicalReplicationRequirements();
+	LogicalDecodingAcquireFreeSlot(NameStr(*name), NameStr(*plugin));
+
+	/* make sure we don't end up with an unreleased slot */
+	PG_TRY();
+	{
+		XLogRecPtr startptr;
+
+		/*
+		 * Use the same initial_snapshot_reader, but with our own read_page
+		 * callback that does not depend on walsender.
+		 */
+		MyLogicalDecodingSlot->last_required_checkpoint = GetRedoRecPtr();
+
+		ctx = CreateLogicalDecodingContext(MyLogicalDecodingSlot, true, NIL,
+				test_read_page, DummyWrite, DummyWrite);
+
+		/* setup from where to read xlog */
+		startptr = ctx->slot->last_required_checkpoint;
+		/* Wait for a consistent starting point */
+		for (;;)
+		{
+			XLogRecord *record;
+			XLogRecordBuffer buf;
+			char *err = NULL;
+
+			/* the read_page callback waits for new WAL */
+			record = XLogReadRecord(ctx->reader, startptr, &err);
+			if (err)
+				elog(ERROR, "%s", err);
+
+			Assert(record);
+
+			startptr = InvalidXLogRecPtr;
+
+			buf.origptr = ctx->reader->ReadRecPtr;
+			buf.record = *record;
+			buf.record_data = XLogRecGetData(record);
+			DecodeRecordIntoReorderBuffer(ctx, &buf);
+
+			if (LogicalDecodingContextReady(ctx))
+				break;
+		}
+
+		/* Extract the values we want */
+		MyLogicalDecodingSlot->confirmed_flush = ctx->reader->EndRecPtr;
+		snprintf(xpos, sizeof(xpos), "%X/%X",
+				 (uint32) (MyLogicalDecodingSlot->confirmed_flush >> 32),
+				 (uint32) MyLogicalDecodingSlot->confirmed_flush);
+	}
+	PG_CATCH();
+	{
+		LogicalDecodingReleaseSlot();
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	values[0] = CStringGetTextDatum(NameStr(MyLogicalDecodingSlot->name));
+	values[1] = CStringGetTextDatum(xpos);
+
+	memset(nulls, 0, sizeof(nulls));
+
+	tuple = heap_form_tuple(tupdesc, values, nulls);
+	result = HeapTupleGetDatum(tuple);
+
+	LogicalDecodingReleaseSlot();
+
+	PG_RETURN_DATUM(result);
+}
+
+Datum
+stop_logical_replication(PG_FUNCTION_ARGS)
+{
+	Name name = PG_GETARG_NAME(0);
+
+	CheckLogicalReplicationRequirements();
+	LogicalDecodingFreeSlot(NameStr(*name));
+
+	PG_RETURN_INT32(0);
+}
 
 /*
  * Return one row for each logical replication slot currently in use.

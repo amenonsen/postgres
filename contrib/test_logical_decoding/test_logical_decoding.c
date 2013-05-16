@@ -1,33 +1,23 @@
 #include "postgres.h"
 
-#include <signal.h>
 #include <unistd.h>
 
-#include "access/timeline.h"
-#include "access/xlog.h"
-#include "access/xlog_internal.h"
 #include "catalog/pg_type.h"
-#include "libpq/pqformat.h"
 #include "nodes/makefuncs.h"
-#include "nodes/pg_list.h"
 #include "replication/decode.h"
 #include "replication/logical.h"
 #include "replication/snapbuild.h"
-#include "storage/procarray.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/resowner.h"
-#include "utils/syscache.h"
 #include "storage/fd.h"
 #include "miscadmin.h"
 #include "funcapi.h"
 
 PG_MODULE_MAGIC;
 
-Datum init_logical_replication(PG_FUNCTION_ARGS);
 Datum start_logical_replication(PG_FUNCTION_ARGS);
-Datum stop_logical_replication(PG_FUNCTION_ARGS);
 
 static Tuplestorestate *tupstore = NULL;
 static TupleDesc tupdesc;
@@ -181,97 +171,6 @@ LogicalOutputWrite(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xi
 	values[2] = CStringGetTextDatum(ctx->out->data);
 
 	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
-}
-
-PG_FUNCTION_INFO_V1(init_logical_replication);
-
-Datum
-init_logical_replication(PG_FUNCTION_ARGS)
-{
-	Name name = PG_GETARG_NAME(0);
-	Name plugin = PG_GETARG_NAME(1);
-
-	char		xpos[MAXFNAMELEN];
-
-	TupleDesc   tupdesc;
-	HeapTuple   tuple;
-	Datum       result;
-	Datum       values[2];
-	bool        nulls[2];
-	LogicalDecodingContext *ctx = NULL;
-
-	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-		elog(ERROR, "return type must be a row type");
-
-	/* Acquire a logical replication slot */
-	CheckLogicalReplicationRequirements();
-	LogicalDecodingAcquireFreeSlot(NameStr(*name), NameStr(*plugin));
-
-	/* make sure we don't end up with an unreleased slot */
-	PG_TRY();
-	{
-		XLogRecPtr startptr;
-
-		/*
-		 * Use the same initial_snapshot_reader, but with our own read_page
-		 * callback that does not depend on walsender.
-		 */
-		MyLogicalDecodingSlot->last_required_checkpoint = GetRedoRecPtr();
-
-		ctx = CreateLogicalDecodingContext(MyLogicalDecodingSlot, true, NIL,
-				test_read_page, LogicalOutputPrepareWrite, LogicalOutputWrite);
-
-		/* setup from where to read xlog */
-		startptr = ctx->slot->last_required_checkpoint;
-		/* Wait for a consistent starting point */
-		for (;;)
-		{
-			XLogRecord *record;
-			XLogRecordBuffer buf;
-			char *err = NULL;
-
-			/* the read_page callback waits for new WAL */
-			record = XLogReadRecord(ctx->reader, startptr, &err);
-			if (err)
-				elog(ERROR, "%s", err);
-
-			Assert(record);
-
-			startptr = InvalidXLogRecPtr;
-
-			buf.origptr = ctx->reader->ReadRecPtr;
-			buf.record = *record;
-			buf.record_data = XLogRecGetData(record);
-			DecodeRecordIntoReorderBuffer(ctx, &buf);
-
-			if (LogicalDecodingContextReady(ctx))
-				break;
-		}
-
-		/* Extract the values we want */
-		MyLogicalDecodingSlot->confirmed_flush = ctx->reader->EndRecPtr;
-		snprintf(xpos, sizeof(xpos), "%X/%X",
-				 (uint32) (MyLogicalDecodingSlot->confirmed_flush >> 32),
-				 (uint32) MyLogicalDecodingSlot->confirmed_flush);
-	}
-	PG_CATCH();
-	{
-		LogicalDecodingReleaseSlot();
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-
-	values[0] = CStringGetTextDatum(NameStr(MyLogicalDecodingSlot->name));
-	values[1] = CStringGetTextDatum(xpos);
-
-	memset(nulls, 0, sizeof(nulls));
-
-	tuple = heap_form_tuple(tupdesc, values, nulls);
-	result = HeapTupleGetDatum(tuple);
-
-	LogicalDecodingReleaseSlot();
-
-	PG_RETURN_DATUM(result);
 }
 
 PG_FUNCTION_INFO_V1(start_logical_replication);
@@ -447,17 +346,4 @@ start_logical_replication(PG_FUNCTION_ARGS)
 	LogicalDecodingReleaseSlot();
 
 	return (Datum) 0;
-}
-
-PG_FUNCTION_INFO_V1(stop_logical_replication);
-
-Datum
-stop_logical_replication(PG_FUNCTION_ARGS)
-{
-	Name name = PG_GETARG_NAME(0);
-
-	CheckLogicalReplicationRequirements();
-	LogicalDecodingFreeSlot(NameStr(*name));
-
-	PG_RETURN_INT32(0);
 }
