@@ -29,7 +29,7 @@
 
 Datum init_logical_replication(PG_FUNCTION_ARGS);
 Datum stop_logical_replication(PG_FUNCTION_ARGS);
-Datum pg_stat_get_logical_replication_slots(PG_FUNCTION_ARGS);
+Datum pg_stat_get_logical_decoding_slots(PG_FUNCTION_ARGS);
 
 /* FIXME: duplicate code with pg_xlogdump, similar to walsender.c */
 static void
@@ -270,9 +270,9 @@ stop_logical_replication(PG_FUNCTION_ARGS)
  */
 
 Datum
-pg_stat_get_logical_replication_slots(PG_FUNCTION_ARGS)
+pg_stat_get_logical_decoding_slots(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_LOGICAL_REPLICATION_SLOTS_COLS 6
+#define PG_STAT_GET_LOGICAL_DECODING_SLOTS_COLS 6
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
@@ -308,8 +308,8 @@ pg_stat_get_logical_replication_slots(PG_FUNCTION_ARGS)
 	for (i = 0; i < max_logical_slots; i++)
 	{
 		LogicalDecodingSlot *slot = &LogicalDecodingCtl->logical_slots[i];
-		Datum values[PG_STAT_GET_LOGICAL_REPLICATION_SLOTS_COLS];
-		bool nulls[PG_STAT_GET_LOGICAL_REPLICATION_SLOTS_COLS];
+		Datum values[PG_STAT_GET_LOGICAL_DECODING_SLOTS_COLS];
+		bool nulls[PG_STAT_GET_LOGICAL_DECODING_SLOTS_COLS];
 		char location[MAXFNAMELEN];
 		const char *slot_name;
 		const char *plugin;

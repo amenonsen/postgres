@@ -612,7 +612,7 @@ CREATE VIEW pg_stat_replication AS
     WHERE S.usesysid = U.oid AND
             S.pid = W.pid;
 
-CREATE VIEW pg_stat_logical_replication AS
+CREATE VIEW pg_stat_logical_decoding AS
     SELECT
             L.slot_name,
             L.plugin,
@@ -620,7 +620,7 @@ CREATE VIEW pg_stat_logical_replication AS
             L.active,
             L.xmin,
             L.last_required_checkpoint
-    FROM pg_stat_get_logical_replication_slots() AS L;
+    FROM pg_stat_get_logical_decoding_slots() AS L;
 
 CREATE VIEW pg_stat_database AS
     SELECT
