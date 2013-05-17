@@ -22,133 +22,9 @@ Datum start_logical_replication(PG_FUNCTION_ARGS);
 static Tuplestorestate *tupstore = NULL;
 static TupleDesc tupdesc;
 
-/* FIXME: duplicate code with pg_xlogdump, similar to walsender.c */
-static void
-XLogRead(char *buf, XLogRecPtr startptr, Size count)
-{
-	char	   *p;
-	XLogRecPtr	recptr;
-	Size		nbytes;
-
-	static int	sendFile = -1;
-	static XLogSegNo sendSegNo = 0;
-	static uint32 sendOff = 0;
-
-	p = buf;
-	recptr = startptr;
-	nbytes = count;
-
-	while (nbytes > 0)
-	{
-		uint32		startoff;
-		int			segbytes;
-		int			readbytes;
-
-		startoff = recptr % XLogSegSize;
-
-		if (sendFile < 0 || !XLByteInSeg(recptr, sendSegNo))
-		{
-			char		path[MAXPGPATH];
-
-			/* Switch to another logfile segment */
-			if (sendFile >= 0)
-				close(sendFile);
-
-			XLByteToSeg(recptr, sendSegNo);
-
-			XLogFilePath(path, ThisTimeLineID, sendSegNo);
-
-			sendFile = BasicOpenFile(path, O_RDONLY | PG_BINARY, 0);
-
-			if (sendFile < 0)
-			{
-				if (errno == ENOENT)
-					ereport(ERROR,
-							(errcode_for_file_access(),
-							 errmsg("requested WAL segment %s has already been removed",
-									path)));
-				else
-					ereport(ERROR,
-							(errcode_for_file_access(),
-							 errmsg("could not open file \"%s\": %m",
-									path)));
-			}
-			sendOff = 0;
-		}
-
-		/* Need to seek in the file? */
-		if (sendOff != startoff)
-		{
-			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0)
-			{
-				char	path[MAXPGPATH];
-				XLogFilePath(path, ThisTimeLineID, sendSegNo);
-
-				ereport(ERROR,
-						(errcode_for_file_access(),
-						 errmsg("could not seek in log segment %s to offset %u: %m",
-								path, startoff)));
-			}
-			sendOff = startoff;
-		}
-
-		/* How many bytes are within this segment? */
-		if (nbytes > (XLogSegSize - startoff))
-			segbytes = XLogSegSize - startoff;
-		else
-			segbytes = nbytes;
-
-		readbytes = read(sendFile, p, segbytes);
-		if (readbytes <= 0)
-		{
-			char	path[MAXPGPATH];
-			XLogFilePath(path, ThisTimeLineID, sendSegNo);
-
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not read from log segment %s, offset %u, length %lu: %m",
-							path, sendOff, (unsigned long) segbytes)));
-		}
-
-		/* Update state for read */
-		recptr += readbytes;
-
-		sendOff += readbytes;
-		nbytes -= readbytes;
-		p += readbytes;
-	}
-}
-
-static int
-test_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
-			   XLogRecPtr targetRecPtr, char* cur_page, TimeLineID *pageTLI)
-{
-    XLogRecPtr flushptr, loc;
-    int count;
-
-	loc = targetPagePtr + reqLen;
-	while (1) {
-		flushptr = GetFlushRecPtr();
-		if (loc <= flushptr)
-			break;
-		pg_usleep(1000L);
-	}
-
-    /* more than one block available */
-    if (targetPagePtr + XLOG_BLCKSZ <= flushptr)
-        count = XLOG_BLCKSZ;
-    /* not enough data there */
-    else if (targetPagePtr + reqLen > flushptr)
-        return -1;
-    /* part of the page available */
-    else
-        count = flushptr - targetPagePtr;
-
-    /* FIXME: more sensible/efficient implementation */
-    XLogRead(cur_page, targetPagePtr, XLOG_BLCKSZ);
-
-    return count;
-}
+extern int startup_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr,
+								int reqLen, XLogRecPtr targetRecPtr,
+								char* cur_page, TimeLineID *pageTLI);
 
 static void
 LogicalOutputPrepareWrite(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid)
@@ -277,7 +153,7 @@ start_logical_replication(PG_FUNCTION_ARGS)
 	LogicalDecodingReAcquireSlot(NameStr(*name));
 
 	ctx = CreateLogicalDecodingContext(MyLogicalDecodingSlot, false, options,
-				test_read_page, LogicalOutputPrepareWrite, LogicalOutputWrite);
+				startup_read_page, LogicalOutputPrepareWrite, LogicalOutputWrite);
 	ctx->snapshot_builder->transactions_after = MyLogicalDecodingSlot->confirmed_flush;
 
 	startptr = MyLogicalDecodingSlot->last_required_checkpoint;

@@ -129,8 +129,8 @@ XLogRead(char *buf, XLogRecPtr startptr, Size count)
 }
 
 static int
-test_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
-			   XLogRecPtr targetRecPtr, char* cur_page, TimeLineID *pageTLI)
+startup_read_page(XLogReaderState* state, XLogRecPtr targetPagePtr, int reqLen,
+				   XLogRecPtr targetRecPtr, char* cur_page, TimeLineID *pageTLI)
 {
     XLogRecPtr flushptr, loc;
     int count;
@@ -199,7 +199,7 @@ init_logical_replication(PG_FUNCTION_ARGS)
 		MyLogicalDecodingSlot->last_required_checkpoint = GetRedoRecPtr();
 
 		ctx = CreateLogicalDecodingContext(MyLogicalDecodingSlot, true, NIL,
-				test_read_page, DummyWrite, DummyWrite);
+				startup_read_page, DummyWrite, DummyWrite);
 
 		/* setup from where to read xlog */
 		startptr = ctx->slot->last_required_checkpoint;
