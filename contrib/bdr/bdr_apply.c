@@ -153,9 +153,18 @@ process_remote_insert(char *data, size_t r)
 		elog(ERROR, "unexpected relkind '%c' rel \"%s\"",
 			 rel->rd_rel->relkind, RelationGetRelationName(rel));
 
-	simple_heap_insert(rel, &tup);
-	UserTableUpdateIndexes(rel, &tup);
-	bdr_count_insert();
+	PG_TRY();
+	{
+		simple_heap_insert(rel, &tup);
+		UserTableUpdateIndexes(rel, &tup);
+		bdr_count_insert();
+	}
+	PG_CATCH();
+	{
+		bdr_count_insert_conflict();
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 
 	/* debug output */
 #if VERBOSE_INSERT
@@ -408,10 +417,19 @@ process_remote_update(char *data, size_t r)
 
 		if (apply_update)
 		{
-			simple_heap_update(rel, &oldtid, &new_tuple);
-			/* FIXME: HOT support */
-			UserTableUpdateIndexes(rel, &new_tuple);
-			bdr_count_update();
+			PG_TRY();
+			{
+				simple_heap_update(rel, &oldtid, &new_tuple);
+				/* FIXME: HOT support */
+				UserTableUpdateIndexes(rel, &new_tuple);
+				bdr_count_update();
+			}
+			PG_CATCH();
+			{
+				bdr_count_update_conflict();
+				PG_RE_THROW();
+			}
+			PG_END_TRY();
 		}
 		else
 			bdr_count_update_conflict();
@@ -484,9 +502,17 @@ process_remote_delete(char *data, size_t r)
 
 	if (found_old)
 	{
-		simple_heap_delete(rel, &oldtid);
-		bdr_count_delete();
-
+		PG_TRY();
+		{
+			simple_heap_delete(rel, &oldtid);
+			bdr_count_delete();
+		}
+		PG_CATCH();
+		{
+			bdr_count_delete_conflict();
+			PG_RE_THROW();
+		}
+		PG_END_TRY();
 	}
 	else
 	{

@@ -474,6 +474,7 @@ bdr_main(void *main_arg)
 						 GetCurrentTimestamp(), false);
 	}
 
+	bdr_count_disconnect();
 	proc_exit(0);
 }
 
