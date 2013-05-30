@@ -178,31 +178,40 @@ process_remote_action(char *data, size_t r)
 	data += 1;
 	r--;
 
-	switch (action)
+	PG_TRY();
 	{
-			/* BEGIN */
-		case 'B':
-			process_remote_begin(data, r);
-			break;
-			/* COMMIT */
-		case 'C':
-			process_remote_commit(data, r);
-			break;
-			/* INSERT */
-		case 'I':
-			process_remote_insert(data, r);
-			break;
-			/* UPDATE */
-		case 'U':
-			process_remote_update(data, r);
-			break;
-			/* DELETE */
-		case 'D':
-			process_remote_delete(data, r);
-			break;
-		default:
-			elog(ERROR, "unknown action of type %c", action);
+		switch (action)
+		{
+				/* BEGIN */
+			case 'B':
+				process_remote_begin(data, r);
+				break;
+				/* COMMIT */
+			case 'C':
+				process_remote_commit(data, r);
+				break;
+				/* INSERT */
+			case 'I':
+				process_remote_insert(data, r);
+				break;
+				/* UPDATE */
+			case 'U':
+				process_remote_update(data, r);
+				break;
+				/* DELETE */
+			case 'D':
+				process_remote_delete(data, r);
+				break;
+			default:
+				elog(ERROR, "unknown action of type %c", action);
+		}
 	}
+	PG_CATCH();
+	{
+		bdr_count_rollback();
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 }
 
 static void

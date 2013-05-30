@@ -55,6 +55,8 @@ typedef struct BdrCountSlot
 	int64		nr_delete_conflict;
 
 	int64		nr_disconnect;
+
+	XLogRecPtr	updated_until_lsn;
 }	BdrCountSlot;
 
 /*
@@ -81,7 +83,7 @@ typedef struct BdrCountSerialize
 static const uint32 bdr_count_magic = 0x5e51A7;
 
 /* everytime the stored data format changes, increase */
-static const uint32 bdr_count_version = 2;
+static const uint32 bdr_count_version = 3;
 
 /* shortcut for the finding BdrCountControl in memory */
 static BdrCountControl *BdrCountCtl = NULL;
@@ -91,6 +93,9 @@ static size_t bdr_count_nnodes = 0;
 
 /* offset in the BdrCountControl->slots "our" backend is in */
 static int	MyCountOffsetIdx = -1;
+
+/* used to accumulate insert/update/delete statistics during a transaction */
+static BdrCountSlot t_stats;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -230,57 +235,93 @@ out:
 void
 bdr_count_commit(void)
 {
+	BdrCountSlot *slot;
+
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_commit++;
+
+	slot = &BdrCountCtl->slots[MyCountOffsetIdx];
+	if (slot->updated_until_lsn < replication_origin_lsn)
+	{
+		slot->nr_commit++;
+		slot->nr_insert += t_stats.nr_insert;
+		slot->nr_update += t_stats.nr_update;
+		slot->nr_delete += t_stats.nr_delete;
+		slot->updated_until_lsn = replication_origin_lsn;
+
+		t_stats.nr_insert = 0;
+		t_stats.nr_update = 0;
+		t_stats.nr_delete = 0;
+		t_stats.nr_insert_conflict = 0;
+		t_stats.nr_update_conflict = 0;
+		t_stats.nr_delete_conflict = 0;
+	}
 }
 
 void
 bdr_count_rollback(void)
 {
+	BdrCountSlot *slot;
+
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_rollback++;
+
+	slot = &BdrCountCtl->slots[MyCountOffsetIdx];
+	if (slot->updated_until_lsn < replication_origin_lsn)
+	{
+		slot->nr_rollback++;
+		slot->nr_insert_conflict += t_stats.nr_insert_conflict;
+		slot->nr_update_conflict += t_stats.nr_update_conflict;
+		slot->nr_delete_conflict += t_stats.nr_delete_conflict;
+		slot->updated_until_lsn = replication_origin_lsn;
+
+		t_stats.nr_insert = 0;
+		t_stats.nr_update = 0;
+		t_stats.nr_delete = 0;
+		t_stats.nr_insert_conflict = 0;
+		t_stats.nr_update_conflict = 0;
+		t_stats.nr_delete_conflict = 0;
+	}
 }
 
 void
 bdr_count_insert(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_insert++;
+	t_stats.nr_insert++;
 }
 
 void
 bdr_count_insert_conflict(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_insert_conflict++;
+	t_stats.nr_insert_conflict++;
 }
 
 void
 bdr_count_update(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_update++;
+	t_stats.nr_update++;
 }
 
 void
 bdr_count_update_conflict(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_update_conflict++;
+	t_stats.nr_update_conflict++;
 }
 
 void
 bdr_count_delete(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_delete++;
+	t_stats.nr_delete++;
 }
 
 void
 bdr_count_delete_conflict(void)
 {
 	Assert(MyCountOffsetIdx != -1);
-	BdrCountCtl->slots[MyCountOffsetIdx].nr_delete_conflict++;
+	t_stats.nr_delete_conflict++;
 }
 
 void
