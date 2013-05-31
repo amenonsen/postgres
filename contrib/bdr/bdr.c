@@ -43,6 +43,12 @@
 /* apply */
 #include "libpq-fe.h"
 
+/* init_replica */
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include "postmaster/postmaster.h"
+
 #define MAXCONNINFO		1024
 
 static bool got_sigterm = false;
@@ -53,6 +59,8 @@ bool bdr_log_apply = false;
 
 BDRWorkerCon *bdr_apply_con = NULL;
 BDRSequencerCon *bdr_sequencer_con = NULL;
+
+void init_replica(BDRWorkerCon *wcon, PGconn *conn, PGresult *res);
 
 PG_MODULE_MAGIC;
 
@@ -351,12 +359,17 @@ bdr_apply_main(void *main_arg)
 			elog(FATAL, "could not send replication command \"%s\": status %s: %s\n",
 				 query, PQresStatus(PQresultStatus(res)), PQresultErrorMessage(res));
 		}
-		PQclear(res);
 
 		/* now commit local identifier */
 		CommitTransactionCommand();
 		CurrentResourceOwner = bdr_saved_resowner;
 		elog(LOG, "created replication identifier %u", replication_identifier);
+
+		/* copy the database, if needed */
+		if (bdr_apply_con->init_replica)
+			init_replica(bdr_apply_con, streamConn, res);
+
+		PQclear(res);
 
 		/*
 		 * FIXME: set current replication progress from upstream IFF it has not
@@ -670,6 +683,11 @@ _PG_init(void)
 		/* don't free, referenced by the guc machinery! */
 		char	   *optname_dsn = palloc(strlen(name) + 30);
 		char	   *optname_delay = palloc(strlen(name) + 30);
+		char	   *optname_replica = palloc(strlen(name) + 30);
+		char	   *optname_bindir = palloc(strlen(name) + 30);
+		char	   *optname_tmpdir = palloc(strlen(name) + 30);
+		char	   *optname_local_dsn = palloc(strlen(name) + 30);
+		char	   *optname_script_path = palloc(strlen(name) + 30);
 		BDRWorkerCon *con;
 		bool		found = false;
 
@@ -677,6 +695,11 @@ _PG_init(void)
 		con->dsn = (char *) lfirst(c);
 		con->name = pstrdup(name);
 		con->apply_delay = 0;
+		con->init_replica = false;
+		con->replica_bin_dir = NULL;
+		con->replica_tmp_dir = NULL;
+		con->replica_local_dsn = NULL;
+		con->replica_script_path = NULL;
 
 		sprintf(optname_dsn, "bdr.%s.dsn", name);
 		DefineCustomStringVariable(optname_dsn,
@@ -696,6 +719,52 @@ _PG_init(void)
 								PGC_SIGHUP,
 								GUC_UNIT_MS,
 								NULL, NULL, NULL);
+
+		sprintf(optname_replica, "bdr.%s.init_replica", name);
+		DefineCustomBoolVariable(optname_replica,
+								 optname_replica,
+								 NULL,
+								 &con->init_replica,
+								 false,
+								 PGC_SIGHUP,
+								 0,
+								 NULL, NULL, NULL);
+
+		sprintf(optname_bindir, "bdr.%s.replica_bin_dir", name);
+		DefineCustomStringVariable(optname_bindir,
+								   optname_bindir,
+								   NULL,
+								   &con->replica_bin_dir,
+								   NULL, PGC_POSTMASTER,
+								   GUC_NOT_IN_SAMPLE,
+								   NULL, NULL, NULL);
+
+		sprintf(optname_tmpdir, "bdr.%s.replica_tmp_dir", name);
+		DefineCustomStringVariable(optname_tmpdir,
+								   optname_tmpdir,
+								   NULL,
+								   &con->replica_tmp_dir,
+								   NULL, PGC_POSTMASTER,
+								   GUC_NOT_IN_SAMPLE,
+								   NULL, NULL, NULL);
+
+		sprintf(optname_local_dsn, "bdr.%s.replica_local_dsn", name);
+		DefineCustomStringVariable(optname_local_dsn,
+								   optname_local_dsn,
+								   NULL,
+								   &con->replica_local_dsn,
+								   NULL, PGC_POSTMASTER,
+								   GUC_NOT_IN_SAMPLE,
+								   NULL, NULL, NULL);
+
+		sprintf(optname_script_path, "bdr.%s.replica_script_path", name);
+		DefineCustomStringVariable(optname_script_path,
+								   optname_script_path,
+								   NULL,
+								   &con->replica_script_path,
+								   NULL, PGC_POSTMASTER,
+								   GUC_NOT_IN_SAMPLE,
+								   NULL, NULL, NULL);
 
 		if (!con->dsn)
 		{
@@ -804,4 +873,81 @@ out:
 	bdr_sequencer_shmem_init(nregistered, num_used_databases);
 
 	MemoryContextSwitchTo(old_context);
+}
+
+void
+init_replica(BDRWorkerCon *wcon, PGconn *conn, PGresult *res)
+{
+	pid_t pid;
+	char *snapshot;
+	char *directory;
+
+	if (!wcon->replica_bin_dir)
+		elog(FATAL, "no replica_bin_dir specified");
+
+	if (!wcon->replica_tmp_dir)
+		elog(FATAL, "no replica_tmp_dir specified");
+
+	if (!wcon->replica_local_dsn)
+		elog(FATAL, "no replica_local_dsn specified");
+
+	if (!wcon->replica_script_path)
+		elog(FATAL, "no replica_script_path specified");
+
+	snapshot = PQgetvalue(res, 0, 2);
+	directory = palloc(strlen(wcon->replica_tmp_dir)+32);
+	sprintf(directory, "%s.%s.%d", wcon->replica_tmp_dir,
+			snapshot, getpid());
+
+	pid = fork();
+	if (pid < 0)
+		elog(FATAL, "can't fork to create initial replica");
+	else if (pid == 0)
+	{
+		int n = 0;
+
+		char *const envp[] = { NULL };
+		char *const argv[] = {
+			wcon->replica_script_path,
+			"--snapshot", snapshot,
+			"--source", wcon->dsn,
+			"--target", wcon->replica_local_dsn,
+			"--bindir", wcon->replica_bin_dir,
+			"--directory", directory,
+			NULL
+		};
+
+		elog(LOG, "Creating replica with: %s --snapshot %s --source \"%s\" --target \"%s\" --bindir \"%s\" --directory \"%s\"",
+			 wcon->replica_script_path, snapshot, wcon->dsn, wcon->replica_local_dsn,
+			 wcon->replica_bin_dir, directory);
+
+		n = execve(wcon->replica_script_path, argv, envp);
+		if (n < 0)
+			exit(n);
+	}
+	else
+	{
+		pid_t res;
+		int exitstatus = 0;
+
+		elog(DEBUG1, "Waiting for pg_bdr_replica pid %d", pid);
+
+		do
+		{
+			res = waitpid(pid, &exitstatus, WNOHANG);
+			if (res < 0)
+				elog(FATAL, "error calling waitpid");
+			else if (res == pid)
+				break;
+
+			pg_usleep(10 * 1000);
+			CHECK_FOR_INTERRUPTS();
+		}
+		while (1);
+
+		elog(DEBUG1, "pg_bdr_replica exited with status %d", exitstatus);
+
+		if (exitstatus != 0)
+			elog(FATAL, "pg_bdr_replica returned non-zero");
+	}
 }
