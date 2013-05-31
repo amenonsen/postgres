@@ -938,6 +938,9 @@ SnapBuildDecodeCallback(ReorderBuffer * reorder, Snapstate * snapstate,
 							xl_heap_inplace *xlrec =
 							(xl_heap_inplace *) buf->record_data;
 
+							if (xid == InvalidTransactionId)
+								break;
+
 							ret = SnapBuildProcessChange(reorder, snapstate,
 														 xid, buf,
 														 &xlrec->target.node);

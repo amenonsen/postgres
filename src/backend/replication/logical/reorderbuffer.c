@@ -460,6 +460,7 @@ ReorderBufferTXNByXid(ReorderBuffer * buffer, TransactionId xid, bool create,
 	bool		found;
 
 	Assert(!create || lsn != InvalidXLogRecPtr);
+	Assert(xid != InvalidTransactionId);
 
 	/*
 	 * Check the one-entry lookup cache first
