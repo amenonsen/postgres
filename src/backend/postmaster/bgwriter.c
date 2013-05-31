@@ -80,7 +80,7 @@ static volatile sig_atomic_t shutdown_requested = false;
 
 static TimestampTz last_logged_snap_ts;
 static XLogRecPtr last_logged_snap_recptr = InvalidXLogRecPtr;
-static uint32 log_snap_interval_ms = 15000;
+static uint32 log_snap_interval_ms = 1500;
 
 /* Signal handlers */
 
