@@ -47,6 +47,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/errno.h>
 #include "postmaster/postmaster.h"
 
 #define MAXCONNINFO		1024
@@ -936,7 +937,11 @@ init_replica(BDRWorkerCon *wcon, PGconn *conn, PGresult *res)
 		{
 			res = waitpid(pid, &exitstatus, WNOHANG);
 			if (res < 0)
+			{
+				if (errno == EINTR || errno == EAGAIN)
+					continue;
 				elog(FATAL, "error calling waitpid");
+			}
 			else if (res == pid)
 				break;
 
