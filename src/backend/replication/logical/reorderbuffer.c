@@ -1189,6 +1189,7 @@ ReorderBufferFreeSnap(ReorderBuffer * buffer, Snapshot snap)
  */
 void
 ReorderBufferCommit(ReorderBuffer * buffer, TransactionId xid, XLogRecPtr lsn,
+					XLogRecPtr endlsn,
 					RepNodeId origin, TimestampTz commit_time)
 {
 	ReorderBufferTXN *txn;
@@ -1206,6 +1207,7 @@ ReorderBufferCommit(ReorderBuffer * buffer, TransactionId xid, XLogRecPtr lsn,
 		return;
 
 	txn->last_lsn = lsn;
+	txn->really_last_lsn = endlsn;
 	txn->origin_id = origin;
 	txn->commit_time = commit_time;
 
@@ -1344,8 +1346,7 @@ ReorderBufferCommit(ReorderBuffer * buffer, TransactionId xid, XLogRecPtr lsn,
 		ReorderBufferIterTXNFinish(buffer, iterstate);
 
 		/* call commit callback */
-		buffer->commit(buffer, txn, lsn);
-
+		buffer->commit(buffer, txn, lsn, endlsn);
 
 		ResourceOwnerRelease(CurrentResourceOwner,
 							 RESOURCE_RELEASE_BEFORE_LOCKS,

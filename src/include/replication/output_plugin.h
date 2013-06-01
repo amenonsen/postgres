@@ -59,7 +59,8 @@ typedef bool (*LogicalDecodeChangeCB) (
 typedef bool (*LogicalDecodeCommitCB) (
 											 struct LogicalDecodingContext *,
 												   ReorderBufferTXN * txn,
-												   XLogRecPtr commit_lsn);
+												   XLogRecPtr commit_lsn,
+												   XLogRecPtr commit_end_lsn);
 
 /*
  * Gets called to cleanup the state of an output plugin

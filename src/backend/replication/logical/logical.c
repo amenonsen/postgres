@@ -929,11 +929,11 @@ begin_txn_wrapper(ReorderBuffer * cache, ReorderBufferTXN * txn)
 }
 
 static void
-commit_txn_wrapper(ReorderBuffer * cache, ReorderBufferTXN * txn, XLogRecPtr commit_lsn)
+commit_txn_wrapper(ReorderBuffer * cache, ReorderBufferTXN * txn, XLogRecPtr commit_lsn, XLogRecPtr commit_end_lsn)
 {
 	LogicalDecodingContext *ctx = cache->private_data;
 
-	ctx->callbacks.commit_cb(ctx, txn, commit_lsn);
+	ctx->callbacks.commit_cb(ctx, txn, commit_lsn, commit_end_lsn);
 }
 
 static void

@@ -124,6 +124,9 @@ typedef struct ReorderBufferTXN
 	 */
 	XLogRecPtr	last_lsn;
 
+	/* end LSN of the commit record */
+	XLogRecPtr	really_last_lsn;
+
 	/*
 	 * LSN of the last lsn at which snapshot information reside, so we can
 	 * restart decoding from there and fully recover this transaction from
@@ -229,7 +232,8 @@ typedef void (*ReorderBufferBeginCB) (
 typedef void (*ReorderBufferCommitCB) (
 												   ReorderBuffer * cache,
 												   ReorderBufferTXN * txn,
-												   XLogRecPtr commit_lsn);
+												   XLogRecPtr commit_lsn,
+												   XLogRecPtr commit_end_lsn);
 
 struct ReorderBuffer
 {
@@ -307,7 +311,7 @@ ReorderBufferChange *ReorderBufferGetChange(ReorderBuffer *);
 void		ReorderBufferReturnChange(ReorderBuffer *, ReorderBufferChange *);
 
 void		ReorderBufferAddChange(ReorderBuffer *, TransactionId, XLogRecPtr lsn, ReorderBufferChange *);
-void		ReorderBufferCommit(ReorderBuffer *, TransactionId, XLogRecPtr lsn, RepNodeId origin_id, TimestampTz commit_time);
+void		ReorderBufferCommit(ReorderBuffer *, TransactionId, XLogRecPtr lsn, XLogRecPtr endlsn, RepNodeId origin_id, TimestampTz commit_time);
 void		ReorderBufferAssignChild(ReorderBuffer *, TransactionId, TransactionId, XLogRecPtr lsn);
 void		ReorderBufferCommitChild(ReorderBuffer *, TransactionId, TransactionId, XLogRecPtr lsn);
 void		ReorderBufferAbort(ReorderBuffer *, TransactionId, XLogRecPtr lsn);

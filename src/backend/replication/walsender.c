@@ -788,6 +788,7 @@ InitLogicalReplication(InitLogicalReplicationCmd *cmd)
 		Assert(record);
 
 		buf.origptr = ctx->reader->ReadRecPtr;
+		buf.endptr = ctx->reader->EndRecPtr;
 		buf.record = *record;
 		buf.record_data = XLogRecGetData(record);
 		DecodeRecordIntoReorderBuffer(ctx, &buf);
@@ -2233,6 +2234,7 @@ XLogSendLogical(void)
 		XLogRecordBuffer buf;
 
 		buf.origptr = logical_decoding_ctx->reader->ReadRecPtr;
+		buf.endptr = logical_decoding_ctx->reader->EndRecPtr;
 		buf.record = *record;
 		buf.record_data = XLogRecGetData(record);
 

@@ -194,8 +194,9 @@ DecodeTransactionOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 					sub_xids = (TransactionId *)
 						&(xlrec->xnodes[xlrec->nrels]);
 
-				DecodeCommit(ctx, buf, r->xl_xid, sub_xids,
-							 xlrec->nsubxacts, xlrec->xact_time);
+				DecodeCommit(ctx, buf,
+							 r->xl_xid, sub_xids, xlrec->nsubxacts,
+							 xlrec->xact_time);
 
 				break;
 			}
@@ -209,8 +210,8 @@ DecodeTransactionOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 					&(xlrec->crec.xnodes[xlrec->crec.nrels]);
 
 				/* r->xl_xid is committed in a separate record */
-				DecodeCommit(ctx, buf, xlrec->xid, sub_xids,
-							 xlrec->crec.nsubxacts,
+				DecodeCommit(ctx, buf,
+							 xlrec->xid, sub_xids, xlrec->crec.nsubxacts,
 							 xlrec->crec.xact_time);
 
 				break;
@@ -221,7 +222,8 @@ DecodeTransactionOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 
 				xlrec = (xl_xact_commit_compact *) buf->record_data;
 
-				DecodeCommit(ctx, buf, r->xl_xid, xlrec->subxacts,
+				DecodeCommit(ctx, buf,
+							 r->xl_xid, xlrec->subxacts,
 							 xlrec->nsubxacts, 0);
 				break;
 			}
@@ -310,7 +312,7 @@ DecodeCommit(LogicalDecodingContext * ctx, XLogRecordBuffer * buf,
 	}
 
 	/* replay actions of all transaction + subtransactions in order */
-	ReorderBufferCommit(ctx->reorder, xid, buf->origptr,
+	ReorderBufferCommit(ctx->reorder, xid, buf->origptr, buf->endptr,
 						buf->record.xl_origin_id, commit_time);
 }
 

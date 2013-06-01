@@ -224,6 +224,7 @@ init_logical_replication(PG_FUNCTION_ARGS)
 			startptr = InvalidXLogRecPtr;
 
 			buf.origptr = ctx->reader->ReadRecPtr;
+			buf.endptr = ctx->reader->EndRecPtr;
 			buf.record = *record;
 			buf.record_data = XLogRecGetData(record);
 			DecodeRecordIntoReorderBuffer(ctx, &buf);

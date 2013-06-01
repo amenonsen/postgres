@@ -116,9 +116,10 @@ extern XLogReaderState *XLogReaderAllocate(XLogPageReadCB pagereadfunc,
 
 typedef struct XLogRecordBuffer
 {
-	XLogRecPtr origptr;
-	XLogRecord record;
-	char *record_data;
+	XLogRecPtr	origptr;
+	XLogRecPtr	endptr;
+	XLogRecord	record;
+	char	   *record_data;
 } XLogRecordBuffer;
 
 
