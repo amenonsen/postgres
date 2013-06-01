@@ -46,7 +46,8 @@ extern void pg_decode_init(LogicalDecodingContext * ctx, bool is_init);
 extern bool pg_decode_begin_txn(LogicalDecodingContext * ctx,
 					ReorderBufferTXN * txn);
 extern bool pg_decode_commit_txn(LogicalDecodingContext * ctx,
-					 ReorderBufferTXN * txn, XLogRecPtr commit_lsn);
+					 ReorderBufferTXN * txn, XLogRecPtr commit_lsn,
+					 XLogRecPtr commit_end_lsn);
 extern bool pg_decode_change(LogicalDecodingContext * ctx,
 				 ReorderBufferTXN * txn, Relation rel,
 				 ReorderBufferChange * change);
@@ -115,7 +116,7 @@ pg_decode_begin_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn)
 /* COMMIT callback */
 bool
 pg_decode_commit_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn,
-					 XLogRecPtr commit_lsn)
+					 XLogRecPtr commit_lsn, XLogRecPtr commit_end_lsn)
 {
 	TestDecodingData *data = ctx->output_plugin_private;
 
