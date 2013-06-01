@@ -49,6 +49,7 @@ static bool got_sigterm = false;
 ResourceOwner bdr_saved_resowner;
 static char *connections = NULL;
 static char *bdr_synchronous_commit = NULL;
+bool bdr_log_apply = false;
 
 BDRWorkerCon *bdr_apply_con = NULL;
 BDRSequencerCon *bdr_sequencer_con = NULL;
@@ -127,12 +128,12 @@ sendFeedback(PGconn *conn, XLogRecPtr blockpos, int64 now, bool replyRequested,
 	len += 8;
 	sendint64(blockpos, &replybuf[len]);		/* apply */
 	len += 8;
-	sendint64(now, &replybuf[len]);		/* sendTime */
+	sendint64(now, &replybuf[len]);				/* sendTime */
 	len += 8;
 	replybuf[len] = replyRequested ? 1 : 0;		/* replyRequested */
 	len += 1;
 
-	elog(LOG, "sending feedback (force %d, reply requested %d) to %X/%X",
+	elog(DEBUG1, "sending feedback (force %d, reply requested %d) to %X/%X",
 		 force, replyRequested,
 		 (uint32) (blockpos >> 32), (uint32) blockpos);
 
@@ -618,6 +619,14 @@ _PG_init(void)
 							   NULL, PGC_POSTMASTER,
 							   0,
 							   NULL, NULL, NULL);
+
+	DefineCustomBoolVariable("bdr.log_apply",
+							 "Log BDR apply process in detail",
+							 NULL,
+							 &bdr_log_apply,
+						     false, PGC_POSTMASTER,
+							 0,
+							 NULL, NULL, NULL);
 
 	/* if nothing is configured, we're done */
 	if (connections == NULL)
