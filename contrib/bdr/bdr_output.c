@@ -49,7 +49,8 @@ extern void pg_decode_init(LogicalDecodingContext *ctx, bool is_init);
 extern bool pg_decode_begin_txn(LogicalDecodingContext *ctx,
 					ReorderBufferTXN *txn);
 extern bool pg_decode_commit_txn(LogicalDecodingContext *ctx,
-					 ReorderBufferTXN *txn, XLogRecPtr commit_lsn);
+					 ReorderBufferTXN *txn, XLogRecPtr commit_lsn,
+					 XLogRecPtr commit_end_lsn);
 extern bool pg_decode_change(LogicalDecodingContext *ctx,
 				 ReorderBufferTXN *txn, Relation rel,
 				 ReorderBufferChange *change);
@@ -102,7 +103,8 @@ pg_decode_begin_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn)
 
 /* COMMIT callback */
 bool
-pg_decode_commit_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn, XLogRecPtr commit_lsn)
+pg_decode_commit_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn,
+					 XLogRecPtr commit_lsn, XLogRecPtr commit_end_lsn)
 {
 #ifdef NOT_YET
 	TestDecodingData *data = ctx->output_plugin_private;
@@ -115,6 +117,7 @@ pg_decode_commit_txn(LogicalDecodingContext * ctx, ReorderBufferTXN * txn, XLogR
 	ctx->prepare_write(ctx, txn->lsn, txn->xid);
 	appendStringInfoChar(ctx->out, 'C');		/* sending COMMIT */
 	appendBinaryStringInfo(ctx->out, (char *) &commit_lsn, sizeof(XLogRecPtr));
+	appendBinaryStringInfo(ctx->out, (char *) &commit_end_lsn, sizeof(XLogRecPtr));
 	appendBinaryStringInfo(ctx->out, (char *) &txn->commit_time, sizeof(TimestampTz));
 	ctx->write(ctx, txn->lsn, txn->xid);
 	return true;

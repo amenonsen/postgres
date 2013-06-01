@@ -116,17 +116,22 @@ void
 process_remote_commit(char *data, size_t r)
 {
 	XLogRecPtr *origlsn;
+	XLogRecPtr *endlsn;
 	TimestampTz *committime;
 
 	origlsn = (XLogRecPtr *) data;
+	data += sizeof(XLogRecPtr);
+
+	endlsn = (XLogRecPtr *) data;
 	data += sizeof(XLogRecPtr);
 
 	committime = (TimestampTz *) data;
 	data += sizeof(TimestampTz);
 
 	if (bdr_log_apply)
-		elog(LOG, "COMMIT origin(lsn, timestamp): %X/%X, %s",
+		elog(LOG, "COMMIT origin(lsn, end_lsn, timestamp): %X/%X - %X/%X, %s",
 			 (uint32) (*origlsn >> 32), (uint32) *origlsn,
+			 (uint32) (*endlsn >> 32), (uint32) *endlsn,
 			 timestamptz_to_str(*committime));
 
 	Assert(*origlsn == replication_origin_lsn);
