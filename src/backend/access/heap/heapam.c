@@ -1664,12 +1664,18 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	bool		at_chain_start;
 	bool		valid;
 	bool		skip;
+	TransactionId xmin;
 
 	/* If this is not the first call, previous call returned a (live!) tuple */
 	if (all_dead)
 		*all_dead = first_call;
 
-	Assert(TransactionIdIsValid(RecentGlobalXmin));
+	if (RelationIsDoingTimetravel(relation) || IsToastRelation(relation))
+		xmin = RecentGlobalXmin;
+	else
+		xmin = RecentGlobalDataXmin;
+
+	Assert(TransactionIdIsValid(xmin));
 
 	Assert(ItemPointerGetBlockNumber(tid) == BufferGetBlockNumber(buffer));
 	offnum = ItemPointerGetOffsetNumber(tid);
@@ -1758,7 +1764,7 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 		 * transactions.
 		 */
 		if (all_dead && *all_dead &&
-			!HeapTupleIsSurelyDead(heapTuple, RecentGlobalXmin))
+			!HeapTupleIsSurelyDead(heapTuple, xmin))
 			*all_dead = false;
 
 		/*
