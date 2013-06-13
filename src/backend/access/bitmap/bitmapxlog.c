@@ -112,7 +112,7 @@ _bitmap_xlog_newpage(XLogRecPtr lsn, XLogRecord *record)
 	page = BufferGetPage(buffer);
 	Assert(PageIsNew(page));
 
-	if (XLByteLT(PageGetLSN(page), lsn))
+	if (PageGetLSN(page) < lsn)
 	{
 		switch (info)
 		{
@@ -125,7 +125,6 @@ _bitmap_xlog_newpage(XLogRecPtr lsn, XLogRecord *record)
 		}
 
 		PageSetLSN(page, lsn);
-		PageSetTLI(page, ThisTimeLineID);
 		_bitmap_wrtbuf(buffer);
 	}
 	else
@@ -155,7 +154,7 @@ _bitmap_xlog_insert_vmi(XLogRecPtr lsn, XLogRecord *record)
 		_bitmap_init_vmipage(vmiBuffer);
 	}
 
-	if (XLByteLT(PageGetLSN(vmiPage), lsn))
+	if (PageGetLSN(vmiPage) < lsn)
 	{
 		OffsetNumber	newOffset, itemSize;
 
@@ -202,13 +201,11 @@ _bitmap_xlog_insert_vmi(XLogRecPtr lsn, XLogRecord *record)
 			metapage->bm_last_vmi_page = xlrec->bm_vmi_blkno;
 
 			PageSetLSN(BufferGetPage(metabuf), lsn);
-			PageSetTLI(BufferGetPage(metabuf), ThisTimeLineID);
 
 			_bitmap_wrtbuf(metabuf);
 		}
 
 		PageSetLSN(vmiPage, lsn);
-		PageSetTLI(vmiPage, ThisTimeLineID);
 
 		_bitmap_wrtbuf(vmiBuffer);
 	}
@@ -233,7 +230,7 @@ _bitmap_xlog_insert_meta(XLogRecPtr lsn, XLogRecord *record)
 	if (PageIsNew(mp))
 		PageInit(mp, BufferGetPageSize(metabuf), 0);
 
-	if (XLByteLT(PageGetLSN(mp), lsn))
+	if (PageGetLSN(mp) < lsn)
 	{
 		metapage = (BMMetaPage)PageGetContents(mp);
 
@@ -242,7 +239,6 @@ _bitmap_xlog_insert_meta(XLogRecPtr lsn, XLogRecord *record)
 		metapage->bm_last_vmi_page = xlrec->bm_last_vmi_page;
 
 		PageSetLSN(mp, lsn);
-		PageSetTLI(mp, ThisTimeLineID);
 		_bitmap_wrtbuf(metabuf);
 	}
 	else
@@ -273,7 +269,7 @@ _bitmap_xlog_insert_bitmap_lastwords(XLogRecPtr lsn,
 
 	vmiPage = BufferGetPage(vmiBuffer);
 
-	if (XLByteLT(PageGetLSN(vmiPage), lsn))
+	if (PageGetLSN(vmiPage) < lsn)
 	{
 		ItemId item = PageGetItemId(vmiPage, xlrec->bm_vmi_offset);
 
@@ -289,7 +285,6 @@ _bitmap_xlog_insert_bitmap_lastwords(XLogRecPtr lsn,
 		vmi->vmi_words_header = xlrec->vmi_words_header;
 
 		PageSetLSN(vmiPage, lsn);
-		PageSetTLI(vmiPage, ThisTimeLineID);
 		_bitmap_wrtbuf(vmiBuffer);
 	}
 	else
@@ -322,7 +317,7 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 	bitmapPageOpaque =
 		(BMPageOpaque)PageGetSpecialPointer(bitmapPage);
 
-	if (XLByteLT(PageGetLSN(bitmapPage), lsn))
+	if (PageGetLSN(bitmapPage) < lsn)
 	{
 		Buffer				vmiBuffer;
 		Page				vmiPage;
@@ -397,7 +392,6 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 				vmi->bm_bitmap_head = vmi->bm_bitmap_tail;
 
 			PageSetLSN(vmiPage, lsn);
-			PageSetTLI(vmiPage, ThisTimeLineID);
 
 			_bitmap_wrtbuf(vmiBuffer);
 
@@ -423,7 +417,6 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 				vmi->bm_bitmap_tail = vmi->bm_bitmap_head;
 
 				PageSetLSN(vmiPage, lsn);
-				PageSetTLI(vmiPage, ThisTimeLineID);
 
 				_bitmap_wrtbuf(vmiBuffer);
 			}
@@ -431,7 +424,6 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 				_bitmap_relbuf(vmiBuffer);
 
 			PageSetLSN(nextPage, lsn);
-			PageSetTLI(nextPage, ThisTimeLineID);
 
 			_bitmap_wrtbuf(nextBuffer);
 
@@ -439,7 +431,6 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 		}
 
 		PageSetLSN(bitmapPage, lsn);
-		PageSetTLI(bitmapPage, ThisTimeLineID);
 
 		_bitmap_wrtbuf(bitmapBuffer);
 
@@ -473,7 +464,7 @@ _bitmap_xlog_updateword(XLogRecPtr lsn, XLogRecord *record)
 		(BMPageOpaque)PageGetSpecialPointer(bitmapPage);
 	bitmap = (BMBitmapVectorPage) PageGetContents(bitmapPage);
 
-	if (XLByteLT(PageGetLSN(bitmapPage), lsn))
+	if (PageGetLSN(bitmapPage) < lsn)
 	{
 		Assert(bitmapOpaque->bm_hrl_words_used > xlrec->bm_word_no);
 
@@ -481,7 +472,6 @@ _bitmap_xlog_updateword(XLogRecPtr lsn, XLogRecord *record)
 		bitmap->hwords[xlrec->bm_word_no/BM_WORD_SIZE] = xlrec->bm_hword;
 
 		PageSetLSN(bitmapPage, lsn);
-		PageSetTLI(bitmapPage, ThisTimeLineID);
 		_bitmap_wrtbuf(bitmapBuffer);
 	}
 
@@ -514,7 +504,7 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 		(BMPageOpaque) PageGetSpecialPointer(firstPage);
 	firstBitmap = (BMBitmapVectorPage) PageGetContents(firstPage);
 
-	if (XLByteLT(PageGetLSN(firstPage), lsn))
+	if (PageGetLSN(firstPage) < lsn)
 	{
 		if (xlrec->bm_two_pages)
 		{
@@ -526,7 +516,7 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 			secondOpaque =
 				(BMPageOpaque) PageGetSpecialPointer(secondPage);
 			secondBitmap = (BMBitmapVectorPage) PageGetContents(secondPage);
-			Assert(XLByteLT(PageGetLSN(secondPage), lsn));
+			Assert(PageGetLSN(secondPage) < lsn);
 		}
 
 		memcpy(firstBitmap->cwords, xlrec->bm_first_cwords,
@@ -548,7 +538,6 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 			secondOpaque->bm_bitmap_next = xlrec->bm_next_blkno;
 
 			PageSetLSN(secondPage, lsn);
-			PageSetTLI(secondPage, ThisTimeLineID);
 			_bitmap_wrtbuf(secondBuffer);
 		}
 
@@ -571,12 +560,10 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 			vmi->bm_bitmap_tail = BufferGetBlockNumber(secondBuffer);
 
 			PageSetLSN(vmiPage, lsn);
-			PageSetTLI(vmiPage, ThisTimeLineID);
 			_bitmap_wrtbuf(vmiBuffer);
 		}
 
 		PageSetLSN(firstPage, lsn);
-		PageSetTLI(firstPage, ThisTimeLineID);
 		_bitmap_wrtbuf(firstBuffer);
 	}
 	else

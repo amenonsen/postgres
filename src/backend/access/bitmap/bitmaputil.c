@@ -815,7 +815,6 @@ _bitmap_log_newpage(Relation rel, uint8 info, Buffer buf)
 	recptr = XLogInsert(RM_BITMAP_ID, info, rdata);
 
 	PageSetLSN(page, recptr);
-	PageSetTLI(page, ThisTimeLineID);
 }
 
 /*
@@ -845,7 +844,6 @@ _bitmap_log_metapage(Relation rel, Page page)
 	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_INSERT_META, rdata);
 
 	PageSetLSN(page, recptr);
-	PageSetTLI(page, ThisTimeLineID);
 	pfree(xlMeta);
 }
 
@@ -876,7 +874,6 @@ _bitmap_log_bitmap_lastwords(Relation rel, Buffer vmiBuffer,
 						rdata);
 
 	PageSetLSN(BufferGetPage(vmiBuffer), recptr);
-	PageSetTLI(BufferGetPage(vmiBuffer), ThisTimeLineID);
 }
 
 /*
@@ -911,11 +908,9 @@ _bitmap_log_vmi(Relation rel, Buffer vmiBuffer, OffsetNumber offset,
 		Page metapage = BufferGetPage(metabuf);
 
 		PageSetLSN(metapage, recptr);
-		PageSetTLI(metapage, ThisTimeLineID);
 	}
 
 	PageSetLSN(vmiPage, recptr);
-	PageSetTLI(vmiPage, ThisTimeLineID);
 }
 
 /*
@@ -994,10 +989,8 @@ _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer vmiBuffer,
 	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_INSERT_WORDS, rdata);
 
 	PageSetLSN(bitmapPage, recptr);
-	PageSetTLI(bitmapPage, ThisTimeLineID);
 
 	PageSetLSN(vmiPage, recptr);
-	PageSetTLI(vmiPage, ThisTimeLineID);
 
 	pfree(xlBitmapWords);
 }
@@ -1032,7 +1025,6 @@ _bitmap_log_updateword(Relation rel, Buffer bitmapBuffer, int word_no)
 	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_UPDATEWORD, rdata);
 
 	PageSetLSN(bitmapPage, recptr);
-	PageSetTLI(bitmapPage, ThisTimeLineID);
 }
 						
 
@@ -1107,12 +1099,10 @@ _bitmap_log_updatewords(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_UPDATEWORDS, rdata);
 
 	PageSetLSN(firstPage, recptr);
-	PageSetTLI(firstPage, ThisTimeLineID);
 
 	if (BufferIsValid(secondBuffer))
 	{
 		PageSetLSN(secondPage, recptr);
-		PageSetTLI(secondPage, ThisTimeLineID);
 	}
 
 	if (new_lastpage)
@@ -1120,7 +1110,6 @@ _bitmap_log_updatewords(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 		Page vmiPage = BufferGetPage(vmiBuffer);
 
 		PageSetLSN(vmiPage, recptr);
-		PageSetTLI(vmiPage, ThisTimeLineID);
 	}
 }
 

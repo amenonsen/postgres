@@ -120,7 +120,8 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 										  ONCOMMIT_NOOP,				/* oncommit */
 										  (Datum)0,						/* reloptions */
 										  false,						/* use_user_acl */
-										  true);						/* allow_system_table_mods */
+										  true, 						/* allow_system_table_mods */
+										  true);						/* is_internal */
 
 	/*
 	 * We must bump the command counter to make the newly-created relation
@@ -195,7 +196,8 @@ _bitmap_create_lov_heapandindex(Relation rel, Oid *lovHeapId, Oid *lovIndexId)
 							   false,						/* initdeferred */
 							   true,						/* allow_system_table_mods */
 							   true,						/* skip_build */
-							   false);						/* concurrent */
+							   false, 						/* concurrent */
+							   true);						/* is_internal */
 		
 	list_free(indexColNames);
 	indexColNames = NIL;

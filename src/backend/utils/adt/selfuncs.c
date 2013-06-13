@@ -7359,10 +7359,12 @@ bmcostestimate(PG_FUNCTION_ARGS)
 	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
 	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
 	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
+	GenericCosts	costs;
 
-	genericcostestimate(root, path, loop_count, 0.0,
-						indexStartupCost, indexTotalCost,
-						indexSelectivity, indexCorrelation);
+	MemSet(&costs, 0, sizeof(costs));
+
+	genericcostestimate(root, path, loop_count, &costs);
+	/* XXX Handle indexStartupCost etc. above. */
 
 	PG_RETURN_VOID();
 }
