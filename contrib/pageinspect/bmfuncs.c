@@ -33,10 +33,13 @@
 #include "access/bitmap.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_class.h"
+#include "catalog/pg_am.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
 #include "utils/builtins.h"
+#include "utils/rel.h"
 
 
 #ifdef HAVE_LONG_INT_64
@@ -417,7 +420,7 @@ bm_metap(PG_FUNCTION_ARGS)
 	values[j] = palloc(32);
 	snprintf(values[j++], 32, "%d", metad->bm_lov_indexId);
 	values[j] = palloc(32);
-	snprintf(values[j++], 32, "%d", metad->bm_lov_lastpage);
+	snprintf(values[j++], 32, "%d", metad->bm_last_vmi_page);
 
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupleDesc),
 								   values);
