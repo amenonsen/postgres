@@ -3,9 +3,7 @@
  * bitmapdesc.c
  *	  rmgr descriptor routines for access/bitmap/bitmap.c
  *
- * Portions Copyright (c) 1996-2013, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
- *
+ * Copyright (c) 2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/access/rmgrdesc/bitmapdesc.c

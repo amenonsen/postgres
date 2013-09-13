@@ -3,11 +3,10 @@
  * bitmapsearch.c
  *	  Search routines for on-disk bitmap index access method.
  *
- *
- * Copyright (c) 2007, PostgreSQL Global Development Group
+ * Copyright (c) 2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  $PostgreSQL$
+ *	  src/backend/access/bitmap/bitmapsearch.c
  *
  *-------------------------------------------------------------------------
  */
@@ -42,7 +41,7 @@ _bitmap_first(IndexScanDesc scan, ScanDirection dir)
 	scanpos = (BMScanPosition) so->bm_currPos;
 	if (scanpos->done)
 		return false;
-		
+
 	return _bitmap_next(scan, dir);
 }
 
@@ -144,7 +143,7 @@ _bitmap_nextbatchwords(IndexScanDesc scan,
 
 /*
  * next_batch_words() -- compute the next batch of bitmap words
- * 	from a given scan position.
+ *	from a given scan position.
  */
 static void
 next_batch_words(IndexScanDesc scan)
@@ -199,7 +198,7 @@ next_batch_words(IndexScanDesc scan)
 
 	/*
 	 * We handle the case where only one bitmap vector contributes to
-	 * the scan separately with other cases. This is because 
+	 * the scan separately with other cases. This is because
 	 * bmScanPos->bm_batchWords and scanPos->bm_batchWords
 	 * are the same.
 	 */
@@ -237,7 +236,7 @@ next_batch_words(IndexScanDesc scan)
  */
 static void
 read_words(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
-				  BlockNumber *nextBlockNoP, BM_WORD *headerWords, 
+				  BlockNumber *nextBlockNoP, BM_WORD *headerWords,
 				  BM_WORD *words, uint32 *numOfWordsP, bool *readLastWords)
 {
 	if (BlockNumberIsValid(*nextBlockNoP))
@@ -362,8 +361,7 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 	{
 		if (scan->keyData[keyNo].sk_flags & SK_ISNULL)
 		{
-			scanPos->done = true;		
-	
+			scanPos->done = true;
 			return;
 		}
 	}
@@ -490,7 +488,7 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		scanPos->bm_batchWords = (BMBatchWords *) palloc0(sizeof(BMBatchWords));
 		_bitmap_init_batchwords(scanPos->bm_batchWords,
 								BM_NUM_OF_HRL_WORDS_PER_PAGE,
-								CurrentMemoryContext);	
+								CurrentMemoryContext);
 	}
 }
 
@@ -499,26 +497,26 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
  *	bitmap vector.
  */
 void
-_bitmap_initscanpos(IndexScanDesc scan, BMVector bmScanPos, 
+_bitmap_initscanpos(IndexScanDesc scan, BMVector bmScanPos,
 					BlockNumber vmiBlock, OffsetNumber vmiOffset)
 {
-	Page 				vmiPage;
+	Page				vmiPage;
 	BMVectorMetaItem	vmi;
 
 	bmScanPos->bm_vmiOffset = vmiOffset;
 	bmScanPos->bm_vmiBuffer = _bitmap_getbuf(scan->indexRelation, vmiBlock,
-										     BM_READ);
+											 BM_READ);
 
 	vmiPage	= BufferGetPage(bmScanPos->bm_vmiBuffer);
 	vmi = (BMVectorMetaItem)
 		PageGetItem(vmiPage, PageGetItemId(vmiPage, bmScanPos->bm_vmiOffset));
-			
+
 	bmScanPos->bm_nextBlockNo = vmi->bm_bitmap_head;
 	bmScanPos->bm_readLastWords = false;
 	bmScanPos->bm_batchWords = (BMBatchWords *) palloc0(sizeof(BMBatchWords));
 	_bitmap_init_batchwords(bmScanPos->bm_batchWords,
 							BM_NUM_OF_HRL_WORDS_PER_PAGE,
-							CurrentMemoryContext);	
+							CurrentMemoryContext);
 
 	LockBuffer(bmScanPos->bm_vmiBuffer, BUFFER_LOCK_UNLOCK);
 }

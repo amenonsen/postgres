@@ -1,4 +1,4 @@
-<!-- $PostgreSQL: pgsql/doc/src/sgml/gist.sgml,v 1.30 2008/04/14 17:05:32 tgl Exp $ -->
+<!-- doc/src/sgml/bitmap.sgml -->
 
 <chapter id="BMI">
 <title>Bitmap Indexes</title>
@@ -68,7 +68,7 @@
     having one row per each person that lives in a certain country,
     good candidates for bitmap indexes would be the attributes
     describing age, gender, state, etc.</para>
- 
+
 </sect1>
 
 <sect1 id="bitmap-internals">

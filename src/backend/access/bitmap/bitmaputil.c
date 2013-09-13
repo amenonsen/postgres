@@ -3,10 +3,10 @@
  * bitmaputil.c
  *	  Utility routines for on-disk bitmap index access method.
  *
- * Copyright (c) 2007, PostgreSQL Global Development Group
- * 
+ * Copyright (c) 2013, PostgreSQL Global Development Group
+ *
  * IDENTIFICATION
- *	  $PostgreSQL$
+ *	  src/backend/access/bitmap/bitmaputil.c
  *
  *-------------------------------------------------------------------------
  */
@@ -57,7 +57,7 @@ typedef struct bmvacstate
 
 	/* block position at the physical level */
 	BlockNumber itr_blk;
-	
+
 	Buffer curbuf; /* current buffer we're examining */
 
 	/* actual bitmap pages for old and new */
@@ -79,7 +79,7 @@ static void _bitmap_findnextword(BMBatchWords* words, uint32 nextReadNo);
 static void _bitmap_resetWord(BMBatchWords *words, uint32 prevStartNo);
 static uint8 _bitmap_find_bitset(BM_WORD word, uint8 lastPos);
 static void vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
-			              void *callback_state);
+						  void *callback_state);
 static void fill_reaped(bmvacstate *state, uint64 start, uint64 end);
 static void vacuum_fill_word(bmvacstate *state, bmVacType vactype);
 static void vacuum_literal_word(bmvacstate *state, bmVacType vavtype);
@@ -232,7 +232,7 @@ void _bitmap_cleanup_batchwords(BMBatchWords* words)
 
 /*
  * _bitmap_cleanup_scanpos() -- release space allocated for
- * 	BMVector.
+ *	BMVector.
  */
 void
 _bitmap_cleanup_scanpos(BMVector bmScanPos, uint32 numBitmapVectors)
@@ -241,14 +241,13 @@ _bitmap_cleanup_scanpos(BMVector bmScanPos, uint32 numBitmapVectors)
 
 	if (numBitmapVectors == 0)
 		return;
-		
+
 	for (keyNo=0; keyNo<numBitmapVectors; keyNo++)
 	{
 		if (BufferIsValid((bmScanPos[keyNo]).bm_vmiBuffer))
 		{
 			ReleaseBuffer((bmScanPos[keyNo]).bm_vmiBuffer);
 		}
-			
 
 		_bitmap_cleanup_batchwords((bmScanPos[keyNo]).bm_batchWords);
 		if (bmScanPos[keyNo].bm_batchWords != NULL)
@@ -314,7 +313,7 @@ _bitmap_findnexttids(BMBatchWords *words, BMIterateResult *result,
 
 		/* new word, zero filled */
 		if (oldScanPos == 0 &&
-			((IS_FILL_WORD(words->hwords, result->lastScanWordNo) && 
+			((IS_FILL_WORD(words->hwords, result->lastScanWordNo) &&
 			  GET_FILL_BIT(word) == 0) || word == 0))
 		{
 			uint32	fillLength;
@@ -334,7 +333,7 @@ _bitmap_findnexttids(BMBatchWords *words, BMIterateResult *result,
 				 && GET_FILL_BIT(word) == 1)
 		{
 			uint32	nfillwords = FILL_LENGTH(word);
-			uint8 	bitNo;
+			uint8	bitNo;
 
 			while (result->numOfTids + BM_WORD_SIZE <= maxTids &&
 				   nfillwords > 0)
@@ -434,7 +433,7 @@ _bitmap_intersect(BMBatchWords **batches, uint32 numBatches,
 		bool		andWordIsLiteral = true;
 
 		/*
-    	 * We walk through the bitmap word in each list one by one
+		 * We walk through the bitmap word in each list one by one
          * without de-compress the bitmap words. 'nextReadNo' defines
          * the position of the next word that should be read in an
          * uncompressed format.
@@ -462,7 +461,7 @@ _bitmap_intersect(BMBatchWords **batches, uint32 numBatches,
 			if (CUR_WORD_IS_FILL(bch) && (GET_FILL_BIT(word) == 0))
 			{
 				uint32		n;
-				
+
 				bch->nwordsread += FILL_LENGTH(word);
 
 				n = bch->nwordsread - nextReadNo + 1;
@@ -554,8 +553,8 @@ _bitmap_intersect(BMBatchWords **batches, uint32 numBatches,
 void
 _bitmap_union(BMBatchWords **batches, uint32 numBatches, BMBatchWords *result)
 {
-	bool 		done = false;
-	uint32 	   *prevstarts;
+	bool		done = false;
+	uint32	   *prevstarts;
 	uint32		nextReadNo;
 	uint32		batchNo;
 
@@ -567,8 +566,8 @@ _bitmap_union(BMBatchWords **batches, uint32 numBatches, BMBatchWords *result)
 	/* save batch->startNo for each input bitmap vector */
 	prevstarts = (uint32 *)palloc0(numBatches * sizeof(uint32));
 
-	/* 
-	 * Each batch should have the same next read offset, so take 
+	/*
+	 * Each batch should have the same next read offset, so take
 	 * the first one
 	 */
 	nextReadNo = batches[0]->nextread;
@@ -650,7 +649,7 @@ _bitmap_union(BMBatchWords **batches, uint32 numBatches, BMBatchWords *result)
 			if (!orWordIsLiteral)
 			{
 				 /* Word is not literal, update the result header */
-				uint32 	offs = result->nwords/BM_WORD_SIZE;
+				uint32	offs = result->nwords/BM_WORD_SIZE;
 				uint32	n = result->nwords;
 				result->hwords[offs] |= WORDNO_GET_HEADER_BIT(n);
 			}
@@ -675,12 +674,12 @@ _bitmap_union(BMBatchWords **batches, uint32 numBatches, BMBatchWords *result)
 
 /*
  * _bitmap_findnextword() -- Find the next word whose position is
- *        	                'nextReadNo' in an uncompressed format.
+ *							'nextReadNo' in an uncompressed format.
  */
 static void
 _bitmap_findnextword(BMBatchWords *words, uint32 nextReadNo)
 {
-	/* 
+	/*
      * 'words->nwordsread' defines how many un-compressed words
      * have been read in this bitmap. We read from
      * position 'startNo', and increment 'words->nwordsread'
@@ -717,7 +716,7 @@ _bitmap_findnextword(BMBatchWords *words, uint32 nextReadNo)
 
 /*
  * _bitmap_resetWord() -- Reset the read position in an BMBatchWords
- *       	              to its previous value.
+ *						  to its previous value.
  *
  * Reset the read position in an BMBatchWords to its previous value,
  * which is given in 'prevStartNo'. Based on different type of words read,
@@ -743,8 +742,8 @@ _bitmap_resetWord(BMBatchWords *words, uint32 prevStartNo)
 
 
 /*
- * _bitmap_find_bitset() -- find the rightmost set bit (bit=1) in the 
- * 		given word since 'lastPos', not including 'lastPos'.
+ * _bitmap_find_bitset() -- find the rightmost set bit (bit=1) in the
+ *		given word since 'lastPos', not including 'lastPos'.
  *
  * The rightmost bit in the given word is considered the position 1, and
  * the leftmost bit is considered the position BM_WORD_SIZE.
@@ -811,7 +810,7 @@ _bitmap_log_newpage(Relation rel, uint8 info, Buffer buf)
 	rdata[0].data = (char *)&xlNewPage;
 	rdata[0].len = sizeof(xl_bm_newpage);
 	rdata[0].next = NULL;
-			
+
 	recptr = XLogInsert(RM_BITMAP_ID, info, rdata);
 
 	PageSetLSN(page, recptr);
@@ -840,7 +839,7 @@ _bitmap_log_metapage(Relation rel, Page page)
 	rdata[0].data = (char*)xlMeta;
 	rdata[0].len = MAXALIGN(sizeof(xl_bm_metapage));
 	rdata[0].next = NULL;
-			
+
 	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_INSERT_META, rdata);
 
 	PageSetLSN(page, recptr);
@@ -870,7 +869,7 @@ _bitmap_log_bitmap_lastwords(Relation rel, Buffer vmiBuffer,
 	rdata[0].len = sizeof(xl_bm_bitmap_lastwords);
 	rdata[0].next = NULL;
 
-	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_INSERT_BITMAP_LASTWORDS, 
+	recptr = XLogInsert(RM_BITMAP_ID, XLOG_BITMAP_INSERT_BITMAP_LASTWORDS,
 						rdata);
 
 	PageSetLSN(BufferGetPage(vmiBuffer), recptr);
@@ -900,7 +899,7 @@ _bitmap_log_vmi(Relation rel, Buffer vmiBuffer, OffsetNumber offset,
 	rdata[0].len = sizeof(xl_bm_vmi);
 	rdata[0].next = NULL;
 
-	recptr = XLogInsert(RM_BITMAP_ID, 
+	recptr = XLogInsert(RM_BITMAP_ID,
 						XLOG_BITMAP_INSERT_VMI, rdata);
 
 	if (is_new_vmi_blkno)
@@ -958,7 +957,7 @@ _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer vmiBuffer,
 	xlBitmapWords->bm_last_compword = buf->last_compword;
 	xlBitmapWords->bm_last_word = buf->last_word;
 	xlBitmapWords->vmi_words_header =
-		(buf->is_last_compword_fill) ? 
+		(buf->is_last_compword_fill) ?
 		BM_LAST_COMPWORD_BIT : BM_VMI_WORDS_NO_FILL;
 	xlBitmapWords->bm_last_setbit = tidnum;
 	xlBitmapWords->bm_is_last = isLast;
@@ -997,7 +996,7 @@ _bitmap_log_bitmapwords(Relation rel, Buffer bitmapBuffer, Buffer vmiBuffer,
 
 /*
  * _bitmap_log_updateword() -- log updating a single word in a given
- * 	bitmap page.
+ *	bitmap page.
  */
 void
 _bitmap_log_updateword(Relation rel, Buffer bitmapBuffer, int word_no)
@@ -1026,11 +1025,10 @@ _bitmap_log_updateword(Relation rel, Buffer bitmapBuffer, int word_no)
 
 	PageSetLSN(bitmapPage, recptr);
 }
-						
 
 /*
  * _bitmap_log_updatewords() -- log updating bitmap words in one or
- * 	two bitmap pages.
+ *	two bitmap pages.
  *
  * If nextBuffer is Invalid, we only update one page.
  *
@@ -1145,7 +1143,7 @@ _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	vacinfo.info = info;
 
 	metabuf = _bitmap_getbuf(info->index, BM_METAPAGE, BM_READ);
-	metapage = (BMMetaPage)PageGetContents(BufferGetPage(metabuf)); 
+	metapage = (BMMetaPage)PageGetContents(BufferGetPage(metabuf));
 
 	lovheap = heap_open(metapage->bm_lov_heapId, AccessShareLock);
 	scan = heap_beginscan(lovheap, SnapshotAny, 0, NULL);
@@ -1153,10 +1151,10 @@ _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)))
 	{
 		BMVectorMetaItem vmi;
-		BlockNumber 	vmi_block;
-		OffsetNumber 	vmi_off;
-		TupleDesc   	desc;
-        Datum       	d;
+		BlockNumber		vmi_block;
+		OffsetNumber	vmi_off;
+		TupleDesc		desc;
+        Datum			d;
 		bool			isnull;
 		Buffer			vmi_buf;
 		Page			page;
@@ -1166,7 +1164,7 @@ _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
         d = heap_getattr(tuple, desc->natts - 1, desc, &isnull);
 		Assert(!isnull);
         vmi_block = DatumGetInt32(d);
-		
+
         d = heap_getattr(tuple, desc->natts - 0, desc, &isnull);
 		Assert(!isnull);
         vmi_off = DatumGetInt16(d);
@@ -1184,9 +1182,9 @@ _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 		vacuum_vector(vacinfo, callback, callback_state);
 		_bitmap_relbuf(vmi_buf);
 	}
-	
+
 	/* XXX: be careful to vacuum NULL vector */
-	
+
 	/*vacuum null vector */
 
 	/* iterate over all vectors, call for each */
@@ -1196,7 +1194,7 @@ _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 
 	heap_endscan(scan);
 	heap_close(lovheap, AccessShareLock);
-	
+
 	_bitmap_relbuf(metabuf);
 }
 
@@ -1225,13 +1223,13 @@ _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
  *
  * It's reasonable that reaped TIDs might be clustered. So, instead of
  * breaking the fill word straight away, we construct a word for the initial
- * part of the range and then set a flag to indicate that we found a reaped 
- * TID. Once we find a non-reaped TID, we construct a word representing the 
+ * part of the range and then set a flag to indicate that we found a reaped
+ * TID. Once we find a non-reaped TID, we construct a word representing the
  * non-match range and then continue processing the rest of the range.
  *
  * When we shrink or grow the index, we must physically shift data on the page.
  * Shrinking is not a problem, we just maintain it logically. If we need to
- * grow the storage (because we create a non-match in a match fill word) we 
+ * grow the storage (because we create a non-match in a match fill word) we
  * either absorb the space between the logical write position and the read
  * position OR, if there is no such space, we must pull data off the end
  * of the page into 'overflow' storage and push the remaining data toward the
@@ -1243,7 +1241,7 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 {
 	/*
 	 * Iterate over the bitmap vector. For each setbit, see if it's in the
-	 * reaped tids (via the callback). Once we find a reaped tid, we continue 
+	 * reaped tids (via the callback). Once we find a reaped tid, we continue
 	 * to iterate until we find a non-reaped tid. Then we patch things up.
 	 *
 	 * There are two ways we could do this: memmove() things around a lot
@@ -1255,10 +1253,10 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 	state.cur_bitpos = 1;
 	state.readwordno = 0;
 	state.writewordno = 0;
-	
+
 	state.callback = callback;
 	state.callback_state = callback_state;
-	
+
 	state.itr_blk = vacinfo.vmi->bm_bitmap_head;
 	state.curbuf = InvalidBuffer;
 
@@ -1272,21 +1270,21 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 			 vacinfo.vmi->bm_last_compword, vacinfo.vmi->bm_last_word);
 		return;
 	}
-		
+
 	/* The outer loop iterates over each block in the vector */
 	do
 	{
 		if (!BufferIsValid(state.curbuf))
 		{
-	   		state.curbuf = _bitmap_getbuf(vacinfo.info->index, state.itr_blk, 
+			state.curbuf = _bitmap_getbuf(vacinfo.info->index, state.itr_blk,
 										  BM_WRITE);
 		}
 		state.curbm = (BMBitmapVectorPage)PageGetContents(BufferGetPage(state.curbuf));
-		state.curbmo = 
+		state.curbmo =
 			(BMPageOpaque)PageGetSpecialPointer(BufferGetPage(state.curbuf));
 
 #ifdef DEBUG_BMI
-		elog(NOTICE, "words used: %i, comp %i, last %i", 
+		elog(NOTICE, "words used: %i, comp %i, last %i",
 			 state.curbmo->bm_hrl_words_used,
 			 vacinfo.vmi->bm_last_compword, vacinfo.vmi->bm_last_word);
 #endif
@@ -1300,11 +1298,11 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 			else
 			{
 				vacuum_literal_word(&state, BM_VAC_PAGE);
-			}	
+			}
 			state.readwordno++;
 			state.writewordno++;
 
-			/* 
+			/*
 			 * If we're reached the last word, see if there are any overflows
 			 * and if so, merge them back into the page.
 			 */
@@ -1313,7 +1311,7 @@ vacuum_vector(bmvacinfo vacinfo, IndexBulkDeleteCallback callback,
 
 		if (state.ovrflwwordno)
 		{
-			/* 
+			/*
 			 * We must merge the over flow into the next page. Write lock that
 			 * page first so that no one can miss the data held privately
 			 * by us.
@@ -1346,7 +1344,7 @@ fill_matched(bmvacstate *state, uint64 start, uint64 end)
 		uint64 len = end - start - 1;
 
 		Assert(len > 0);
-		
+
 		if (len >= BM_WORD_SIZE)
 		{
 			/* set the new fill length */
@@ -1358,7 +1356,7 @@ fill_matched(bmvacstate *state, uint64 start, uint64 end)
 				 "%lli",
 #endif
 				 len / BM_WORD_SIZE);
-			
+
 			newword = BM_MAKE_FILL_WORD(1, len / BM_WORD_SIZE);
 			state->curbm->cwords[state->writewordno] = newword;
 			HEADER_SET_FILL_BIT_ON(state->curbm->hwords,
@@ -1375,17 +1373,17 @@ fill_matched(bmvacstate *state, uint64 start, uint64 end)
 		if (len)
 		{
 			uint64 i;
-			
+
 			/*
 			 * We need to create a literal representation of the
 			 * matches. If the current write word is fill, create
 			 * a new word. If the existing word is literal, merge
 			 * in our matches.
 			 */
-			if (IS_FILL_WORD(state->curbm->hwords, 
+			if (IS_FILL_WORD(state->curbm->hwords,
 							 state->writewordno))
 				progress_write_pos(state);
-			
+
 			newword = state->curbm->cwords[state->writewordno];
 
 			for (i = start; i < state->cur_bitpos; i++)
@@ -1420,7 +1418,7 @@ fill_reaped(bmvacstate *state, uint64 start, uint64 end)
 			if (GET_FILL_BIT(state->curbm->cwords[state->writewordno]) == 0 ||
 				state->curbm->cwords[state->writewordno])
 			{
-				/* 
+				/*
 				 * Consuming a word is enough to insert the fill, because the
 				 * length is less than BM_WORD_SIZE.
 				 */
@@ -1434,7 +1432,7 @@ fill_reaped(bmvacstate *state, uint64 start, uint64 end)
 		}
 		else
 		{
-			/* 
+			/*
 			 * Literal word. Check if we can pull all the non-matches in this
 			 * word.
 			 */
@@ -1496,7 +1494,7 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 	 * definition.
 	 */
 	elog(NOTICE, "new word is FILL: %i", word);
-	
+
 	/* only vacuum non-match fill words if this is a physical page */
 	if (GET_FILL_BIT(word) == 0 && vactype == BM_VAC_PAGE)
 	{
@@ -1508,7 +1506,6 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 		{
 			state->curbm->cwords[state->writewordno] = word;
 			HEADER_SET_FILL_BIT_ON(state->curbm->hwords, state->writewordno);
-			
 		}
 		progress_write_pos(state);
 		try_shrink_bitmap(state);
@@ -1524,11 +1521,11 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 		 */
 		bool found_reaped = false;
 		uint64 start_setbit = state->cur_bitpos; /* start of match range */
-		uint64 end = state->cur_bitpos + 
+		uint64 end = state->cur_bitpos +
 			(FILL_LENGTH(word) * BM_WORD_SIZE);
 
 		state->start_reaped = 0;
-		
+
 		elog(NOTICE, "new word is match fill");
 
 		elog(NOTICE, "testing match fill range. start = (%i, %i) "
@@ -1543,8 +1540,8 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 			ItemPointerData tid;
 
 			ItemPointerSet(&tid, BM_INT_GET_BLOCKNO(state->cur_bitpos),
-						  BM_INT_GET_OFFSET(state->cur_bitpos)); 
-			
+						  BM_INT_GET_OFFSET(state->cur_bitpos));
+
 			elog(NOTICE, "testing fill tid (%i, %i)",
 				 BM_INT_GET_BLOCKNO(state->cur_bitpos),
 				 BM_INT_GET_OFFSET(state->cur_bitpos));
@@ -1552,16 +1549,16 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 			if (state->callback(&tid, state->callback_state))
 			{
 				elog(NOTICE, "tid is reaped");
-				/* 
+				/*
 				 * We found a match. We don't just break the fill
 				 * word in to three. Instead, we shrink the
 				 * original fill word and continue to loop
 				 * until we find a set bit which isn't reaped,
 				 * then we'll add a word reflecting the non-matches.
 				 */
-				
+
 				found_reaped = true;
-				
+
 				fill_matched(state, start_setbit, state->cur_bitpos - 1);
 				if (!state->start_reaped)
 				{
@@ -1575,17 +1572,17 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 				 * If we're already seen a range of reaped TIDs, fill those in
 				 * on the current word.
 				 */
-				if (state->start_reaped && 
+				if (state->start_reaped &&
 					state->start_reaped < state->cur_bitpos - 1)
 				{
-					/* 
+					/*
 					 * insert fill word. remember, previous word
 					 * might have been a fill word which we can
 					 * extend.
 					 */
-					fill_reaped(state, state->start_reaped, 
+					fill_reaped(state, state->start_reaped,
 								state->cur_bitpos - 1);
-					
+
 					state->start_reaped = 0;
 					Assert(start_setbit == 0);
 					start_setbit = state->cur_bitpos;
@@ -1633,11 +1630,11 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 			fill_reaped(state, state->start_reaped,	state->cur_bitpos - 1);
 		}
 
-		/* 
+		/*
 		 * If this is last complete word or last word, we've just put the data
 		 * for that word on the physical page so get it back.
 		 */
-		if (vactype == BM_VAC_LAST_COMPWORD || 
+		if (vactype == BM_VAC_LAST_COMPWORD ||
 			vactype == BM_VAC_LAST_WORD)
 		{
 			BM_WORD newword = state->curbm->cwords[state->writewordno];
@@ -1677,11 +1674,11 @@ try_shrink_bitmap(bmvacstate *state)
 	/* we have no hope if there's no previous word */
 	if (!(state->writewordno >= 1))
 		return;
-	
+
 	if (word == LITERAL_ALL_ZERO)
 	{
 		BM_WORD prevword = state->curbm->cwords[state->writewordno - 1];
-		
+
 		/* check if earlier word was fill too */
 		if (BM_WORD_IS_NON_MATCH_FILL(state->curbm, state->writewordno - 1) &&
 			FILL_LENGTH(prevword) < MAX_FILL_LENGTH)
@@ -1704,12 +1701,12 @@ try_shrink_bitmap(bmvacstate *state)
 
 		if (!BM_WORD_IS_NON_MATCH_FILL(state->curbm, state->writewordno - 1))
 		   return;
-	
+
 		if (FILL_LENGTH(word) + FILL_LENGTH(prevword) <= MAX_FILL_LENGTH)
 		{
 			state->curbm->cwords[state->writewordno - 1] +=
 				FILL_LENGTH(word);
-			
+
 			/* previous word absorbed us, see above */
 			state->writewordno--;
 		}
@@ -1767,7 +1764,7 @@ vacuum_literal_word(bmvacstate *state, bmVacType vactype)
 
 /*
  * Check for a scenario where the next write would overwrite a block we
- * haven't read. Put words at the end of the storage into an overflow 
+ * haven't read. Put words at the end of the storage into an overflow
  * bitmap and shift everything to the right.
  */
 static void
@@ -1778,13 +1775,13 @@ check_page_space(bmvacstate *state)
 
 	if (state->writewordno > state->readwordno)
 	{
-		/* 
+		/*
 		 * We need to free up some space. There are two scenarios here:
 		 * the page might not actually be full so we just shift things to
 		 * the right and not worry about overflow; otherwise, the page is
 		 * full so we just move the remaining words off the page into a new
 		 * one and just tie things together. This is potentially inefficient
-		 * but alternative methods require a lot of code. 
+		 * but alternative methods require a lot of code.
 		 */
 		uint16 from = 0;
 		uint16 diff = 0;
@@ -1793,7 +1790,7 @@ check_page_space(bmvacstate *state)
 		/* first case */
 		if (state->curbmo->bm_hrl_words_used < BM_NUM_OF_HRL_WORDS_PER_PAGE)
 		{
-			diff = BM_NUM_OF_HRL_WORDS_PER_PAGE - 
+			diff = BM_NUM_OF_HRL_WORDS_PER_PAGE -
 				state->curbmo->bm_hrl_words_used;
 			from = state->readwordno;
 
@@ -1803,8 +1800,8 @@ check_page_space(bmvacstate *state)
 					state->curbmo->bm_hrl_words_used - from);
 			memmove(&(state->curbm->hwords[(from + diff)/BM_WORD_SIZE]),
 					&(state->curbm->hwords[from/BM_WORD_SIZE]),
-				    (state->curbmo->bm_hrl_words_used - from)/BM_WORD_SIZE);
-			/* 
+					(state->curbmo->bm_hrl_words_used - from)/BM_WORD_SIZE);
+			/*
 			 * Now, we must change to read position to point to the new
 			 * current word.
 			 */
@@ -1812,15 +1809,14 @@ check_page_space(bmvacstate *state)
 		}
 		else
 		{
-			
-	   		/*
-		 	 * We can't do this the easy way,time to free some up. We take 
-		 	 * BM_WORD_SIZE number of words at a time, because it's 
-		 	 * convenient for managing the header: we just need to copy a 
-		 	 * single word.
+			/*
+			 * We can't do this the easy way,time to free some up. We take
+			 * BM_WORD_SIZE number of words at a time, because it's
+			 * convenient for managing the header: we just need to copy a
+			 * single word.
 			 */
 
-			diff = 
+			diff =
 				BM_NUM_OF_HRL_WORDS_PER_PAGE - state->readwordno;
 			if (diff > BM_WORD_SIZE)
 				ovrflwwords = diff = BM_WORD_SIZE;
@@ -1832,9 +1828,9 @@ check_page_space(bmvacstate *state)
 		if (ovrflwwords)
 		{
 			uint16 oo = state->ovrflwwordno;
-			state->ovrflw.hwords[oo/BM_WORD_SIZE] =	
+			state->ovrflw.hwords[oo/BM_WORD_SIZE] =
 				state->curbm->hwords[from/BM_WORD_SIZE];
-			
+
 			memcpy(&(state->ovrflw.cwords[oo]),
 				   &(state->curbm->hwords[from]),
 				   diff * sizeof(BM_WORD));
@@ -1851,7 +1847,7 @@ check_page_space(bmvacstate *state)
 }
 
 
-/* 
+/*
  * Progress the write position pointer, filling the word with non-matches
  * and ensuring the write pointer doesn't overtake the read pointer.
  */
@@ -1871,7 +1867,7 @@ progress_write_pos(bmvacstate *state)
 static void
 vacuum_last_words(bmvacstate *state)
 {
-	/* 
+	/*
 	 * When initialised, the last complete word is set to LITERAL_ALL_ONE and
 	 * it should never return to that again (because we compress it first).
 	 * See _bitmap_formitem().
@@ -1899,11 +1895,11 @@ vacuum_last_words(bmvacstate *state)
 		}
 	}
 
-	/* 
-	 * Now, we do the non-complete word. If it has no matches, don't 
+	/*
+	 * Now, we do the non-complete word. If it has no matches, don't
 	 * examine it.
 	 */
-	
+
 	if (state->curvmi->bm_last_word != 0)
 	{
 		if (BM_LASTWORD_IS_FILL(state->curvmi))
@@ -1912,7 +1908,7 @@ vacuum_last_words(bmvacstate *state)
 			vacuum_literal_word(state, BM_VAC_LAST_WORD);
 	}
 
-	/* 
+	/*
 	 * If the last comp word and last word represent non-matches, we can
 	 * truncate the bitmap.
 	 */
@@ -1938,7 +1934,6 @@ vactype_get_word(bmvacstate *state, bmVacType type)
 			return 0; /* not reached */
 			break;
 	}
-	
 }
 
 static void
@@ -1962,7 +1957,7 @@ put_vacuumed_literal_word(bmvacstate *state, bmVacType type, BM_WORD word)
 		default:
 			elog(ERROR, "invalid bitmap vacuum state");
 			break;
-	}		
+	}
 }
 
 #if 0
@@ -1985,7 +1980,7 @@ merge_ovrflw(bmvacstate *state, bool append)
 
 
 
-	}	
+	}
 
 			if (BlockNumberIsValid(state->curbmo->bm_bitmap_next))
 			{
@@ -1999,7 +1994,7 @@ merge_ovrflw(bmvacstate *state, bool append)
 			{
 				/* Argh, we actually need a new page! */
 				nbuf = _bitmap_getbuf(vacinfo.info->index, P_NEW, BM_WRITE);
-		        _bitmap_init_bitmappage(nbuf);
+				_bitmap_init_bitmappage(nbuf);
 				state->curvmi->bm_bitmap_tail = state->curbmo->bm_bitmap_next =
 					BufferGetBlockNumber(nbuf);
 				elog(NOTICE, "adding overflow to new block %u",

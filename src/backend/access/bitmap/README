@@ -1,4 +1,4 @@
-$PostgreSQL$
+src/backend/access/bitmap/README
 
 This directory contains an implementation of an on-disk bitmap index.
 
@@ -22,8 +22,8 @@ section is 1, then the corresponding word in the content section is a
 compressed word; if the bit is 0, then the corresponding word is not a
 compressed word.
 
-For a compressed word in the content section, the first bit in this word 
-indicates whether 1s or 0s are compressed. The rest of the bits represent the 
+For a compressed word in the content section, the first bit in this word
+indicates whether 1s or 0s are compressed. The rest of the bits represent the
 value of "<the number of bits>/<word size>".
 
 Consider this example. Assume that there is an uncompressed bitmap vector:
@@ -38,7 +38,7 @@ this bitmap vector is as follows:
 
 Consider the first word in the content section "00000010". The header
 section tells us that this is a compressed word. As the word represents
-the number two, this word tells us that it compresses 16 bits 
+the number two, this word tells us that it compresses 16 bits
 (i.e., 2 * 8 = 16). As the first bit is zero, it is compressing zeroed bits.
 
 The second word is uncompressed.
@@ -52,12 +52,12 @@ The insertion algorithm
 
 The distinct values are stored as an array of "LOV items" on "LOV pages"
 (LOV stands for List of Values). LOV items also store some vector meta data.
-To deal with high-cardinality cases, we also create an internal heap and a 
-btree index on this heap to speed up searches on distinct values. This 
-internal heap stores the distinct values and their LOV items in LOV pages, 
-which can be retrieved through the block numbers and the offset numbers. In 
-other words, the heap has "<number of attributes to be indexed> + 2" 
-attributes (one for the block number, the other for the offset number). The 
+To deal with high-cardinality cases, we also create an internal heap and a
+btree index on this heap to speed up searches on distinct values. This
+internal heap stores the distinct values and their LOV items in LOV pages,
+which can be retrieved through the block numbers and the offset numbers. In
+other words, the heap has "<number of attributes to be indexed> + 2"
+attributes (one for the block number, the other for the offset number). The
 btree index is built on this heap with the key as attributes to be indexed.
 
 The LOV item for NULL keys is the first LOV item of the first LOV page.
@@ -95,7 +95,7 @@ cases:
     words to this new bitmap page. We also update the previous
     bitmap page and the LOV item.
 
-There is a fourth case -- the TID location might be in the middle of a 
+There is a fourth case -- the TID location might be in the middle of a
 vector. We deal with that specifically in the next section.
 
 When building a bitmap index, we also maintain an in-memory buffer to

@@ -4238,7 +4238,7 @@ DATA(insert OID = 5051 (  bmgetbitmap	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 2 
 DESCR("bitmap(internal)");
 DATA(insert OID = 5001 (  bminsert		   PGNSP PGUID 12 1 0 0 0 f f f f t f v 6 0 16 "2281 2281 2281 2281 2281 2281" _null_ _null_ _null_ _null_ bminsert _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
-DATA(insert OID = 5002 (  bmbeginscan	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ bmbeginscan _null_ _null_ _null_ )); 
+DATA(insert OID = 5002 (  bmbeginscan	   PGNSP PGUID 12 1 0 0 0 f f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ bmbeginscan _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");
 DATA(insert OID = 5003 (  bmrescan		   PGNSP PGUID 12 1 0 0 0 f f f f t f v 2 0 2278 "2281 2281" _null_ _null_ _null_ _null_ bmrescan _null_ _null_ _null_ ));
 DESCR("bitmap(internal)");

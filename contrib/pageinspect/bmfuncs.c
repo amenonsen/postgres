@@ -1,30 +1,11 @@
 /*
- * $PostgreSQL: pgsql/contrib/pageinspect/bmfuncs.c,v 1.8 2008/05/17 01:28:19 adunstan Exp $ 
- *
- *
  * bmfuncs.c
+ *	  Functions to investigate bitmap index pages.
  *
- * Copyright (c) 2008 2ndQuadrant Ltd and 2ndQuadrant Italia
+ * Copyright (c) 2013, PostgreSQL Global Development Group
  *
- * Authors: Gabriele Bartolini <gabriele.bartolini@2ndquadrant.it>
- *
- * Permission to use, copy, modify, and distribute this software and
- * its documentation for any purpose, without fee, and without a
- * written agreement is hereby granted, provided that the above
- * copyright notice and this paragraph and the following two
- * paragraphs appear in all copies.
- *
- * IN NO EVENT SHALL THE AUTHOR BE LIABLE TO ANY PARTY FOR DIRECT,
- * INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING
- * LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS
- * DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * THE AUTHOR SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS
- * IS" BASIS, AND THE AUTHOR HAS NO OBLIGATIONS TO PROVIDE MAINTENANCE,
- * SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+ * IDENTIFICATION
+ *	  contrib/pageinspect/bmfuncs.c
  */
 
 #include "postgres.h"
@@ -570,7 +551,7 @@ typedef struct BMBMVPageStat
     /* opaque data */
     uint16          bm_hrl_words_used;      /* the number of words used */
     BlockNumber     bm_bitmap_next;         /* the next page for this bitmap */
-    uint64          bm_last_tid_location; /* the tid location for the last bit in this page */ 
+    uint64          bm_last_tid_location; /* the tid location for the last bit in this page */
     uint16          bm_page_id; /* bitmap index identifier */
 
 } BMBMVPageStat;
@@ -633,7 +614,7 @@ bm_bmv_page_stats(PG_FUNCTION_ARGS)
 
     stat.bm_hrl_words_used = opaque->bm_hrl_words_used; /* the number of words used */
     stat.bm_bitmap_next = opaque->bm_bitmap_next; /* the next page for this bitmap */
-    stat.bm_last_tid_location = opaque->bm_last_tid_location; /* the tid location for the last bit in this page */ 
+    stat.bm_last_tid_location = opaque->bm_last_tid_location; /* the tid location for the last bit in this page */
     stat.bm_page_id = opaque->bm_page_id; /* bitmap index identifier */
 
     /* Build a tuple descriptor for our result type */

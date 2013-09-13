@@ -3,11 +3,11 @@
  * bitmappage.c
  *	  Bitmap index page management code for the bitmap index.
  *
- * Copyright (c) 2007, PostgreSQL Global Development Group
- *
+ * Copyright (c) 2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  $PostgreSQL$
+ *	  src/backend/access/bitmap/bitmappages.c
+ *
  *-------------------------------------------------------------------------
  */
 
@@ -27,7 +27,7 @@
 #include "catalog/index.h"
 #include "catalog/pg_collation.h"
 
-/* 
+/*
  * Helper functions for hashing and matching build data. At this stage, the
  * hash API doesn't know about complex keys like those use during index
  * creation (the key is an array of key attributes). c.f. execGrouping.c.
@@ -50,7 +50,7 @@ static int build_match_key(const void *key1, const void *key2, Size keysize);
 
 /*
  * _bitmap_getbuf() -- return the buffer for the given block number and
- * 					   the access method.
+ *					   the access method.
  */
 Buffer
 _bitmap_getbuf(Relation rel, BlockNumber blkno, int access)
@@ -560,4 +560,3 @@ build_match_key(const void *key1, const void *key2, Size keysize)
 	MemoryContextSwitchTo(old);
 	return result;
 }
-

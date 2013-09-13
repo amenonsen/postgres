@@ -3,11 +3,10 @@
  * bitmapinsert.c
  *	  Tuple insertion in the on-disk bitmap index.
  *
- * Copyright (c) 2007, PostgreSQL Global Development Group
- *
+ * Copyright (c) 2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  $PostgreSQL$
+ *	  src/backend/access/bitmap/bitmapinsert.c
  *
  *-------------------------------------------------------------------------
  */
@@ -56,13 +55,13 @@ static void build_inserttuple(Relation index, uint64 tidnum,
     ItemPointerData ht_ctid,
     Datum *attdata, bool *nulls, BMBuildState *state);
 
-static void inserttuple(Relation rel, Buffer metabuf, 
-						uint64 tidnum, ItemPointerData ht_ctid, 
-					    TupleDesc tupDesc, Datum* attdata,
-					    bool *nulls, Relation lovHeap, 
-						Relation lovIndex, ScanKey scanKey, 
+static void inserttuple(Relation rel, Buffer metabuf,
+						uint64 tidnum, ItemPointerData ht_ctid,
+						TupleDesc tupDesc, Datum* attdata,
+						bool *nulls, Relation lovHeap,
+						Relation lovIndex, ScanKey scanKey,
 						IndexScanDesc scanDesc, bool use_wal);
-static void updatesetbit(Relation rel, 
+static void updatesetbit(Relation rel,
 						 Buffer lovBuffer, OffsetNumber lovOffset,
 						 uint64 tidnum, bool use_wal);
 static void updatesetbit_inword(BM_WORD word, uint64 updateBitLoc,
@@ -73,8 +72,8 @@ static void updatesetbit_inpage(Relation rel, uint64 tidnum,
 								bool use_wal);
 static void insertsetbit(Relation rel, BlockNumber vmiBlock,
 						 OffsetNumber vmiOffset, uint64 tidnum, bool use_wal);
-static uint64 getnumbits(BM_WORD *contentWords, 
-					     BM_WORD *headerWords, uint32 nwords);
+static uint64 getnumbits(BM_WORD *contentWords,
+						 BM_WORD *headerWords, uint32 nwords);
 static void findbitmappage(Relation rel, BMVectorMetaItem vmi, uint64 tidnum,
 						   Buffer *bitmapBufferP, uint64 *firstTidNumberP);
 static void shift_header_bits(BM_WORD *words, uint32 numOfBits,
@@ -101,10 +100,10 @@ static int16 buf_add_tid_with_fill_immediate(Relation rel, BMTIDBuffer *buf,
 											 uint64 tidnum, bool use_wal);
 static uint16 buf_extend(BMTIDBuffer *buf);
 static uint16 buf_ensure_head_space(Relation rel, BMTIDBuffer *buf,
-								   BlockNumber lov_block, OffsetNumber off, 
+								   BlockNumber lov_block, OffsetNumber off,
 								   bool use_wal);
-static uint16 buf_free_mem(Relation rel, BMTIDBuffer *buf, 
-			  			   BlockNumber lov_block, OffsetNumber off, 
+static uint16 buf_free_mem(Relation rel, BMTIDBuffer *buf,
+						   BlockNumber lov_block, OffsetNumber off,
 			   bool use_wal, bool flush_hot_buffer);
 
 #define BUF_INIT_WORDS 8 /* as good a point as any */
@@ -115,7 +114,7 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg) ;
 
 
 /*
- * get_lastbitmappagebuf() -- return the buffer for the last 
+ * get_lastbitmappagebuf() -- return the buffer for the last
  *  bitmap page that is pointed by a given LOV item.
  *
  * The returned buffer will hold an exclusive lock.
@@ -133,7 +132,7 @@ get_lastbitmappagebuf(Relation rel, BMVectorMetaItem vmi)
 
 /*
  * getnumbits() -- return the number of bits included in the given
- * 	bitmap words.
+ *	bitmap words.
  */
 uint64
 getnumbits(BM_WORD *contentWords, BM_WORD *headerWords, uint32 nwords)
@@ -181,7 +180,7 @@ updatesetbit(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 {
 	Page		vmiPage;
 	BMVectorMetaItem vmi;
-		
+
 	uint64		tidLocation;
 	uint16		insertingPos;
 
@@ -196,7 +195,7 @@ updatesetbit(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 	tidLocation = vmi->bm_last_tid_location;
 	if (BM_LAST_COMPWORD_IS_FILL(vmi))
 		tidLocation -= (FILL_LENGTH(vmi->bm_last_compword) *
-					    BM_WORD_SIZE);
+						BM_WORD_SIZE);
 	else
 		tidLocation -= BM_WORD_SIZE;
 
@@ -285,12 +284,12 @@ updatesetbit(Relation rel, Buffer vmiBuffer, OffsetNumber vmiOffset,
 
 /*
  * updatesetbit_inword() -- update the given bit to 1 in a given
- * 	word.
+ *	word.
  *
- * The given word will generate at most three new words, depending on 
- * the position of the given bit to be updated. Make sure that the 
- * array 'words' has the size of 3 when you call this function. All new 
- * words will be put in this array, and the final number of new words is 
+ * The given word will generate at most three new words, depending on
+ * the position of the given bit to be updated. Make sure that the
+ * array 'words' has the size of 3 when you call this function. All new
+ * words will be put in this array, and the final number of new words is
  * stored in '*numWordsP'. The bit location 'updateBitLoc' is relative to
  * the beginning of the given word, starting from 0.
  *
@@ -335,7 +334,7 @@ updatesetbit_inword(BM_WORD word, uint64 updateBitLoc,
 		Assert((numBits - usedNumBits) % BM_WORD_SIZE == 0);
 
 		firstTid += ((numBits - usedNumBits) / BM_WORD_SIZE) * BM_WORD_SIZE;
-		buf->cwords[buf->curword] = BM_MAKE_FILL_WORD(0, 
+		buf->cwords[buf->curword] = BM_MAKE_FILL_WORD(0,
 									(numBits - usedNumBits) / BM_WORD_SIZE);
 		buf->last_tids[buf->curword] = firstTid -1;
 		buf->curword++;
@@ -347,7 +346,7 @@ updatesetbit_inword(BM_WORD word, uint64 updateBitLoc,
 
 /*
  * rshift_header_bits() -- 'in-place' right-shift bits in given words
- * 	'bits' bits.
+ *	'bits' bits.
  *
  * Assume that 'bits' is smaller than BM_WORD_SIZE. The right-most
  * 'bits' bits will be ignored.
@@ -357,13 +356,13 @@ rshift_header_bits(BM_WORD* words, uint64 nwords,
 				   uint32 bits)
 {
 	BM_WORD shifting_bits = 0;
-	uint32 	word_no;
+	uint32	word_no;
 
 	Assert(bits < BM_WORD_SIZE);
 
 	for (word_no = 0; word_no < nwords; word_no++)
 	{
-		BM_WORD new_shifting_bits = 
+		BM_WORD new_shifting_bits =
 			((BM_WORD)words[word_no]) << (BM_WORD_SIZE - bits);
 		words[word_no] = (words[word_no] >> bits) | shifting_bits;
 
@@ -373,7 +372,7 @@ rshift_header_bits(BM_WORD* words, uint64 nwords,
 
 /*
  * lshift_header_bits() -- 'in-place' left-shift bits in given words
- * 	'bits' bits.
+ *	'bits' bits.
  *
  * Assume that 'bits' is smaller than BM_WORD_SIZE. The left-most
  * 'bits' bits will be ignored.
@@ -387,7 +386,7 @@ lshift_header_bits(BM_WORD* words, uint64 nwords,
 
 	for (word_no = 0; word_no < nwords; word_no++)
 	{
-		BM_WORD shifting_bits = 
+		BM_WORD shifting_bits =
 			words[word_no] >> (BM_WORD_SIZE - bits);
 		words[word_no] = ((BM_WORD) words[word_no]) << bits;
 
@@ -398,7 +397,7 @@ lshift_header_bits(BM_WORD* words, uint64 nwords,
 
 /*
  * shift_header_bits() -- right-shift bits after 'startLoc' for
- * 	'numofShiftingBits' bits.
+ *	'numofShiftingBits' bits.
  *
  * These bits are stored in an array of words with the word size of
  * BM_WORD_SIZE. This shift is done in-place. The maximum number of
@@ -438,7 +437,6 @@ shift_header_bits(BM_WORD* words, uint32 numOfBits,
 		/* OR those shifted bits into the next word in the array. */
 		if (wordNo < maxNumOfWords-1)
 			words[wordNo + 1] |= tmpWord;
-		
 	}
 
 	/* obtain bits after 'startLoc'.*/
@@ -543,7 +541,7 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 	{
 		if (wordNo + new_words->curword >= words->num_cwords)
 		{
-			words_left->cwords[wordNo+new_words->curword-words->num_cwords] = 
+			words_left->cwords[wordNo+new_words->curword-words->num_cwords] =
 				words->cwords[wordNo];
 			if (IS_FILL_WORD(words->hwords, wordNo))
 			{
@@ -563,7 +561,7 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 	{
 		if (insertPos+wordNo>= words->num_cwords)
 		{
-			uint32 	n = insertPos + wordNo - words->num_cwords;
+			uint32	n = insertPos + wordNo - words->num_cwords;
 
 			words_left->cwords[n] = new_words->cwords[wordNo];
 			if (IS_FILL_WORD(new_words->hwords, wordNo))
@@ -574,7 +572,7 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 	}
 
 	/* right-shift the bits in the header words */
-	shift_header_bits(words->hwords, words->curword, 
+	shift_header_bits(words->hwords, words->curword,
 					  BM_NUM_OF_HEADER_WORDS, insertPos,
 					  new_words->curword);
 
@@ -591,7 +589,7 @@ insert_newwords(BMTIDBuffer* words, uint32 insertPos,
 		}
 	}
 
-	words->curword += (new_words->curword - words_left->curword);	
+	words->curword += (new_words->curword - words_left->curword);
 }
 
 /*
@@ -690,7 +688,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 
 	firstTidNumber = firstTidNumber + bitNo -
 					 FILL_LENGTH(word) * BM_WORD_SIZE;
-		
+
 	Assert(tidnum >= firstTidNumber);
 
 	MemSet(&new_words, 0, sizeof(new_words));
@@ -716,7 +714,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 			_bitmap_log_updateword(rel, bitmapBuffer, wordNo);
 
 		END_CRIT_SECTION();
-		return;		
+		return;
 	}
 
 	/*
@@ -769,7 +767,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 
 	if (new_lastpage)
 	{
-		Page 		vmiPage;
+		Page		vmiPage;
 		BMVectorMetaItem vmi;
 
 		MarkBufferDirty(vmiBuffer);
@@ -828,7 +826,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 
 	bitmapOpaque->bm_last_tid_location -=
 		getnumbits(words_left.cwords, words_left.hwords, words_left.curword);
-	
+
 	if (words_left.curword > 0)
 	{
 		nextPage = BufferGetPage(nextBuffer);
@@ -876,7 +874,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 /*
  * findbitmappage() -- find the bitmap page that contains
  *	the given tid location, and obtain the first tid location
- * 	in this page.
+ *	in this page.
  *
  * We assume that this tid location is not in bm_last_compword or
  * bm_last_word of its VMI.
@@ -920,7 +918,7 @@ findbitmappage(Relation rel, BMVectorMetaItem vmi, uint64 tidnum,
 #ifdef DEBUG_BITMAP
 /*
  * verify_bitmappages() -- verify if the bm_last_tid_location values
- * 	are valid in all bitmap pages. Only used during debugging.
+ *	are valid in all bitmap pages. Only used during debugging.
  */
 static void
 verify_bitmappages(Relation rel, BMVectorMetaItem vmi)
@@ -965,8 +963,8 @@ verify_bitmappages(Relation rel, BMVectorMetaItem vmi)
 
 /*
  * mergewords() -- merge last two bitmap words based on the HRL compression
- * 	scheme. If these two words can not be merged, the last complete
- * 	word will be appended into the word array in the buffer.
+ *	scheme. If these two words can not be merged, the last complete
+ *	word will be appended into the word array in the buffer.
  *
  * If the buffer is extended, this function returns the number
  * of bytes used.
@@ -985,12 +983,12 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 		 lastWordFill, last_tid);
 #endif
 
-	/* 
+	/*
 	 * If both words are LITERAL_ALL_ONE, then it is the very
 	 * first invocation for this VMI, so we skip mergewords.
 	 */
 	if (buf->last_compword == LITERAL_ALL_ONE
-		&& buf->last_word == LITERAL_ALL_ONE) 
+		&& buf->last_word == LITERAL_ALL_ONE)
 		return bytes_used;
 
 	/*
@@ -1028,7 +1026,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 		 GET_FILL_BIT(buf->last_word)))
 	{
 		BM_WORD lengthMerged;
-			
+
 		if (FILL_LENGTH(buf->last_compword) +
 			FILL_LENGTH(buf->last_word) <
 			MAX_FILL_LENGTH)
@@ -1067,7 +1065,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 
 	if (buf->is_last_compword_fill)
 		buf->hwords[buf->curword/BM_WORD_SIZE] |=
-			((BM_WORD)1) << (BM_WORD_SIZE - 
+			((BM_WORD)1) << (BM_WORD_SIZE -
 								 buf->curword % BM_WORD_SIZE - 1);
 
 	buf->curword++;
@@ -1111,7 +1109,7 @@ _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
 	Buffer		bitmapBuffer;
 	Page		bitmapPage;
 	BMPageOpaque bitmapPageOpaque;
-		
+
 	uint64		numFreeWords;
 	uint64		words_written = 0;
 	bool		isFirst		  = false;
@@ -1181,7 +1179,7 @@ _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
 			 "buf->start_wordno = %d , "
 			 "words_written = %llu",
 			 buf->start_wordno, words_written);
-#endif		
+#endif
 		buf->start_wordno += words_written;
 
 		END_CRIT_SECTION();
@@ -1233,7 +1231,7 @@ _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
 			 buf->start_wordno,words_written,
 			 vmi->bm_last_setbit,
 			 vmi->bm_last_tid_location);
-#endif		
+#endif
 	buf->start_wordno += words_written;
 
 	Assert(buf->start_wordno == buf->curword);
@@ -1241,7 +1239,7 @@ _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
 	END_CRIT_SECTION();
 
 	/* release bitmap buffer */
-	_bitmap_relbuf(bitmapBuffer);	
+	_bitmap_relbuf(bitmapBuffer);
 }
 
 
@@ -1498,7 +1496,7 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 		vmi_buf->vmi_block = vmi_block;
 		MemSet(vmi_buf->bufs, 0, BM_MAX_VMI_PER_PAGE * sizeof(BMTIDBuffer *));
 		tids->max_vmi_block = vmi_block;
-		
+
 		/*
 		 * Add the new VMI buffer to the list head. It seems reasonable that
 		 * future calls to this function will want this vmi_block rather than
@@ -1509,7 +1507,7 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 	else
 	{
 		ListCell *cell;
-		
+
 		foreach(cell, tids->vmi_blocks)
 		{
 			BMTIDVMIBuffer *tmp = lfirst(cell);
@@ -1520,7 +1518,7 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 			}
 		}
 	}
-	
+
 	Assert(vmi_buf);
 	Assert(off - 1 < BM_MAX_VMI_PER_PAGE);
 
@@ -1538,7 +1536,7 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 		Page			page;
 		BMVectorMetaItem vmi;
 		uint16			bytes_added;
-		
+
 		buf = (BMTIDBuffer *) palloc0(sizeof(BMTIDBuffer));
 
 #ifdef DEBUG_BMI
@@ -1550,7 +1548,7 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 			 buf->last_compword,
 			 buf->last_word);
 #endif
-		
+
 		vmibuf = _bitmap_getbuf(rel, vmi_block, BM_READ);
 		page = BufferGetPage(vmibuf);
 		vmi = (BMVectorMetaItem) PageGetItem(page, PageGetItemId(page, off));
@@ -1729,7 +1727,7 @@ buf_add_fill(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
 
 		while (numOfTotalFillWords > 0)
 		{
-			BM_WORD 	numOfFillWords;
+			BM_WORD		numOfFillWords;
 
 			if (numOfTotalFillWords >= MAX_FILL_LENGTH)
 				numOfFillWords = MAX_FILL_LENGTH;
@@ -1914,7 +1912,7 @@ buf_add_tid_with_fill_immediate(Relation rel, BMTIDBuffer *buf,
  * The number of bytes freed are returned.
  */
 static uint16
-buf_ensure_head_space(Relation rel, BMTIDBuffer *buf, 
+buf_ensure_head_space(Relation rel, BMTIDBuffer *buf,
 					  BlockNumber vmi_block, OffsetNumber off, bool use_wal)
 {
 	uint16 bytes_freed = 0;
@@ -1940,7 +1938,7 @@ buf_extend(BMTIDBuffer *buf)
 {
 	uint16 bytes;
 	uint16 size;
-	
+
 #ifdef DEBUG_BMI
 	elog(NOTICE, "[buf_extend] BEGIN");
 #endif
@@ -2281,7 +2279,7 @@ build_inserttuple(Relation index, uint64 tidnum,
 			break;
 		}
 	}
-	
+
 	if (allNulls)
 	{
 		/*
@@ -2408,8 +2406,8 @@ build_inserttuple(Relation index, uint64 tidnum,
  * contains all attributes to be indexed.
  */
 static void
-inserttuple(Relation rel, Buffer metabuf, uint64 tidnum, 
-			ItemPointerData ht_ctid, TupleDesc tupDesc, Datum *attdata, 
+inserttuple(Relation rel, Buffer metabuf, uint64 tidnum,
+			ItemPointerData ht_ctid, TupleDesc tupDesc, Datum *attdata,
 			bool *nulls, Relation lovHeap, Relation lovIndex, ScanKey scanKey,
 			IndexScanDesc scanDesc, bool use_wal)
 {
@@ -2442,7 +2440,7 @@ inserttuple(Relation rel, Buffer metabuf, uint64 tidnum,
 		 * create_vmi() between us calling _bitmap_findvalue() and
 		 * create_vmi().
 		 *
-		 * The problem is, locking the metapage is pretty heavy handed 
+		 * The problem is, locking the metapage is pretty heavy handed
 		 * because the read routines need a read lock on it. There are a
 		 * few other things we could do instead: use a BM insert lock or
 		 * wrap the code below in a PG_TRY and try and catch the unique
@@ -2476,7 +2474,7 @@ inserttuple(Relation rel, Buffer metabuf, uint64 tidnum,
  */
 
 void
-_bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, Datum *attdata, 
+_bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, Datum *attdata,
 					bool *nulls, BMBuildState *state)
 {
 	uint64 tidOffset; /* Tuple ID offset */
@@ -2486,7 +2484,7 @@ _bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, Datum *attdata,
 
 	Assert(ItemPointerGetOffsetNumber(&ht_ctid) <= BM_MAX_HTUP_PER_PAGE);
 
-	tidOffset = BM_IPTR_TO_INT(&ht_ctid); 
+	tidOffset = BM_IPTR_TO_INT(&ht_ctid);
 
 	/* insert a new bit into the corresponding bitmap */
 	build_inserttuple(index, tidOffset, ht_ctid, attdata, nulls, state);
@@ -2500,7 +2498,7 @@ _bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, Datum *attdata,
  * _bitmap_doinsert() -- insert an index tuple for a given tuple.
  */
 void
-_bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata, 
+_bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 				 bool *nulls)
 {
 	uint64			tidOffset;
@@ -2522,7 +2520,7 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 	/* insert a new bit into the corresponding bitmap using the HRL scheme */
 	metabuf = _bitmap_getbuf(rel, BM_METAPAGE, BM_READ);
 	metapage = (BMMetaPage)PageGetContents(BufferGetPage(metabuf));
-	_bitmap_open_lov_heapandindex(metapage, &lovHeap, &lovIndex, 
+	_bitmap_open_lov_heapandindex(metapage, &lovHeap, &lovIndex,
 								  RowExclusiveLock);
 
 	LockBuffer(metabuf, BUFFER_LOCK_UNLOCK);
@@ -2543,7 +2541,7 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 		/* XXX (Daniel Bausch, 2012-09-05): isn't the previous line equivalent
 		 * to 'scanKey = &scanKeys[attno];' ? */
 
-		ScanKeyEntryInitialize(scanKey, SK_ISNULL, attno + 1, 
+		ScanKeyEntryInitialize(scanKey, SK_ISNULL, attno + 1,
 							   BTEqualStrategyNumber, InvalidOid,
 							   DEFAULT_COLLATION_OID, opfuncid, 0);
 
@@ -2565,7 +2563,7 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 	index_rescan(scanDesc, scanKeys, tupDesc->natts, NULL, 0);
 
 	/* insert this new tuple into the bitmap index. */
-	inserttuple(rel, metabuf, tidOffset, ht_ctid, tupDesc, attdata, nulls, 
+	inserttuple(rel, metabuf, tidOffset, ht_ctid, tupDesc, attdata, nulls,
 				lovHeap, lovIndex, scanKeys, scanDesc, true);
 
 	index_endscan(scanDesc);
@@ -2576,10 +2574,10 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 }
 
 /*
- * Debug helper functions 
+ * Debug helper functions
  */
 
-void _debug_view_1(BMTidBuildBuf *x, const char *msg) 
+void _debug_view_1(BMTidBuildBuf *x, const char *msg)
 {
 	ListCell* c;
 	int i=0;
@@ -2597,7 +2595,7 @@ void _debug_view_1(BMTidBuildBuf *x, const char *msg)
 	}
 }
 
-void _debug_view_2(BMTIDBuffer *x, const char *msg) 
+void _debug_view_2(BMTIDBuffer *x, const char *msg)
 {
 	int i;
 	elog(NOTICE,"[_debug_view_BMTIDBuffer] %s"

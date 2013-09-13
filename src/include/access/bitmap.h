@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * bitmap.h
- *	header file for on-disk bitmap index access method implementation.
+ *	  header file for on-disk bitmap index access method implementation.
  *
- * Copyright (c) 2007, PostgreSQL Global Development Group
+ * Copyright (c) 2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	$PostgreSQL$
+ *	  src/include/access/bitmap.h
  *
  *-------------------------------------------------------------------------
  */
@@ -60,7 +60,7 @@ typedef uint16			BM_WORD;
  * list of all the distinct n-ples of values, which can be thought as the
  * result of "SELECT DISTINCT a_1,...,a_n FROM table".
  */
-typedef struct BMMetaPageData 
+typedef struct BMMetaPageData
 {
 	/*
 	 * The relation ids for a heap and a btree on this heap.  They are used to
@@ -132,11 +132,11 @@ typedef struct BMVectorMetaItemData
 	BlockNumber		bm_bitmap_head;
 	BlockNumber 	bm_bitmap_tail;
 
-	/* 
+	/*
 	 * Additional information to be used to append new bits into
-	 * existing bitmap vector that this distinct value is associated with. 
+	 * existing bitmap vector that this distinct value is associated with.
 	 * The following two words do not store in the regular bitmap page,
-	 * defined below. 
+	 * defined below.
 	 */
 
 	/* the last complete word in its bitmap vector. */
@@ -212,7 +212,7 @@ typedef BMVectorMetaItemData *BMVectorMetaItem;
 /*
  * Opaque data for a bitmap page.
  */
-typedef struct BMPageOpaqueData 
+typedef struct BMPageOpaqueData
 {
 	uint16		bm_hrl_words_used;	/* the number of words used */
 	BlockNumber	bm_bitmap_next;		/* the next page for this bitmap */
@@ -342,7 +342,7 @@ typedef struct BMTidBuildBuf
 #define CUR_WORD_IS_FILL(b) \
 	IS_FILL_WORD(b->hwords, b->startNo)
 
-/* 
+/*
  * Yet another interface to IS_FILL_WORD. This tests if the current word
  * is a fill word of non-matches.
  */
@@ -417,7 +417,7 @@ typedef struct BMTIDBuffer
 } BMTIDBuffer;
 
 /*
- * the state for index build 
+ * the state for index build
  */
 typedef struct BMBuildState
 {
@@ -485,13 +485,13 @@ typedef struct BMBatchWords
 	uint32	maxNumOfWords;		/* maximum number of words in this list */
 
 	/* Number of uncompressed words that have been read already */
-	uint32	nwordsread;			
+	uint32	nwordsread;
 	uint32	nextread;			/* next word to read */
 	uint64	firstTid;			/* the TID we're up to */
 	uint32	startNo;			/* position we're at in cwords */
 	uint32	nwords;				/* the number of bitmap words */
 	BM_WORD *hwords; 		/* the header words */
-	BM_WORD *cwords;		/* the actual bitmap words */	
+	BM_WORD *cwords;		/* the actual bitmap words */
 } BMBatchWords;
 
 /*
@@ -526,7 +526,7 @@ typedef BMVectorData *BMVector;
  * in each bitmap vector are read in batches. This structure stores
  * the following:
  * (1) words for a final bitmap vector after ORing words from
- *     related bitmap vectors. 
+ *     related bitmap vectors.
  * (2) tid locations that satisfy the query.
  * (3) One BMVectorData for each related bitmap vector.
  */
@@ -538,7 +538,7 @@ typedef struct BMScanPositionData
 	BMBatchWords   *bm_batchWords;
 
 	/*
-	 * The BMIterateResult instance that contains the final 
+	 * The BMIterateResult instance that contains the final
 	 * tid locations for tuples that satisfy the query.
 	 */
 	BMIterateResult bm_result;
@@ -688,7 +688,7 @@ typedef struct xl_bm_newpage
 } xl_bm_newpage;
 
 /*
- * The information about changes on a bitmap page. 
+ * The information about changes on a bitmap page.
  * If bm_isOpaque is true, then bm_next_blkno is set.
  */
 typedef struct xl_bm_bitmappage
@@ -758,13 +758,13 @@ extern void _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate,
 extern void _bitmap_init(Relation index, bool use_wal);
 
 /* bitmapinsert.c */
-extern void _bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, 
+extern void _bitmap_buildinsert(Relation index, ItemPointerData ht_ctid,
 								Datum *attdata, bool *nulls,
-							 	BMBuildState *state);
-extern void _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, 
+								BMBuildState *state);
+extern void _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid,
 							 Datum *attdata, bool *nulls);
 extern void _bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids,
-						  		  bool use_wal);
+									bool use_wal);
 extern uint64 _bitmap_write_bitmapwords(Buffer bitmapBuffer,
 								BMTIDBuffer* buf);
 extern void _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
@@ -825,7 +825,7 @@ extern void _bitmap_get_null_vmiid(Relation index, BMVMIID *vmiid);
 
 
 /* bitmapattutil.c */
-extern void _bitmap_create_lov_heapandindex(Relation rel, Oid *heapId, 
+extern void _bitmap_create_lov_heapandindex(Relation rel, Oid *heapId,
 											Oid *indexId);
 extern void _bitmap_open_lov_heapandindex(BMMetaPage metapage,
 						 Relation *lovHeapP, Relation *lovIndexP,
@@ -833,13 +833,13 @@ extern void _bitmap_open_lov_heapandindex(BMMetaPage metapage,
 extern void _bitmap_insert_lov(Relation lovHeap, Relation lovIndex,
 							   Datum *datum, bool *nulls, bool use_wal,
 							   bool skip_index_insert);
-extern void _bitmap_close_lov_heapandindex(Relation lovHeap, 
+extern void _bitmap_close_lov_heapandindex(Relation lovHeap,
 										Relation lovIndex, LOCKMODE lockMode);
 extern bool _bitmap_findvalue(Relation lovHeap, Relation lovIndex,
 							  ScanKey scanKey, IndexScanDesc scanDesc,
 							  BMVMIID *vmiid);
 extern void _bitmap_vacuum(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
-			               IndexBulkDeleteCallback callback, 
+			               IndexBulkDeleteCallback callback,
 						   void *callback_state);
 
 /*

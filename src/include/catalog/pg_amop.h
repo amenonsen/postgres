@@ -1197,10 +1197,10 @@ DATA(insert (	5015   2277 2277 3 s	1070	5013 0 ));
 DATA(insert (	5015   2277 2277 4 s	1075	5013 0 ));
 DATA(insert (	5015   2277 2277 5 s	1073	5013 0 ));
 
-/* 
- * bitmap uuid_ops 
+/*
+ * bitmap uuid_ops
  */
- 
+
 DATA(insert (	5024  2950 2950 1 s	2974	5013 0 ));
 DATA(insert (	5024  2950 2950 2 s	2976	5013 0 ));
 DATA(insert (	5024  2950 2950 3 s	2972	5013 0 ));

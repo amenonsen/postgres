@@ -1,15 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * bitmap.c
- *	Implementation of the Hybrid Run-Length (HRL) on-disk bitmap index.
+ *	  Implementation of the Hybrid Run-Length (HRL) on-disk bitmap index.
  *
- * Copyright (c) 2007, PostgreSQL Global Development Group
+ * Copyright (c) 2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	$PostgreSQL$
+ *	  src/backend/access/bitmap/bitmap.c
  *
  * NOTES
- *	This file contains only the public interface routines.
+ *	  This file contains only the public interface routines.
  *
  *-------------------------------------------------------------------------
  */
@@ -96,7 +96,7 @@ bmbuild(PG_FUNCTION_ARGS)
 		/* FlushRelationBuffers will have opened rd_smgr */
         smgrimmedsync(index->rd_smgr, MAIN_FORKNUM);
     }
-	
+
 	/* return statistics */
 	result = (IndexBuildResult *) palloc(sizeof(IndexBuildResult));
 
@@ -149,7 +149,7 @@ bmgettuple(PG_FUNCTION_ARGS)
 
 	bool res;
 
-	/* 
+	/*
 	 * If we have already begun our scan, continue in the same direction.
 	 * Otherwise, start up the scan.
 	 */
@@ -274,7 +274,7 @@ bmendscan(PG_FUNCTION_ARGS)
 	if (so->bm_currPos != NULL)
 	{
 		/*
-		 * release the buffers that have been stored for each related 
+		 * release the buffers that have been stored for each related
 		 * bitmap vector.
 		 */
 		if (so->bm_currPos->nvec > 1)
@@ -339,7 +339,7 @@ bmmarkpos(PG_FUNCTION_ARGS)
 		if (so->bm_markPos == NULL)
 		{
 			so->bm_markPos = (BMScanPosition) palloc(size);
-			so->bm_markPos->posvecs = 
+			so->bm_markPos->posvecs =
 				(BMVector)palloc0(so->bm_currPos->nvec * sizeof(BMVectorData));
 			need_init = true;
 		}
@@ -349,13 +349,13 @@ bmmarkpos(PG_FUNCTION_ARGS)
 		for (vectorNo = 0; vectorNo < so->bm_currPos->nvec; vectorNo++)
 		{
 			BMVector p = &(so->bm_markPos->posvecs[vectorNo]);
-			
+
 			if (BufferIsValid((bmScanPos[vectorNo]).bm_vmiBuffer))
 				IncrBufferRefCount((bmScanPos[vectorNo]).bm_vmiBuffer);
 
 			if (need_init)
 			{
-				p->bm_batchWords = 
+				p->bm_batchWords =
 					(BMBatchWords *) palloc0(sizeof(BMBatchWords));
 				_bitmap_init_batchwords(p->bm_batchWords,
 										BM_NUM_OF_HRL_WORDS_PER_PAGE,
@@ -365,7 +365,7 @@ bmmarkpos(PG_FUNCTION_ARGS)
 
 		if (so->bm_currPos->nvec == 1)
 		{
-			so->bm_markPos->bm_batchWords = 
+			so->bm_markPos->bm_batchWords =
 				so->bm_markPos->posvecs->bm_batchWords;
 		}
 
@@ -427,7 +427,7 @@ bmrestrpos(PG_FUNCTION_ARGS)
 		{
 			if (BufferIsValid((bmScanPos[vectorNo]).bm_vmiBuffer))
 				IncrBufferRefCount((bmScanPos[vectorNo]).bm_vmiBuffer);
-		}		
+		}
 
 		memcpy(so->bm_currPos->posvecs, bmScanPos,
 			   so->bm_markPos->nvec *
@@ -452,24 +452,24 @@ bmbulkdelete(PG_FUNCTION_ARGS)
 	Relation	rel = info->index;
 	IndexBulkDeleteResult * volatile result =
 		(IndexBulkDeleteResult *) PG_GETARG_POINTER(1);
-	IndexBulkDeleteCallback callback = 
-		(IndexBulkDeleteCallback) PG_GETARG_POINTER(2);              
+	IndexBulkDeleteCallback callback =
+		(IndexBulkDeleteCallback) PG_GETARG_POINTER(2);
     void       *callback_state = (void *) PG_GETARG_POINTER(3);
 
 	/* allocate stats if first time through, else re-use existing struct */
 	if (result == NULL)
 		result = (IndexBulkDeleteResult *)
-			palloc0(sizeof(IndexBulkDeleteResult));	
+			palloc0(sizeof(IndexBulkDeleteResult));
 
 	result = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
 
 	_bitmap_vacuum(info, result, callback, callback_state);
-	
+
 	result->num_pages = RelationGetNumberOfBlocks(rel);
 	/* Since we re-build the index, set this to number of heap tuples. */
 	result->num_index_tuples = info->num_heap_tuples;
 	result->tuples_removed = 0;
-	
+
 	PG_RETURN_POINTER(result);
 }
 
@@ -483,7 +483,7 @@ bmvacuumcleanup(PG_FUNCTION_ARGS)
 {
 	IndexVacuumInfo *info = (IndexVacuumInfo *) PG_GETARG_POINTER(0);
 	Relation	rel = info->index;
-	IndexBulkDeleteResult *stats = 
+	IndexBulkDeleteResult *stats =
 			(IndexBulkDeleteResult *) PG_GETARG_POINTER(1);
 
 	if(stats == NULL)
@@ -545,11 +545,11 @@ stream_free(void *opaque)
 #endif
 
 static void
-cleanup_pos(BMScanPosition pos) 
+cleanup_pos(BMScanPosition pos)
 {
 	if (pos->nvec == 0)
 		return;
-	
+
 	/*
 	 * Only cleanup bm_batchWords if we have more than one vector since
 	 * _bitmap_cleanup_scanpos() will clean it up for the single vector

@@ -158,4 +158,3 @@ CREATE OR REPLACE FUNCTION bm_bmv_page_stats(IN relname text, IN blkno int4,
     OUT bm_page_id int4
 ) AS 'MODULE_PATHNAME', 'bm_bmv_page_stats'
 LANGUAGE C STRICT;
-

@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * bitmapxlog.c
- *	WAL replay logic for the bitmap index.
+ *	  WAL replay logic for the bitmap index.
  *
- * Copyright (c) 2007, PostgreSQL Global Development Group
- * 
+ * Copyright (c) 2013, PostgreSQL Global Development Group
+ *
  * IDENTIFICATION
- *	$PostgreSQL$
+ *	  src/backend/access/bitmap/bitmapxlog.c
  *
  *-------------------------------------------------------------------------
  */
@@ -43,7 +43,7 @@ log_incomplete_insert_bitmapwords(RelFileNode node,
 	bm_incomplete_action *action;
 
 	/* Delete the previous entry */
-	forget_incomplete_insert_bitmapwords(node, newWords);	
+	forget_incomplete_insert_bitmapwords(node, newWords);
 
 	lastTids_size = newWords->bm_num_cwords * sizeof(uint64);
 	cwords_size = newWords->bm_num_cwords * sizeof(BM_WORD);
@@ -86,7 +86,7 @@ forget_incomplete_insert_bitmapwords(RelFileNode node,
 			incomplete_actions = list_delete_ptr(incomplete_actions, action);
 			pfree(action);
 			break;
-		}		
+		}
 	}
 }
 
@@ -106,7 +106,7 @@ _bitmap_xlog_newpage(XLogRecPtr lsn, XLogRecord *record)
 
 	buffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_new_blkno, true);
 	if (!BufferIsValid(buffer))
-		elog(PANIC, "_bitmap_xlog_newpage: block unfound: %d", 
+		elog(PANIC, "_bitmap_xlog_newpage: block unfound: %d",
 			 xlrec->bm_new_blkno);
 
 	page = BufferGetPage(buffer);
@@ -166,10 +166,10 @@ _bitmap_xlog_insert_vmi(XLogRecPtr lsn, XLogRecord *record)
 
 		itemSize = sizeof(BMVectorMetaItemData);
 		if (itemSize > PageGetFreeSpace(vmiPage))
-			elog(PANIC, 
+			elog(PANIC,
 				 "_bitmap_xlog_insert_vmi: not enough space in VMI page %d",
 				 xlrec->bm_vmi_blkno);
-		
+
 		if (PageAddItem(vmiPage, (Item) &(xlrec->bm_vmi), itemSize,
 						newOffset, false, false) == InvalidOffsetNumber)
 		{
@@ -250,7 +250,7 @@ _bitmap_xlog_insert_meta(XLogRecPtr lsn, XLogRecord *record)
  * in a bitmap vector.
  */
 static void
-_bitmap_xlog_insert_bitmap_lastwords(XLogRecPtr lsn, 
+_bitmap_xlog_insert_bitmap_lastwords(XLogRecPtr lsn,
 									 XLogRecord *record)
 {
 	xl_bm_bitmap_lastwords *xlrec;
@@ -337,7 +337,7 @@ _bitmap_xlog_insert_bitmapwords(XLogRecPtr lsn, XLogRecord *record)
 		newWords.last_tids = (uint64*)palloc0(lastTids_size);
 		newWords.cwords = (BM_WORD*)palloc0(cwords_size);
 
-		last_tids = 
+		last_tids =
 			(uint64*)(((char*)xlrec) + sizeof(xl_bm_bitmapwords));
 		cwords =
 			(BM_WORD*)(((char*)xlrec) +
@@ -450,7 +450,7 @@ _bitmap_xlog_updateword(XLogRecPtr lsn, XLogRecord *record)
 	Buffer			bitmapBuffer;
 	Page			bitmapPage;
 	BMPageOpaque	bitmapOpaque;
-	BMBitmapVectorPage 		bitmap;
+	BMBitmapVectorPage		bitmap;
 
 	xlrec = (xl_bm_updateword *) XLogRecGetData(record);
 
@@ -489,7 +489,7 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 	Page			secondPage = NULL;
 	BMPageOpaque	firstOpaque;
 	BMPageOpaque	secondOpaque = NULL;
-	BMBitmapVectorPage 		firstBitmap;
+	BMBitmapVectorPage		firstBitmap;
 	BMBitmapVectorPage		secondBitmap = NULL;
 
 	xlrec = (xl_bm_updatewords *) XLogRecGetData(record);
@@ -544,7 +544,7 @@ _bitmap_xlog_updatewords(XLogRecPtr lsn, XLogRecord *record)
 		if (xlrec->bm_new_lastpage)
 		{
 			Buffer				vmiBuffer;
-			Page 				vmiPage;
+			Page				vmiPage;
 			BMVectorMetaItem	vmi;
 
 			vmiBuffer = XLogReadBuffer(xlrec->bm_node, xlrec->bm_vmi_blkno,
@@ -617,7 +617,7 @@ bitmap_xlog_cleanup(void)
 	ListCell* l;
 	foreach (l, incomplete_actions)
 	{
-		Relation 		reln;
+		Relation		reln;
 		Buffer			vmiBuffer;
 		BMTIDBuffer		newWords;
 

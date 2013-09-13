@@ -4,7 +4,7 @@
 #    Makefile for access/bitmap
 #
 # IDENTIFICATION
-#    $PostgreSQL$
+#    src/backend/access/bitmap/Makefile
 #
 #-------------------------------------------------------------------------
 
@@ -13,6 +13,6 @@ top_builddir = ../../../..
 include $(top_builddir)/src/Makefile.global
 
 OBJS = bitmap.o bitmapattutil.o bitmapinsert.o bitmappages.o \
-    bitmapsearch.o bitmaputil.o bitmapxlog.o 
+    bitmapsearch.o bitmaputil.o bitmapxlog.o
 
 include $(top_srcdir)/src/backend/common.mk
