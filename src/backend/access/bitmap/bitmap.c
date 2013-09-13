@@ -520,30 +520,6 @@ bmbuildCallback(Relation index, HeapTuple htup, Datum *attdata,
 #endif
 }
 
-/* NOTA: la prossima funzione è stata commentata in quanto probabilmente obsoleta */
-#if 0
-
-/*
- * free the memory associated with the stream
- */
-
-static void
-stream_free(void *opaque)
-{
-	IndexStream *is = (IndexStream *)opaque;
-
-	if (is)
-	{
-		BMStreamOpaque *so = (BMStreamOpaque *)is->opaque;
-
-		if (so)
-			pfree(so);
-		pfree(is);
-	}
-}
-
-#endif
-
 static void
 cleanup_pos(BMScanPosition pos)
 {
