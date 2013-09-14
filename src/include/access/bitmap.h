@@ -14,8 +14,8 @@
 #ifndef BITMAP_H
 #define BITMAP_H
 
-/* #define DEBUG_BMI 1 */
 /* this macro enables debug messages */
+/* #define DEBUG_BMI 1 */
 
 #include "access/genam.h"
 #include "access/htup.h"
@@ -86,9 +86,8 @@ typedef BMMetaPageData *BMMetaPage;
 #define BM_METAPAGE 	0
 
 /*
- * Note: we set this value equal to MaxHeapTuplesPerPage, because is
- * unuseful (and potentially dangerous) to have two different notions
- * of "legitimate" tuple offset in the code.
+ * Note: we set this value equal to MaxHeapTuplesPerPage, to avoid
+ * having two different notions of a "legitimate" tuple offset.
  */
 #define BM_MAX_HTUP_PER_PAGE MaxHeapTuplesPerPage
 
