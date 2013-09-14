@@ -22,29 +22,15 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 
-
-#ifdef HAVE_LONG_INT_64
-#define UINT64_PRINTF "%lu"
-#elif defined(HAVE_LONG_LONG_INT_64)
-#define UINT64_PRINTF "%llu"
-#endif
-
 extern Datum bm_metap(PG_FUNCTION_ARGS);
 extern Datum bm_page_headers(PG_FUNCTION_ARGS);
 extern Datum bm_lov_page_stats(PG_FUNCTION_ARGS);
 extern Datum bm_bmv_page_stats(PG_FUNCTION_ARGS);
 
-#if 0
-extern Datum bt_page_items(PG_FUNCTION_ARGS);
-#endif
-
 PG_FUNCTION_INFO_V1(bm_metap);
 PG_FUNCTION_INFO_V1(bm_page_headers);
 PG_FUNCTION_INFO_V1(bm_lov_page_stats);
 PG_FUNCTION_INFO_V1(bm_bmv_page_stats);
-#if 0
-PG_FUNCTION_INFO_V1(bt_page_items);
-#endif
 
 #define IS_INDEX(r) ((r)->rd_rel->relkind == RELKIND_INDEX)
 #define IS_BITMAP(r) ((r)->rd_rel->relam == BITMAP_AM_OID)
@@ -73,7 +59,7 @@ struct bm_page_headers_args
  *
  * Get the page headers of all the pages of the index
  *
- * Usage: SELECT * FROM bm_page_headers('bm_key');
+ * Usage: SELECT * FROM bm_page_headers('bm_idx');
  *-------------------------------------------------------
  */
 
@@ -81,45 +67,42 @@ Datum
 bm_page_headers(PG_FUNCTION_ARGS)
 {
     text *relname = PG_GETARG_TEXT_P(0);
-    FuncCallContext *fctx; /* state information across calls context */
+    FuncCallContext *fctx;
     struct bm_page_headers_args *uargs;
     char* values[7];
     Datum result = 0;
 
     if (!superuser())
-	ereport(ERROR,
-	    (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-	    (errmsg("must be superuser to use pageinspect functions"))));
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				(errmsg("must be superuser to use pageinspect functions"))));
 
-    /* First call checks */
     if (SRF_IS_FIRSTCALL())
     {
-	MemoryContext mctx;
-	TupleDesc tupleDesc;
-	RangeVar* relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
-	Relation rel;
+		MemoryContext mctx;
+		TupleDesc tupleDesc;
+		RangeVar* relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
+		Relation rel;
 
-	fctx = SRF_FIRSTCALL_INIT();
+		fctx = SRF_FIRSTCALL_INIT();
 
-	rel = relation_openrv(relrv, AccessShareLock);
+		rel = relation_openrv(relrv, AccessShareLock);
 
-	mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
+		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
 
-	uargs = palloc(sizeof(struct bm_page_headers_args));
+		uargs = palloc(sizeof(struct bm_page_headers_args));
 
-	uargs->rel = rel; /* relation */
-	uargs->blockNum = 0; /* first page */
+		uargs->rel = rel;
+		uargs->blockNum = 0;
 
-	/* Build a tuple descriptor for our result type */
-	if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-	    elog(ERROR, "return type must be a row type");
+		if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
+			elog(ERROR, "return type must be a row type");
 
-	fctx->attinmeta = TupleDescGetAttInMetadata(tupleDesc);
-	fctx->user_fctx = uargs;
-	/* Number of page blocks for the relation */
-	fctx->max_calls = RelationGetNumberOfBlocks(rel);
+		fctx->attinmeta = TupleDescGetAttInMetadata(tupleDesc);
+		fctx->user_fctx = uargs;
+		fctx->max_calls = RelationGetNumberOfBlocks(rel);
 
-	MemoryContextSwitchTo(mctx);
+		MemoryContextSwitchTo(mctx);
     }
 
     fctx = SRF_PERCALL_SETUP();
@@ -127,229 +110,66 @@ bm_page_headers(PG_FUNCTION_ARGS)
 
     if (fctx->call_cntr < fctx->max_calls)
     {
-	Buffer buffer;
-	HeapTuple tuple;
-	Page page;
-	PageHeader phdr;
-	uint32 page_size;
-	uint32 free_size;
-	int j = 0;
+		Buffer buffer;
+		HeapTuple tuple;
+		Page page;
+		PageHeader phdr;
+		uint32 page_size;
+		uint32 free_size;
+		int j = 0;
 
-	if (!IS_INDEX(uargs->rel) || !IS_BITMAP(uargs->rel))
-		elog(ERROR, "relation \"%s\" is not a bitmap index",
-			 RelationGetRelationName(uargs->rel));
+		if (!IS_INDEX(uargs->rel) || !IS_BITMAP(uargs->rel))
+			elog(ERROR, "relation \"%s\" is not a bitmap index",
+				 RelationGetRelationName(uargs->rel));
 
-	CHECK_RELATION_BLOCK_RANGE(uargs->rel, uargs->blockNum);
+		CHECK_RELATION_BLOCK_RANGE(uargs->rel, uargs->blockNum);
 
-	/* Read the page */
-	buffer = ReadBuffer(uargs->rel, uargs->blockNum);
+		buffer = ReadBuffer(uargs->rel, uargs->blockNum);
 
-	/* Get the header information */
-	page = BufferGetPage(buffer);
-	phdr = (PageHeader) page;
-	page_size = PageGetPageSize(page);
-	free_size = PageGetFreeSpace(page);
+		page = BufferGetPage(buffer);
+		phdr = (PageHeader) page;
+		page_size = PageGetPageSize(page);
+		free_size = PageGetFreeSpace(page);
 
-	values[j] = palloc(32);
-	snprintf(values[j++], 32, "%d", uargs->blockNum);
-	values[j] = palloc(32);
-	if (uargs->blockNum == 0) {
-	    snprintf(values[j++], 32, "META");
-	}
-	else if (page_size == phdr->pd_special) {
-	    /* no special area - LOV PAGE */
-	    snprintf(values[j++], 32, "LOV");
-	}
-	else {
-	    snprintf(values[j++], 32, "BMV");
-	}
-	values[j] = palloc(32);
-	snprintf(values[j++], 32, "%d", page_size);
-	values[j] = palloc(32);
-	snprintf(values[j++], 32, "%d", phdr->pd_lower);
-	values[j] = palloc(32);
-	snprintf(values[j++], 32, "%d", phdr->pd_upper);
-	values[j] = palloc(32);
-	snprintf(values[j++], 32, "%d", phdr->pd_special);
-	values[j] = palloc(32);
-	snprintf(values[j++], 32, "%d", free_size);
+		values[j] = palloc(32);
+		snprintf(values[j++], 32, "%d", uargs->blockNum);
+		values[j] = palloc(32);
 
-	//uargs->blockNum = uargs->blockNum + 1;
-	++uargs->blockNum;
+		if (uargs->blockNum == 0)
+			snprintf(values[j++], 32, "META");
+		else if (page_size == phdr->pd_special)
+			snprintf(values[j++], 32, "LOV");
+		else
+			snprintf(values[j++], 32, "BMV");
 
-	ReleaseBuffer(buffer);
+		values[j] = palloc(32);
+		snprintf(values[j++], 32, "%d", page_size);
+		values[j] = palloc(32);
+		snprintf(values[j++], 32, "%d", phdr->pd_lower);
+		values[j] = palloc(32);
+		snprintf(values[j++], 32, "%d", phdr->pd_upper);
+		values[j] = palloc(32);
+		snprintf(values[j++], 32, "%d", phdr->pd_special);
+		values[j] = palloc(32);
+		snprintf(values[j++], 32, "%d", free_size);
 
-	tuple = BuildTupleFromCStrings(fctx->attinmeta, values);
+		++uargs->blockNum;
 
-	result = HeapTupleGetDatum(tuple);
+		ReleaseBuffer(buffer);
 
-	SRF_RETURN_NEXT(fctx, result);
+		tuple = BuildTupleFromCStrings(fctx->attinmeta, values);
+
+		result = HeapTupleGetDatum(tuple);
+
+		SRF_RETURN_NEXT(fctx, result);
     }
     else
     {
-	relation_close(uargs->rel, AccessShareLock);
-	pfree(uargs);
-	SRF_RETURN_DONE(fctx);
-    }
-}
-
-#if 0
-/*-------------------------------------------------------
- * bt_page_items()
- *
- * Get IndexTupleData set in a btree page
- *
- * Usage: SELECT * FROM bt_page_items('bm_key', 1);
- *-------------------------------------------------------
- */
-
-/*
- * cross-call data structure for SRF
- */
-struct user_args
-{
-	Page		page;
-	OffsetNumber offset;
-};
-
-Datum
-bt_page_items(PG_FUNCTION_ARGS)
-{
-	text	   *relname = PG_GETARG_TEXT_P(0);
-	uint32		blkno = PG_GETARG_UINT32(1);
-	Datum		result;
-	char	   *values[6];
-	HeapTuple	tuple;
-	FuncCallContext *fctx;
-	MemoryContext mctx;
-	struct user_args *uargs;
-
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use pageinspect functions"))));
-
-	if (SRF_IS_FIRSTCALL())
-	{
-		RangeVar   *relrv;
-		Relation	rel;
-		Buffer		buffer;
-		BTPageOpaque opaque;
-		TupleDesc	tupleDesc;
-
-		fctx = SRF_FIRSTCALL_INIT();
-
-		relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
-		rel = relation_openrv(relrv, AccessShareLock);
-
-		if (!IS_INDEX(rel) || !IS_BTREE(rel))
-			elog(ERROR, "relation \"%s\" is not a btree index",
-				 RelationGetRelationName(rel));
-
-		if (blkno == 0)
-			elog(ERROR, "block 0 is a meta page");
-
-		CHECK_RELATION_BLOCK_RANGE(rel, blkno);
-
-		buffer = ReadBuffer(rel, blkno);
-
-		/*
-		 * We copy the page into local storage to avoid holding pin on the
-		 * buffer longer than we must, and possibly failing to release it at
-		 * all if the calling query doesn't fetch all rows.
-		 */
-		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
-
-		uargs = palloc(sizeof(struct user_args));
-
-		uargs->page = palloc(BLCKSZ);
-		memcpy(uargs->page, BufferGetPage(buffer), BLCKSZ);
-
-		ReleaseBuffer(buffer);
-		relation_close(rel, AccessShareLock);
-
-		uargs->offset = FirstOffsetNumber;
-
-		opaque = (BTPageOpaque) PageGetSpecialPointer(uargs->page);
-
-		if (P_ISDELETED(opaque))
-			elog(NOTICE, "page is deleted");
-
-		fctx->max_calls = PageGetMaxOffsetNumber(uargs->page);
-
-		/* Build a tuple descriptor for our result type */
-		if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-			elog(ERROR, "return type must be a row type");
-
-		fctx->attinmeta = TupleDescGetAttInMetadata(tupleDesc);
-
-		fctx->user_fctx = uargs;
-
-		MemoryContextSwitchTo(mctx);
-	}
-
-	fctx = SRF_PERCALL_SETUP();
-	uargs = fctx->user_fctx;
-
-	if (fctx->call_cntr < fctx->max_calls)
-	{
-		ItemId		id;
-		IndexTuple	itup;
-		int			j;
-		int			off;
-		int			dlen;
-		char	   *dump;
-		char	   *ptr;
-
-		id = PageGetItemId(uargs->page, uargs->offset);
-
-		if (!ItemIdIsValid(id))
-			elog(ERROR, "invalid ItemId");
-
-		itup = (IndexTuple) PageGetItem(uargs->page, id);
-
-		j = 0;
-		values[j] = palloc(32);
-		snprintf(values[j++], 32, "%d", uargs->offset);
-		values[j] = palloc(32);
-		snprintf(values[j++], 32, "(%u,%u)",
-				 BlockIdGetBlockNumber(&(itup->t_tid.ip_blkid)),
-				 itup->t_tid.ip_posid);
-		values[j] = palloc(32);
-		snprintf(values[j++], 32, "%d", (int) IndexTupleSize(itup));
-		values[j] = palloc(32);
-		snprintf(values[j++], 32, "%c", IndexTupleHasNulls(itup) ? 't' : 'f');
-		values[j] = palloc(32);
-		snprintf(values[j++], 32, "%c", IndexTupleHasVarwidths(itup) ? 't' : 'f');
-
-		ptr = (char *) itup + IndexInfoFindDataOffset(itup->t_info);
-		dlen = IndexTupleSize(itup) - IndexInfoFindDataOffset(itup->t_info);
-		dump = palloc0(dlen * 3 + 1);
-		values[j] = dump;
-		for (off = 0; off < dlen; off++)
-		{
-			if (off > 0)
-				*dump++ = ' ';
-			sprintf(dump, "%02x", *(ptr + off) & 0xff);
-			dump += 2;
-		}
-
-		tuple = BuildTupleFromCStrings(fctx->attinmeta, values);
-		result = HeapTupleGetDatum(tuple);
-
-		uargs->offset = uargs->offset + 1;
-
-		SRF_RETURN_NEXT(fctx, result);
-	}
-	else
-	{
-		pfree(uargs->page);
+		relation_close(uargs->rel, AccessShareLock);
 		pfree(uargs);
 		SRF_RETURN_DONE(fctx);
-	}
+    }
 }
-
-#endif
 
 /* ------------------------------------------------
  * bm_metap()
@@ -359,6 +179,7 @@ bt_page_items(PG_FUNCTION_ARGS)
  * Usage: SELECT * FROM bm_metap('t1_bmkey')
  * ------------------------------------------------
  */
+
 Datum
 bm_metap(PG_FUNCTION_ARGS)
 {
@@ -377,7 +198,10 @@ bm_metap(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use pageinspect functions"))));
+				(errmsg("must be superuser to use pageinspect functions"))));
+
+	if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
+		elog(ERROR, "return type must be a row type");
 
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = relation_openrv(relrv, AccessShareLock);
@@ -386,14 +210,9 @@ bm_metap(PG_FUNCTION_ARGS)
 		elog(ERROR, "relation \"%s\" is not a bitmap index",
 			 RelationGetRelationName(rel));
 
-	/* Get the meta page */
 	buffer = ReadBuffer(rel, BM_METAPAGE);
 	page = BufferGetPage(buffer);
 	metad = (BMMetaPage) PageGetContents(page);
-
-	/* Build a tuple descriptor for our result type */
-	if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-		elog(ERROR, "return type must be a row type");
 
 	j = 0;
 	values[j] = palloc(32);
@@ -414,10 +233,10 @@ bm_metap(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(result);
 }
 
-/* ------------------------------------------------
+/*
  * structure for statistics regarding a single LOV page
- * ------------------------------------------------
  */
+
 typedef struct BMLOVPageStat
 {
     uint32 blkno;
@@ -433,9 +252,10 @@ typedef struct BMLOVPageStat
 /* -----------------------------------------------
  * bm_lov_page_stats()
  *
- * Usage: SELECT * FROM bm_lov_page_stats('bm_key');
+ * Usage: SELECT * FROM bm_lov_page_stats('bm_idx');
  * -----------------------------------------------
  */
+
 Datum
 bm_lov_page_stats(PG_FUNCTION_ARGS)
 {
@@ -443,34 +263,37 @@ bm_lov_page_stats(PG_FUNCTION_ARGS)
     uint32 blkno = PG_GETARG_UINT32(1);
     Relation rel;
     RangeVar *relrv;
-    Buffer buffer; /* buffer for the requested page */
+    Buffer buffer;
     Page page;
     PageHeader phdr;
 
     BMLOVPageStat stat;
-    char* values[7]; /* returned values (temporary string) */
-    HeapTuple tuple; /* Returned tuple */
-    TupleDesc tupleDesc; /* Description of the returned tuple */
-    int j = 0; /* field counter */
-    Datum result; /* result of the function */
+    char *values[7];
+    HeapTuple tuple;
+    TupleDesc tupleDesc;
+    int j = 0;
+    Datum result;
     int item_size = 0;
     OffsetNumber maxoff = FirstOffsetNumber;
     OffsetNumber off = FirstOffsetNumber;
 
     if (!superuser())
-	ereport(ERROR,
-	    (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-	    (errmsg("must be superuser to use pageinspect functions"))));
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				(errmsg("must be superuser to use pageinspect functions"))));
+
+    if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
+		elog(ERROR, "return type must be a row type");
 
     relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
     rel = relation_openrv(relrv, AccessShareLock);
 
     if (!IS_INDEX(rel) || !IS_BITMAP(rel))
-	elog(ERROR, "relation \"%s\" is not a bitmap index",
-	     RelationGetRelationName(rel));
+		elog(ERROR, "relation \"%s\" is not a bitmap index",
+			 RelationGetRelationName(rel));
 
     if (blkno == BM_METAPAGE)
-	elog(ERROR, "block %d is a meta page", BM_METAPAGE);
+		elog(ERROR, "block %d is a meta page", BM_METAPAGE);
 
     CHECK_RELATION_BLOCK_RANGE(rel, blkno);
 
@@ -484,33 +307,27 @@ bm_lov_page_stats(PG_FUNCTION_ARGS)
     stat.free_size = PageGetFreeSpace(page);
     stat.max_avail = stat.live_items = stat.dead_items = stat.avg_item_size = 0;
 
-    /* Check the page type */
     if (phdr->pd_special != stat.page_size)
-	elog(ERROR, "block %d is a not a LOV page", blkno);
+		elog(ERROR, "block %d is a not a LOV page", blkno);
 
-    /* Get the information */
     maxoff = PageGetMaxOffsetNumber(page);
 
     /* count live and dead tuples, and free space */
     for (off = FirstOffsetNumber; off <= maxoff; ++off)
     {
-	ItemId id = PageGetItemId(page, off);
-	IndexTuple itup = (IndexTuple) PageGetItem(page, id);
+		ItemId id = PageGetItemId(page, off);
+		IndexTuple itup = (IndexTuple) PageGetItem(page, id);
 
-	item_size += IndexTupleSize(itup);
+		item_size += IndexTupleSize(itup);
 
-	if (!ItemIdIsDead(id))
-	    stat.live_items++;
-	else
-	    stat.dead_items++;
+		if (!ItemIdIsDead(id))
+			stat.live_items++;
+		else
+			stat.dead_items++;
     }
 
     if ((stat.live_items + stat.dead_items) > 0)
-	stat.avg_item_size = item_size / (stat.live_items + stat.dead_items);
-
-    /* Build a tuple descriptor for our result type */
-    if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-	elog(ERROR, "return type must be a row type");
+		stat.avg_item_size = item_size / (stat.live_items + stat.dead_items);
 
     values[j] = palloc(32);
     snprintf(values[j++], 32, "%d", stat.blkno);
@@ -538,10 +355,10 @@ bm_lov_page_stats(PG_FUNCTION_ARGS)
     PG_RETURN_DATUM(result);
 }
 
-/* ------------------------------------------------
+/*
  * structure for statistics regarding a single bitmap page
- * ------------------------------------------------
  */
+
 typedef struct BMBMVPageStat
 {
     uint32 blkno;
@@ -559,9 +376,10 @@ typedef struct BMBMVPageStat
 /* -----------------------------------------------
  * bm_bmv_page_stats()
  *
- * Usage: SELECT * FROM bm_bmv_page_stats('bm_key');
+ * Usage: SELECT * FROM bm_bmv_page_stats('bm_idx');
  * -----------------------------------------------
  */
+
 Datum
 bm_bmv_page_stats(PG_FUNCTION_ARGS)
 {
@@ -569,32 +387,35 @@ bm_bmv_page_stats(PG_FUNCTION_ARGS)
     uint32 blkno = PG_GETARG_UINT32(1);
     Relation rel;
     RangeVar *relrv;
-    Buffer buffer; /* buffer for the requested page */
+    Buffer buffer;
     Page page;
     PageHeader phdr;
     BMPageOpaque opaque = 0;
 
     BMBMVPageStat stat;
-    char* values[7]; /* returned values (temporary string) */
-    HeapTuple tuple; /* Returned tuple */
-    TupleDesc tupleDesc; /* Description of the returned tuple */
-    int j = 0; /* field counter */
-    Datum result; /* result of the function */
+    char *values[7];
+    HeapTuple tuple;
+    TupleDesc tupleDesc;
+    int j = 0;
+    Datum result;
 
     if (!superuser())
-	ereport(ERROR,
-	    (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-	    (errmsg("must be superuser to use pageinspect functions"))));
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				(errmsg("must be superuser to use pageinspect functions"))));
+
+    if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
+		elog(ERROR, "return type must be a row type");
 
     relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
     rel = relation_openrv(relrv, AccessShareLock);
 
     if (!IS_INDEX(rel) || !IS_BITMAP(rel))
-	elog(ERROR, "relation \"%s\" is not a bitmap index",
-	     RelationGetRelationName(rel));
+		elog(ERROR, "relation \"%s\" is not a bitmap index",
+			 RelationGetRelationName(rel));
 
     if (blkno == BM_METAPAGE)
-	elog(ERROR, "block %d is a meta page", BM_METAPAGE);
+		elog(ERROR, "block %d is a meta page", BM_METAPAGE);
 
     CHECK_RELATION_BLOCK_RANGE(rel, blkno);
 
@@ -608,18 +429,13 @@ bm_bmv_page_stats(PG_FUNCTION_ARGS)
     stat.page_size = PageGetPageSize(page);
     stat.free_size = PageGetFreeSpace(page);
 
-    /* Check the page type */
     if (phdr->pd_special == stat.page_size)
-	elog(ERROR, "block %d is a not a BMV page", blkno);
+		elog(ERROR, "block %d is a not a BMV page", blkno);
 
-    stat.bm_hrl_words_used = opaque->bm_hrl_words_used; /* the number of words used */
-    stat.bm_bitmap_next = opaque->bm_bitmap_next; /* the next page for this bitmap */
-    stat.bm_last_tid_location = opaque->bm_last_tid_location; /* the tid location for the last bit in this page */
-    stat.bm_page_id = opaque->bm_page_id; /* bitmap index identifier */
-
-    /* Build a tuple descriptor for our result type */
-    if (get_call_result_type(fcinfo, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-	elog(ERROR, "return type must be a row type");
+    stat.bm_hrl_words_used = opaque->bm_hrl_words_used;
+    stat.bm_bitmap_next = opaque->bm_bitmap_next;
+    stat.bm_last_tid_location = opaque->bm_last_tid_location;
+    stat.bm_page_id = opaque->bm_page_id;
 
     values[j] = palloc(32);
     snprintf(values[j++], 32, "%d", stat.blkno);
@@ -632,7 +448,7 @@ bm_bmv_page_stats(PG_FUNCTION_ARGS)
     values[j] = palloc(32);
     snprintf(values[j++], 32, "%d", stat.bm_bitmap_next);
     values[j] = palloc(32);
-    snprintf(values[j++], 32, UINT64_PRINTF, stat.bm_last_tid_location);
+    snprintf(values[j++], 32, UINT64_FORMAT, stat.bm_last_tid_location);
     values[j] = palloc(32);
     snprintf(values[j++], 32, "%d", stat.bm_page_id);
 
