@@ -651,7 +651,10 @@ bitmap_xlog_cleanup(void)
 		newWords.is_last_compword_fill = (action->vmi_words_header == 2);
 		newWords.last_tid = action->bm_last_setbit;
 
-		/* Finish an incomplete insert */
+		/* Finish an incomplete insert
+		 * XXX reln is not initialised here. Where should we get the
+		 * value from?
+		 */
 		_bitmap_write_new_bitmapwords(reln, vmiBuffer, action->bm_vmi_offset,
 									  &newWords, false);
 	}
