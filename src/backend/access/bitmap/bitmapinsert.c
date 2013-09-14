@@ -27,6 +27,12 @@
 #include "utils/lsyscache.h" /* for get_opcode */
 #include "catalog/pg_collation.h"
 
+#ifdef HAVE_LONG_INT_64
+#define UINT64X_FORMAT "%lx"
+#elif defined(HAVE_LONG_LONG_INT_64)
+#define UINT64X_FORMAT "%llx"
+#endif
+
 /*
  * The following structure along with BMTIDBuffer are used to buffer
  * words for tids * during index create -- bmbuild().
@@ -655,7 +661,7 @@ updatesetbit_inpage(Relation rel, uint64 tidnum,
 		}
 	}
 
-	if(!found)
+	if (!found)
 		elog(ERROR, "bitmap word uninitialized");
 
 	Assert (wordNo <= bitmapOpaque->bm_hrl_words_used);
@@ -979,7 +985,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 
 #ifdef DEBUG_BMI
 	_debug_view_2(buf, "[mergewords] BEGIN");
-	elog(NOTICE, "lastWordFill = %d, last_tid = 0x%llx",
+	elog(NOTICE, "lastWordFill = %d, last_tid = 0x" UINT64X_FORMAT,
 		 lastWordFill, last_tid);
 #endif
 
@@ -1012,7 +1018,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 		buf->last_tid = last_tid;
 
 #ifdef DEBUG_BMI
-		_debug_view_2(buf,"[mergewords] END 1");
+		_debug_view_2(buf, "[mergewords] END 1");
 #endif
 		return bytes_used;
 	}
@@ -1037,7 +1043,7 @@ mergewords(BMTIDBuffer *buf, bool lastWordFill)
 			buf->last_tid = last_tid;
 
 #ifdef DEBUG_BMI
-			_debug_view_2(buf,"[mergewords] END 2");
+			_debug_view_2(buf, "[mergewords] END 2");
 #endif
 			return bytes_used;
 		}
@@ -1175,9 +1181,9 @@ _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
 									false, isFirst);
 
 #ifdef DEBUG_BMI
-		elog(NOTICE,"[_bitmap_write_new_bitmapwords] CP1 (+=) : "
+		elog(NOTICE, "[_bitmap_write_new_bitmapwords] CP1 (+=) : "
 			 "buf->start_wordno = %d , "
-			 "words_written = %llu",
+			 "words_written = " UINT64_FORMAT,
 			 buf->start_wordno, words_written);
 #endif
 		buf->start_wordno += words_written;
@@ -1225,10 +1231,11 @@ _bitmap_write_new_bitmapwords(Relation rel, Buffer vmiBuffer,
 								isFirst);
 	}
 #ifdef DEBUG_BMI
-		elog(NOTICE,"[_bitmap_write_new_bitmapwords] CP2 (+=) : buf->start_wordno = %d, words_written = %llu"
-			 "\n\tvmi->bm_last_setbit = %llu"
-			 "\n\tvmi->bm_last_tid_location = %llu",
-			 buf->start_wordno,words_written,
+		elog(NOTICE, "[_bitmap_write_new_bitmapwords] CP2 (+=) : "
+			 "buf->start_wordno = %d, words_written = " UINT64_FORMAT
+			 "\n\tvmi->bm_last_setbit = " UINT64_FORMAT
+			 "\n\tvmi->bm_last_tid_location = " UINT64_FORMAT,
+			 buf->start_wordno, words_written,
 			 vmi->bm_last_setbit,
 			 vmi->bm_last_tid_location);
 #endif
@@ -1475,7 +1482,7 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 	BMTidBuildBuf		*tids = state->bm_tidLocsBuffer;
 
 #ifdef DEBUG_BMI
-	_debug_view_1(tids,"CP1");
+	_debug_view_1(tids, "CP1");
 #endif
 	/* If we surpass maintenance_work_mem, free some space from the buffer */
 	if (tids->byte_size >= maintenance_work_mem * 1024L)
@@ -1485,8 +1492,8 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 	 * tids is lazily initialized. If we do not have a current VMI block
 	 * buffer, initialize one.
 	 */
-	if(!BlockNumberIsValid(tids->max_vmi_block) ||
-	   tids->max_vmi_block < vmi_block)
+	if (!BlockNumberIsValid(tids->max_vmi_block) ||
+	    tids->max_vmi_block < vmi_block)
 	{
 		/*
 		 * XXX: We're currently not including the size of this data structure
@@ -1511,7 +1518,7 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 		foreach(cell, tids->vmi_blocks)
 		{
 			BMTIDVMIBuffer *tmp = lfirst(cell);
-			if(tmp->vmi_block == vmi_block)
+			if (tmp->vmi_block == vmi_block)
 			{
 				vmi_buf = tmp;
 				break;
@@ -1540,8 +1547,8 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 		buf = (BMTIDBuffer *) palloc0(sizeof(BMTIDBuffer));
 
 #ifdef DEBUG_BMI
-		elog(NOTICE,"[buf_add_tid] create new buf - CP1"
-			 "\n\tlast_tid = 0x%llx"
+		elog(NOTICE, "[buf_add_tid] create new buf - CP1"
+			 "\n\tlast_tid = 0x" UINT64X_FORMAT
 			 "\n\tlast_compword = %u"
 			 "\n\tlast_word = %d",
 			 buf->last_tid,
@@ -1555,8 +1562,8 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 
 		buf->last_tid = vmi->bm_last_setbit;
 #ifdef DEBUG_BMI
-		elog(NOTICE,"[buf_add_tid] create new buf - CP1.1"
-			 "\n\tlast_tid = 0x%llx"
+		elog(NOTICE, "[buf_add_tid] create new buf - CP1.1"
+			 "\n\tlast_tid = 0x" UINT64X_FORMAT
 			 "\n\tlast_compword = %u"
 			 "\n\tlast_word = %d",
 			 buf->last_tid,
@@ -1565,8 +1572,8 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 #endif
 		buf->last_compword = vmi->bm_last_compword;
 #ifdef DEBUG_BMI
-		elog(NOTICE,"[buf_add_tid] create new buf - CP1.2"
-			 "\n\tlast_tid = 0x%llx"
+		elog(NOTICE, "[buf_add_tid] create new buf - CP1.2"
+			 "\n\tlast_tid = 0x" UINT64X_FORMAT
 			 "\n\tlast_compword = %u"
 			 "\n\tlast_word = %d",
 			 buf->last_tid,
@@ -1577,8 +1584,8 @@ buf_add_tid(Relation rel, uint64 tidnum, BMBuildState *state,
 		buf->is_last_compword_fill = BM_LAST_COMPWORD_IS_FILL(vmi);
 
 #ifdef DEBUG_BMI
-		elog(NOTICE,"[buf_add_tid] create new buf - CP2"
-			 "\n\tlast_tid = 0x%llx"
+		elog(NOTICE, "[buf_add_tid] create new buf - CP2"
+			 "\n\tlast_tid = 0x" UINT64X_FORMAT
 			 "\n\tlast_compword = %u"
 			 "\n\tlast_word = %d",
 			 buf->last_tid,
@@ -1632,12 +1639,12 @@ hot_buffer_flush(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
 			switch (buf->hot_buffer[i])
 			{
 				case LITERAL_ALL_ONE:
-					buf->last_word = BM_MAKE_FILL_WORD(1,1);
+					buf->last_word = BM_MAKE_FILL_WORD(1, 1);
 					buf->last_tid = word_last_tid;
 					bytes_used += mergewords(buf, true);
 					break;
 				case LITERAL_ALL_ZERO:
-					buf->last_word = BM_MAKE_FILL_WORD(0,1);
+					buf->last_word = BM_MAKE_FILL_WORD(0, 1);
 					buf->last_tid = word_last_tid;
 					bytes_used += mergewords(buf, true);
 					break;
@@ -1949,7 +1956,7 @@ buf_extend(BMTIDBuffer *buf)
 	elog(NOTICE, "[buf_extend] not large enough");
 #endif
 
-	if(buf->num_cwords == 0)
+	if (buf->num_cwords == 0)
 	{
 		size = BUF_INIT_WORDS;
 		buf->cwords = (BM_WORD *) palloc0(BUF_INIT_WORDS * sizeof(BM_WORD));
@@ -1985,7 +1992,7 @@ buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
 	uint16 bytes_freed=0;
 
 #ifdef DEBUG_BMI
-	  elog(NOTICE,"[buf_free_mem] BEGIN");
+	  elog(NOTICE, "[buf_free_mem] BEGIN");
 #endif
 
 	/* flush hot_buffer to BMTIDBuffer */
@@ -1998,7 +2005,7 @@ buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
 		return 0;
 
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[buf_free_mem] buf->num_cwords != 0");
+	elog(NOTICE, "[buf_free_mem] buf->num_cwords != 0");
 #endif
 
 	vmibuf = _bitmap_getbuf(rel, vmi_block, BM_WRITE);
@@ -2008,11 +2015,11 @@ buf_free_mem(Relation rel, BMTIDBuffer *buf, BlockNumber vmi_block,
 	_bitmap_relbuf(vmibuf);
 
 #ifdef DEBUG_BMI
-	_debug_view_2(buf,"[buf_free_mem] END");
+	_debug_view_2(buf, "[buf_free_mem] END");
 #endif
 	bytes_freed += _bitmap_free_tidbuf(buf);
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[buf_free_mem] END , bytes_freed ==> %u", bytes_freed);
+	elog(NOTICE, "[buf_free_mem] END , bytes_freed ==> %u", bytes_freed);
 #endif
 	return bytes_freed;
 }
@@ -2037,7 +2044,7 @@ buf_make_space(Relation rel, BMTidBuildBuf *locbuf, bool use_wal)
 		BMTIDVMIBuffer *vmi_buf = (BMTIDVMIBuffer *) lfirst(cell);
 		BlockNumber vmi_block = vmi_buf->vmi_block;
 
-		for(i = 0; i < BM_MAX_VMI_PER_PAGE; i++)
+		for (i = 0; i < BM_MAX_VMI_PER_PAGE; i++)
 		{
 			BMTIDBuffer *buf = (BMTIDBuffer *) vmi_buf->bufs[i];
 			OffsetNumber off;
@@ -2201,7 +2208,7 @@ _bitmap_write_alltids(Relation rel, BMTidBuildBuf *tids, bool use_wal)
 		BMTIDVMIBuffer *vmi_buf = (BMTIDVMIBuffer *) lfirst(cell);
 		BlockNumber vmi_block = vmi_buf->vmi_block;
 
-		for(i = 0; i < BM_MAX_VMI_PER_PAGE; i++)
+		for (i = 0; i < BM_MAX_VMI_PER_PAGE; i++)
 		{
 			BMTIDBuffer *buf = (BMTIDBuffer *) vmi_buf->bufs[i];
 			OffsetNumber off;
@@ -2258,8 +2265,8 @@ build_inserttuple(Relation index, uint64 tidnum,
 	bool allNulls = true;
 
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[build_inserttuple] BEGIN"
-		 "\n\t- tidnum = %llu"
+	elog(NOTICE, "[build_inserttuple] BEGIN"
+		 "\n\t- tidnum = " UINT64_FORMAT
 		 "\n\t- ht_ctid = %08x:%04x"
 		 "\n\t- attdata = %p"
 		 "\n\t- nulls = %p",
@@ -2382,7 +2389,7 @@ build_inserttuple(Relation index, uint64 tidnum,
 	buf_add_tid(index, tidnum, state, vmiid.block, vmiid.offset);
 	_bitmap_wrtbuf(metabuf);
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[build_inserttuple] END");
+	elog(NOTICE, "[build_inserttuple] END");
 #endif
 }
 
@@ -2479,7 +2486,7 @@ _bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, Datum *attdata,
 {
 	uint64 tidOffset; /* Tuple ID offset */
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[_bitmap_buildinsert] BEGIN");
+	elog(NOTICE, "[_bitmap_buildinsert] BEGIN");
 #endif
 
 	Assert(ItemPointerGetOffsetNumber(&ht_ctid) <= BM_MAX_HTUP_PER_PAGE);
@@ -2490,7 +2497,7 @@ _bitmap_buildinsert(Relation index, ItemPointerData ht_ctid, Datum *attdata,
 	build_inserttuple(index, tidOffset, ht_ctid, attdata, nulls, state);
 
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[_bitmap_buildinsert] END");
+	elog(NOTICE, "[_bitmap_buildinsert] END");
 #endif
 }
 
@@ -2581,7 +2588,7 @@ void _debug_view_1(BMTidBuildBuf *x, const char *msg)
 {
 	ListCell* c;
 	int i=0;
-	elog(NOTICE,"[_debug_view_BMTidBuildBuf] %s"
+	elog(NOTICE, "[_debug_view_BMTidBuildBuf] %s"
 		 "\n\tbyte_size = %u"
 		 "\n\tmax_vmi_block = %u"
 		 "\n\t\tvmi_blocks:length = %d",
@@ -2589,7 +2596,7 @@ void _debug_view_1(BMTidBuildBuf *x, const char *msg)
 		 x->byte_size,
 		 x->max_vmi_block,
 		 list_length(x->vmi_blocks));
-	foreach(c,x->vmi_blocks) {
+	foreach(c, x->vmi_blocks) {
 		i++;
 		elog(NOTICE, "cell %d = %p", i, lfirst(c));
 	}
@@ -2598,7 +2605,7 @@ void _debug_view_1(BMTidBuildBuf *x, const char *msg)
 void _debug_view_2(BMTIDBuffer *x, const char *msg)
 {
 	int i;
-	elog(NOTICE,"[_debug_view_BMTIDBuffer] %s"
+	elog(NOTICE, "[_debug_view_BMTIDBuffer] %s"
 		 "\n\tlast_compword = %04x"
 		 "\n\tlast_word = %04x"
 		 "\n\tis_last_compword_fill = %d"
@@ -2622,8 +2629,8 @@ void _debug_view_2(BMTIDBuffer *x, const char *msg)
 		 x->curword,
 		 x->num_cwords,
 		 x->start_wordno,
-		 x->hwords[0],x->hwords[1],x->hwords[2],x->hwords[3],
-		 x->cwords[0],x->cwords[1],x->cwords[2],x->cwords[3],
+		 x->hwords[0], x->hwords[1], x->hwords[2], x->hwords[3],
+		 x->cwords[0], x->cwords[1], x->cwords[2], x->cwords[3],
 		 (unsigned long)x->hot_buffer_block,
 		 x->hot_buffer_count,
 		 BM_INT_GET_BLOCKNO(x->hot_buffer_start_tid),

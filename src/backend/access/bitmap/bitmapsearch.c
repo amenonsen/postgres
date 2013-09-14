@@ -348,7 +348,7 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 	so = (BMScanOpaque) scan->opaque;
 
 	/* allocate space and initialize values for so->bm_currPos */
-	if(so->bm_currPos == NULL)
+	if (so->bm_currPos == NULL)
 		so->bm_currPos = (BMScanPosition) palloc0(sizeof(BMScanPositionData));
 
 	scanPos = so->bm_currPos;
@@ -386,7 +386,6 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 	else
 	{
 		Relation		lovHeap, lovIndex;
-		TupleDesc		indexTupDesc;
 		ScanKey			scanKeys;
 		IndexScanDesc	scanDesc;
 		BMVMIID			vmiid;
@@ -401,8 +400,6 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		 */
 		_bitmap_open_lov_heapandindex(metapage, &lovHeap, &lovIndex,
 									  AccessShareLock);
-
-		indexTupDesc = RelationGetDescr(lovIndex);
 
 		scanKeys = palloc0(scan->numberOfKeys * sizeof(ScanKeyData));
 		for (keyNo = 0; keyNo < scan->numberOfKeys; keyNo++)

@@ -125,8 +125,8 @@ _bitmap_init_bitmappage(Buffer buf)
     /* If the buffer page is new, we initialise the special space of the page
      * with the the "opaque" structure of the index page. The second argument of
      * PageInit is the sice of the page, the third one of the special area */
-    if(PageIsNew(page))
-	PageInit(page, BufferGetPageSize(buf), sizeof(BMPageOpaqueData));
+    if (PageIsNew(page))
+		PageInit(page, BufferGetPageSize(buf), sizeof(BMPageOpaqueData));
 
     /* Reset all the values (even if the page is not new) */
     opaque = (BMPageOpaque) PageGetSpecialPointer(page);
@@ -300,7 +300,7 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate,
 
 	/* initialize HOT prebuffer data */
 #ifdef DEBUG_BMI
-	elog(NOTICE,"-[_bitmap_init_buildstate]--------- CP 0");
+	elog(NOTICE, "-[_bitmap_init_buildstate]--------- CP 0");
 #endif
 	bmstate->hot_prebuffer_block = InvalidBlockNumber;
 #if 0
@@ -308,17 +308,17 @@ _bitmap_init_buildstate(Relation index, BMBuildState *bmstate,
 #else
 	{ /* misteriously, MemSet segfaults... :( */
 		int i;
-		for(i = 0; i < BM_MAX_HTUP_PER_PAGE; i++) {
+		for (i = 0; i < BM_MAX_HTUP_PER_PAGE; i++) {
 			bmstate->hot_prebuffer_tdn[i] = (uint64) 0;
 #ifdef DEBUG_BMI
-			elog(NOTICE,"[_bitmap_init_buildstate]: i == %d",i);
+			elog(NOTICE, "[_bitmap_init_buildstate]: i == %d", i);
 #endif
 		}
     }
 #endif
 	bmstate->hot_prebuffer_count = 0;
 #ifdef DEBUG_BMI
-	elog(NOTICE,"-[_bitmap_init_buildstate]--------- CP 99");
+	elog(NOTICE, "-[_bitmap_init_buildstate]--------- CP 99");
 #endif
 }
 
@@ -334,13 +334,13 @@ _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate,
 	BMTidBuildBuf *tidLocsBuffer = bmstate->bm_tidLocsBuffer;
 
 #ifdef DEBUG_BMI
-	elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- BEGIN");
+	elog(NOTICE, "-----[_bitmap_cleanup_buildstate]----- BEGIN");
 #endif
 #ifdef FIX_GC_3
-	build_inserttuple_flush(index,bmstate);
+	build_inserttuple_flush(index, bmstate);
 #endif
 #ifdef DEBUG_BMI
-	elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- CP1");
+	elog(NOTICE, "-----[_bitmap_cleanup_buildstate]----- CP1");
 #endif
 
 	_bitmap_write_alltids(index, tidLocsBuffer, bmstate->use_wal);
@@ -370,10 +370,10 @@ _bitmap_cleanup_buildstate(Relation index, BMBuildState *bmstate,
 		pfree(bmstate->bm_lov_scanKeys);
 	}
 
-	_bitmap_close_lov_heapandindex(bmstate->bm_lov_heap,bmstate->bm_lov_index,
+	_bitmap_close_lov_heapandindex(bmstate->bm_lov_heap, bmstate->bm_lov_index,
 								   RowExclusiveLock);
 #ifdef DEBUG_BMI
-	elog(NOTICE,"-----[_bitmap_cleanup_buildstate]----- END");
+	elog(NOTICE, "-----[_bitmap_cleanup_buildstate]----- END");
 #endif
 }
 
@@ -520,7 +520,7 @@ build_hash_key(const void *key, Size keysize)
 	int			 i;
 	uint32		 hashkey = 0;
 
-	for(i = 0; i < cur_bmbuild->natts; i++)
+	for (i = 0; i < cur_bmbuild->natts; i++)
 	{
 		/* rotate hashkey left 1 bit at each step */
 		hashkey = (hashkey << 1) | ((hashkey & 0x80000000) ? 1 : 0);
@@ -546,7 +546,7 @@ build_match_key(const void *key1, const void *key2, Size keysize)
 	MemoryContextReset(cur_bmbuild->tmpcxt);
 	old = MemoryContextSwitchTo(cur_bmbuild->tmpcxt);
 
-	for(i = 0; i < cur_bmbuild->natts; i++)
+	for (i = 0; i < cur_bmbuild->natts; i++)
 	{
 		Datum attr1 = ((Datum *)key1)[i];
 		Datum attr2 = ((Datum *)key2)[i];

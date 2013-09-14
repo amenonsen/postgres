@@ -28,8 +28,8 @@
 #include "utils/memutils.h"
 #include "storage/bufmgr.h" /* for buffer manager functions */
 
-static void bmbuildCallback(Relation index,	HeapTuple htup, Datum *attdata,
-							bool *nulls, bool tupleIsAlive,	void *state);
+static void bmbuildCallback(Relation index, HeapTuple htup, Datum *attdata,
+							bool *nulls, bool tupleIsAlive, void *state);
 static void cleanup_pos(BMScanPosition pos);
 
 /*
@@ -44,7 +44,6 @@ bmbuild(PG_FUNCTION_ARGS)
     double				 reltuples;
     BMBuildState		 bmstate;
     IndexBuildResult	*result;
-    TupleDesc			 tupDesc;
 
     /* We expect this to be called exactly once. */
     if (RelationGetNumberOfBlocks(index) != 0)
@@ -52,9 +51,6 @@ bmbuild(PG_FUNCTION_ARGS)
 				 (errcode(ERRCODE_INDEX_CORRUPTED),
 				  errmsg("index \"%s\" already contains data",
 						 RelationGetRelationName(index))));
-
-    /* Get the index tuple descriptor */
-    tupDesc = RelationGetDescr(index);
 
     /* Initialize the bitmap index by preparing the meta page and inserting the
 	 * first VMI */
@@ -69,12 +65,12 @@ bmbuild(PG_FUNCTION_ARGS)
      * structure
      */
 #ifdef DEBUG_BMI
-    elog(NOTICE,"[bmbuild] IndexBuildHeapScan PRE");
+    elog(NOTICE, "[bmbuild] IndexBuildHeapScan PRE");
 #endif
     reltuples = IndexBuildHeapScan(heap, index, indexInfo, true,
 		bmbuildCallback, (void *)&bmstate);
 #ifdef DEBUG_BMI
-    elog(NOTICE,"[bmbuild] IndexBuildHeapScan POST");
+    elog(NOTICE, "[bmbuild] IndexBuildHeapScan POST");
 #endif
 
 	/* clean up the build state */
@@ -213,7 +209,6 @@ bmbeginscan(PG_FUNCTION_ARGS)
 	int			norderbys = PG_GETARG_INT32(2);
 	IndexScanDesc scan;
 
-	/* get the scan */
 	scan = RelationGetIndexScan(rel, nkeys, norderbys);
 
 	PG_RETURN_POINTER(scan);
@@ -486,7 +481,7 @@ bmvacuumcleanup(PG_FUNCTION_ARGS)
 	IndexBulkDeleteResult *stats =
 			(IndexBulkDeleteResult *) PG_GETARG_POINTER(1);
 
-	if(stats == NULL)
+	if (stats == NULL)
 		stats = (IndexBulkDeleteResult *)palloc0(sizeof(IndexBulkDeleteResult));
 
 	/* update statistics */
@@ -504,19 +499,19 @@ bmvacuumcleanup(PG_FUNCTION_ARGS)
  */
 static void
 bmbuildCallback(Relation index, HeapTuple htup, Datum *attdata,
-				bool *nulls, bool tupleIsAlive,	void *state)
+				bool *nulls, bool tupleIsAlive, void *state)
 {
     BMBuildState *bstate = (BMBuildState *) state;
 
 #ifdef DEBUG_BMI
-    elog(NOTICE,"[bmbuildCallback] BEGIN");
+    elog(NOTICE, "[bmbuildCallback] BEGIN");
 #endif
 
     _bitmap_buildinsert(index, htup->t_self, attdata, nulls, bstate);
     ++bstate->ituples;
 
 #ifdef DEBUG_BMI
-    elog(NOTICE,"[bmbuildCallback] END");
+    elog(NOTICE, "[bmbuildCallback] END");
 #endif
 }
 

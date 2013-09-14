@@ -104,8 +104,8 @@ _bitmap_formitem(uint64 currTidNumber)
     BMVectorMetaItem vmi = (BMVectorMetaItem) palloc(BM_VECTOR_META_ITEM_SIZE);
 
 #ifdef DEBUG_BMI
-	elog(NOTICE,"[_bitmap_formitem] BEGIN"
-		 "\n\tcurrTidNumber = %llu",
+	elog(NOTICE, "[_bitmap_formitem] BEGIN"
+		 "\n\tcurrTidNumber = " UINT64_FORMAT,
 		 currTidNumber
 		);
 #endif
@@ -143,7 +143,7 @@ _bitmap_formitem(uint64 currTidNumber)
     }
 
 #ifdef DEBUG_BMI
-    elog(NOTICE,"[_bitmap_formitem] END");
+    elog(NOTICE, "[_bitmap_formitem] END");
 #endif
     return vmi;
 }
@@ -362,7 +362,7 @@ _bitmap_findnexttids(BMBatchWords *words, BMIterateResult *result,
 		}
 		else
 		{
-			if(oldScanPos == 0)
+			if (oldScanPos == 0)
 				oldScanPos = BM_WORD_SIZE + 1;
 
 			while (oldScanPos != 0 && result->numOfTids < maxTids)
@@ -693,7 +693,7 @@ _bitmap_findnextword(BMBatchWords *words, uint32 nextReadNo)
 
 		if (CUR_WORD_IS_FILL(words))
 		{
-			if(FILL_LENGTH(word) <= (nextReadNo - words->nwordsread - 1))
+			if (FILL_LENGTH(word) <= (nextReadNo - words->nwordsread - 1))
 			{
 				words->nwordsread += FILL_LENGTH(word);
 				words->startNo++;
@@ -1621,13 +1621,13 @@ vacuum_fill_word(bmvacstate *state, bmVacType vactype)
 			}
 			return;
 		}
-		else if(start_setbit)
+		else if (start_setbit)
 		{
 			fill_matched(state, start_setbit, state->cur_bitpos - 1);
 		}
-		else if(state->start_reaped)
+		else if (state->start_reaped)
 		{
-			fill_reaped(state, state->start_reaped,	state->cur_bitpos - 1);
+			fill_reaped(state, state->start_reaped, state->cur_bitpos - 1);
 		}
 
 		/*
@@ -1810,7 +1810,7 @@ check_page_space(bmvacstate *state)
 		else
 		{
 			/*
-			 * We can't do this the easy way,time to free some up. We take
+			 * We can't do this the easy way, time to free some up. We take
 			 * BM_WORD_SIZE number of words at a time, because it's
 			 * convenient for managing the header: we just need to copy a
 			 * single word.
