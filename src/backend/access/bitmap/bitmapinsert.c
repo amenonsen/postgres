@@ -2544,9 +2544,7 @@ _bitmap_doinsert(Relation rel, ItemPointerData ht_ctid, Datum *attdata,
 		get_sort_group_operators(tupDesc->attrs[attno]->atttypid, false, true,
 								 false, NULL, &eq_opr, NULL, NULL);
 		opfuncid = get_opcode(eq_opr);
-		scanKey = (ScanKey) (((char *)scanKeys) + attno * sizeof(ScanKeyData));
-		/* XXX (Daniel Bausch, 2012-09-05): isn't the previous line equivalent
-		 * to 'scanKey = &scanKeys[attno];' ? */
+		scanKey = &scanKeys[attno];
 
 		ScanKeyEntryInitialize(scanKey, SK_ISNULL, attno + 1,
 							   BTEqualStrategyNumber, InvalidOid,

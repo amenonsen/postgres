@@ -404,10 +404,7 @@ _bitmap_findbitmaps(IndexScanDesc scan, ScanDirection dir)
 		scanKeys = palloc0(scan->numberOfKeys * sizeof(ScanKeyData));
 		for (keyNo = 0; keyNo < scan->numberOfKeys; keyNo++)
 		{
-			ScanKey	scanKey = (ScanKey) (((char *)scanKeys) +
-										 keyNo * sizeof(ScanKeyData));
-			/* XXX (Daniel Bausch, 2012-09-05): isn't the previous line
-			 * equivalent to 'scanKey = &scanKeys[keyNo];' ? */
+			ScanKey	scanKey = &scanKeys[keyNo];
 
 			elog(NOTICE, "initialize scanKey for attno %d",
 				 scan->keyData[keyNo].sk_attno);
