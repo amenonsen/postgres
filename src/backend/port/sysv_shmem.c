@@ -27,11 +27,15 @@
 #ifdef HAVE_SYS_SHM_H
 #include <sys/shm.h>
 #endif
+#ifdef MAP_HUGETLB
+#include <dirent.h>
+#endif
 
 #include "miscadmin.h"
 #include "portability/mem.h"
 #include "storage/ipc.h"
 #include "storage/pg_shmem.h"
+#include "utils/guc.h"
 
 
 typedef key_t IpcMemoryKey;		/* shared memory key passed to shmget(2) */
@@ -318,6 +322,151 @@ PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2)
 }
 
 
+#ifdef MAP_HUGETLB
+#define HUGE_PAGE_INFO_DIR  "/sys/kernel/mm/hugepages"
+
+/*
+ * long InternalGetFreeHugepagesCount(const char *name)
+ *
+ * Returns the number of free hugepages of a given size, as reported by
+ * /sys/kernel/mm/hugepages/<name>/free_hugepages. Will fail (return -1)
+ * if the file could not be opened or 0 if no free pages are available.
+ */
+static long
+InternalGetFreeHugepagesCount(const char *name)
+{
+	int fd;
+	char buff[1024];
+	size_t len;
+	long result;
+	char *ptr;
+
+	len = snprintf(buff, 1024, "%s/%s/free_hugepages", HUGE_PAGE_INFO_DIR, name);
+	if (len == 1024)
+	{
+		ereport(huge_tlb_pages == HUGE_TLB_TRY ? DEBUG1 : WARNING,
+				(errmsg("Filename %s/%s/free_hugepages is too long", HUGE_PAGE_INFO_DIR, name),
+				 errcontext("while checking hugepage size")));
+		return -1;
+	}
+
+	fd = open(buff, O_RDONLY);
+	if (fd <= 0)
+	{
+		ereport(huge_tlb_pages == HUGE_TLB_TRY ? DEBUG1 : WARNING,
+				(errmsg("Could not open file %s: %s", buff, strerror(errno)),
+				 errcontext("while checking hugepage size")));
+		return -1;
+	}
+
+	len = read(fd, buff, 1024);
+	if (len <= 0)
+	{
+		ereport(huge_tlb_pages == HUGE_TLB_TRY ? DEBUG1 : WARNING,
+				(errmsg("Error reading from file %s: %s", buff, strerror(errno)),
+				 errcontext("while checking hugepage size")));
+		close(fd);
+		return -1;
+	}
+	close(fd);
+
+	/*
+	 * free_hugepages should contain the number of free hugepages of a
+	 * given size. If we somehow read 1024 bytes from it above (which
+	 * should never happen), we check 1023 bytes and ignore the rest.
+	 */
+	if (len == 1024)
+		len = 1023;
+
+	buff[len] = 0;
+
+	result = strtol(buff, &ptr, 10);
+
+	if (ptr == NULL)
+	{
+		ereport(huge_tlb_pages == HUGE_TLB_TRY ? DEBUG1 : WARNING,
+				(errmsg("Could not convert contents of file %s/%s/free_hugepages to number", HUGE_PAGE_INFO_DIR, name),
+				 errcontext("while checking hugepage size")));
+		return -1;
+	}
+
+	return result;
+}
+
+/*
+ * long InternalGetHugepageSize()
+ *
+ * Returns the smallest valid hugepage size by reading the contents of
+ * the /sys/kernel/mm/hugepages directory. Will fail (return -1) if the
+ * directory could not be opened or no valid page sizes are available.
+ */
+static long
+InternalGetHugepageSize()
+{
+	struct dirent *ent;
+	DIR *dir = opendir(HUGE_PAGE_INFO_DIR);
+	long smallest_size = -1, size;
+	bool valid_size_found = false;
+	char *ptr;
+
+	if (dir == NULL)
+	{
+		ereport(huge_tlb_pages == HUGE_TLB_TRY ? DEBUG1 : WARNING,
+				(errmsg("Could not open directory %s: %s", HUGE_PAGE_INFO_DIR, strerror(errno)),
+				 errcontext("while checking hugepage size")));
+		return -1;
+	}
+
+	/*
+	 * Linux supports multiple hugepage sizes if the hardware
+	 * supports it; for each possible size there will be a
+	 * directory in /sys/kernel/mm/hugepages consisting of the
+	 * string hugepages- and the size of the page, e.g. on x86_64:
+	 * hugepages-2048kB
+	 */
+	while((ent = readdir(dir)) != NULL)
+	{
+		if (strncmp(ent->d_name, "hugepages-", 10) == 0)
+		{
+			size = strtol(ent->d_name + 10, &ptr, 10);
+			if (ptr == NULL)
+			{
+				continue;
+			}
+
+			if (strcmp(ptr, "kB") == 0)
+			{
+				size *= 1024;
+			}
+
+			if ((smallest_size == -1 || size < smallest_size)) {
+				valid_size_found = true;
+				if(InternalGetFreeHugepagesCount(ent->d_name) > 0)
+					smallest_size = size;
+			}
+		}
+	}
+
+	closedir(dir);
+
+	if (smallest_size == -1)
+	{
+		if(valid_size_found)
+			ereport(huge_tlb_pages == HUGE_TLB_TRY ? DEBUG1 : WARNING,
+					(errmsg("No free hugepages"),
+					 errhint("There were no free huge pages of any size")));
+		else
+			ereport(huge_tlb_pages == HUGE_TLB_TRY ? DEBUG1 : WARNING,
+				(errmsg("Could not find a valid hugepage size"),
+				 errhint("This error usually means that either CONFIG_HUGETLB_PAGE "
+						 "is not in kernel or that your architecture does not "
+						 "support hugepages or you did not configure hugepages")));
+	}
+
+	return smallest_size;
+}
+#endif
+
 /*
  * PGSharedMemoryCreate
  *
@@ -367,7 +516,19 @@ PGSharedMemoryCreate(Size size, bool makePrivate, int port)
 	 */
 #ifndef EXEC_BACKEND
 	{
-		long		pagesize = sysconf(_SC_PAGE_SIZE);
+		long		pagesize = 0;
+		int			flags = PG_MMAP_FLAGS;
+
+#ifdef MAP_HUGETLB
+		if (huge_tlb_pages == HUGE_TLB_ON || huge_tlb_pages == HUGE_TLB_TRY)
+		{
+			flags |= MAP_HUGETLB;
+			pagesize = InternalGetHugepageSize();
+		}
+#endif
+
+		if (pagesize <= 0)
+			pagesize = sysconf(_SC_PAGE_SIZE);
 
 		/*
 		 * Ensure request size is a multiple of pagesize.
@@ -386,8 +547,22 @@ PGSharedMemoryCreate(Size size, bool makePrivate, int port)
 		 * out to be false, we might need to add a run-time test here and do
 		 * this only if the running kernel supports it.
 		 */
-		AnonymousShmem = mmap(NULL, size, PROT_READ | PROT_WRITE, PG_MMAP_FLAGS,
-							  -1, 0);
+
+		AnonymousShmem = mmap(NULL, size, PROT_READ|PROT_WRITE, flags, -1, 0);
+
+#ifdef MAP_HUGETLB
+		/*
+		 * If huge_tlb_pages="try" and the allocation fails, we retry
+		 * without the MAP_HUGETLB flag.
+		 */
+
+		if (AnonymousShmem == MAP_FAILED && huge_tlb_pages == HUGE_TLB_TRY)
+		{
+			AnonymousShmem = mmap(NULL, size, PROT_READ|PROT_WRITE,
+								  PG_MMAP_FLAGS, -1, 0);
+		}
+#endif
+
 		if (AnonymousShmem == MAP_FAILED)
 			ereport(FATAL,
 					(errmsg("could not map anonymous shared memory: %m"),
