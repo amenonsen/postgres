@@ -1,0 +1,5 @@
+# fastbloat extension
+comment = 'calculate bloat statistics without a full-table scan'
+default_version = '1.0'
+module_pathname = '$libdir/fastbloat'
+relocatable = true
