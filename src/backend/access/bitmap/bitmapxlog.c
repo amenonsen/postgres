@@ -660,11 +660,3 @@ bitmap_xlog_cleanup(void)
 	}
 	incomplete_actions = NIL;
 }
-
-bool
-bitmap_safe_restartpoint(void)
-{
-	if (incomplete_actions)
-		return false;
-	return true;
-}

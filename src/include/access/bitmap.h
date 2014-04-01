@@ -848,6 +848,5 @@ extern void bitmap_redo(XLogRecPtr lsn, XLogRecord *record);
 extern void bitmap_desc(StringInfo buf, uint8 xl_info, char *rec);
 extern void bitmap_xlog_startup(void);
 extern void bitmap_xlog_cleanup(void);
-extern bool bitmap_safe_restartpoint(void);
 
 #endif
