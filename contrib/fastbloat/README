@@ -1,0 +1,61 @@
+fastbloat
+---------
+
+This extension attempts to measure table bloat without incurring the
+cost of a full-table scan.
+
+The pgstattuple extension performs a full-table scan and returns an
+exact count of live and dead tuples (and their sizes) and free space.
+This code returns the same dead tuple and free space statistics along
+with an estimate for the number and size of live tuples.
+
+It does this by skipping pages that have only visible tuples according
+to the visibility map (if a page has the corresponding VM bit set, then
+it contains no dead tuples). For such pages, it derives the free space
+value from the free space map, and assumes that the rest of the space
+on the page is taken up by live tuples.
+
+For pages that cannot be skipped, it scans each tuple, recording its
+presence and size in the appropriate counters, and adding up the free
+space on the page. At the end, it estimates the total number of live
+tuples based on the number of pages and tuples scanned (in the same
+way that VACUUM estimates pg_class.reltuples).
+
+Here is an example comparing the output of fastbloat and pgstattuple for
+the same table:
+
+ams=# select * from fastbloat('x');
+ table_len  | scanned_percent | approx_tuple_count | approx_tuple_len | approx_tuple_percent | dead_tuple_count | dead_tuple_len | dead_tuple_percent | free_space | free_percent 
+------------+-----------------+--------------------+------------------+----------------------+------------------+----------------+--------------------+------------+--------------
+ 6714761216 |              17 |           41318301 |       5483815648 |                81.67 |          8681708 |     1111258624 |              16.55 |   80972912 |         1.21
+(1 row)
+
+Time: 639.455 ms
+
+ams=# select * from pgstattuple('x');
+ table_len  | tuple_count | tuple_len  | tuple_percent | dead_tuple_count | dead_tuple_len | dead_tuple_percent | free_space | free_percent 
+------------+-------------+------------+---------------+------------------+----------------+--------------------+------------+--------------
+ 6714761216 |    41318292 | 5288741376 |         78.76 |          8681708 |     1111258624 |              16.55 |   91810372 |         1.37
+(1 row)
+
+Time: 15610.651 ms
+
+In the above figures, table_len is exact (being based only on the number
+of pages), as are dead_tuple_count, dead_tuple_len, dead_tuple_percent,
+free_space, and free_percent.
+
+In the fastbloat output, scanned_percent is the percentage of pages that
+were scanned tuple-by-tuple (the remainder having been skipped, thanks
+to the visibility map). The approximate tuple count is quite close to
+the actual value (as shown by pgstattuple), but the approx_tuple_len
+overestimates the size of live tuples (and thus approx_tuple_percent
+is also higher than pgstattuple's calculation). The larger
+scanned_percent is, the better the estimates are.
+
+fastbloat is several times faster in the example above because it does
+less work (by skipping pages and by not needing to hold content locks
+on buffers as it scans other pages—see the code for details). The less
+bloated the table, the less time it takes; but even in the worst case,
+if all pages have dead tuples, it's marginally faster than pgstattuple.
+
+Author: Abhijit Menon-Sen <ams@2ndQuadrant.com>
