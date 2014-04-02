@@ -5,6 +5,7 @@
 
 CREATE FUNCTION fastbloat(IN relname text,
     OUT table_len BIGINT,		-- physical table length in bytes
+    OUT scanned_percent FLOAT8,		-- what percentage of the table's pages was scanned
     OUT approx_tuple_count BIGINT,		-- estimated number of live tuples
     OUT approx_tuple_len BIGINT,		-- estimated total length in bytes of live tuples
     OUT approx_tuple_percent FLOAT8,	-- live tuples in % (based on estimate)
@@ -18,6 +19,7 @@ LANGUAGE C STRICT;
 
 CREATE FUNCTION fastbloat(IN reloid regclass,
     OUT table_len BIGINT,		-- physical table length in bytes
+    OUT scanned_percent FLOAT8,		-- what percentage of the table's pages was scanned
     OUT approx_tuple_count BIGINT,		-- estimated number of live tuples
     OUT approx_tuple_len BIGINT,		-- estimated total length in bytes of live tuples
     OUT approx_tuple_percent FLOAT8,	-- live tuples in % (based on estimate)

@@ -61,6 +61,8 @@ typedef struct fastbloat_output_type
 	uint64		dead_tuple_count;
 	uint64		dead_tuple_len;
 	uint64		free_space;
+	uint64		total_pages;
+	uint64		scanned_pages;
 } fastbloat_output_type;
 
 static Datum build_output_type(fastbloat_output_type *stat,
@@ -76,7 +78,7 @@ HeapTupleSatisfiesVacuumNoHint(HeapTuple htup, TransactionId OldestXmin);
 static Datum
 build_output_type(fastbloat_output_type *stat, FunctionCallInfo fcinfo)
 {
-#define NCOLUMNS	9
+#define NCOLUMNS	10
 #define NCHARS		32
 
 	HeapTuple	tuple;
@@ -86,6 +88,7 @@ build_output_type(fastbloat_output_type *stat, FunctionCallInfo fcinfo)
 	double		tuple_percent;
 	double		dead_tuple_percent;
 	double		free_percent;	/* free/reusable space in % */
+	double		scanned_percent;
 	TupleDesc	tupdesc;
 	AttInMetadata *attinmeta;
 
@@ -112,10 +115,17 @@ build_output_type(fastbloat_output_type *stat, FunctionCallInfo fcinfo)
 		free_percent = 100.0 * stat->free_space / stat->table_len;
 	}
 
+	scanned_percent = 0.0;
+	if (stat->total_pages != 0)
+	{
+		scanned_percent = 100 * stat->scanned_pages / stat->total_pages;
+	}
+
 	for (i = 0; i < NCOLUMNS; i++)
 		values[i] = values_buf[i];
 	i = 0;
 	snprintf(values[i++], NCHARS, INT64_FORMAT, stat->table_len);
+	snprintf(values[i++], NCHARS, "%.2f", scanned_percent);
 	snprintf(values[i++], NCHARS, INT64_FORMAT, stat->tuple_count);
 	snprintf(values[i++], NCHARS, INT64_FORMAT, stat->tuple_len);
 	snprintf(values[i++], NCHARS, "%.2f", tuple_percent);
@@ -277,8 +287,6 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 			continue;
 		}
 
-		scanned++;
-
 		buf = ReadBufferExtended(rel, MAIN_FORKNUM, blkno,
 								 RBM_NORMAL, bstrategy);
 
@@ -289,6 +297,8 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 			ReleaseBuffer(buf);
 			continue;
 		}
+
+		scanned++;
 
 		stat.free_space += PageGetHeapFreeSpace(page);
 
@@ -350,6 +360,8 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 	stat.table_len = (uint64) nblocks * BLCKSZ;
 	stat.tuple_count = vac_estimate_reltuples(rel, false, nblocks, scanned,
 											  stat.tuple_count);
+	stat.total_pages = nblocks;
+	stat.scanned_pages = scanned;
 
 	if (BufferIsValid(vmbuffer))
 	{
