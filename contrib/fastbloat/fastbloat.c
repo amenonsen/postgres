@@ -1,7 +1,8 @@
 /*
  * contrib/fastbloat/fastbloat.c
  *
- * Copyright (c) 2001,2002	Tatsuo Ishii
+ * Abhijit Menon-Sen <ams@2ndQuadrant.com>
+ * Portions Copyright (c) 2001,2002	Tatsuo Ishii (from pg_stattuple)
  *
  * Permission to use, copy, modify, and distribute this software and
  * its documentation for any purpose, without fee, and without a
@@ -40,7 +41,6 @@
 #include "utils/tqual.h"
 #include "commands/vacuum.h"
 
-
 PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(fastbloat);
@@ -50,33 +50,31 @@ extern Datum fastbloat(PG_FUNCTION_ARGS);
 extern Datum fastbloatbyid(PG_FUNCTION_ARGS);
 
 /*
- * struct fastbloat_type
- *
  * tuple_percent, dead_tuple_percent and free_percent are computable,
  * so not defined here.
  */
-typedef struct fastbloat_type
+typedef struct fastbloat_output_type
 {
 	uint64		table_len;
 	uint64		tuple_count;
 	uint64		tuple_len;
 	uint64		dead_tuple_count;
 	uint64		dead_tuple_len;
-	uint64		free_space;		/* free/reusable space in bytes */
-} fastbloat_type;
+	uint64		free_space;
+} fastbloat_output_type;
 
-static Datum build_fastbloat_type(fastbloat_type *stat,
-					   FunctionCallInfo fcinfo);
+static Datum build_output_type(fastbloat_output_type *stat,
+							   FunctionCallInfo fcinfo);
 static Datum fbstat_relation(Relation rel, FunctionCallInfo fcinfo);
 static Datum fbstat_heap(Relation rel, FunctionCallInfo fcinfo);
 static HTSV_Result
-HeapTupleSatisfiesUs(HeapTuple htup, TransactionId OldestXmin);
+HeapTupleSatisfiesVacuumNoHint(HeapTuple htup, TransactionId OldestXmin);
 
 /*
- * build_fastbloat_type -- build a fastbloat_type tuple
+ * build a fastbloat_output_type tuple
  */
 static Datum
-build_fastbloat_type(fastbloat_type *stat, FunctionCallInfo fcinfo)
+build_output_type(fastbloat_output_type *stat, FunctionCallInfo fcinfo)
 {
 #define NCOLUMNS	9
 #define NCHARS		32
@@ -114,11 +112,6 @@ build_fastbloat_type(fastbloat_type *stat, FunctionCallInfo fcinfo)
 		free_percent = 100.0 * stat->free_space / stat->table_len;
 	}
 
-	/*
-	 * Prepare a values array for constructing the tuple. This should be an
-	 * array of C strings which will be processed later by the appropriate
-	 * "in" functions.
-	 */
 	for (i = 0; i < NCOLUMNS; i++)
 		values[i] = values_buf[i];
 	i = 0;
@@ -132,21 +125,12 @@ build_fastbloat_type(fastbloat_type *stat, FunctionCallInfo fcinfo)
 	snprintf(values[i++], NCHARS, INT64_FORMAT, stat->free_space);
 	snprintf(values[i++], NCHARS, "%.2f", free_percent);
 
-	/* build a tuple */
 	tuple = BuildTupleFromCStrings(attinmeta, values);
 
-	/* make the tuple into a datum */
 	return HeapTupleGetDatum(tuple);
 }
 
-/* ----------
- * fastbloat:
- * returns live/dead tuples info
- *
- * C FUNCTION definition
- * fastbloat(text) returns fastbloat_type
- * see fastbloat.sql for fastbloat_type
- * ----------
+/* Returns a tuple with live/dead tuple statistics for the named table.
  */
 
 Datum
@@ -161,12 +145,14 @@ fastbloat(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to use fastbloat functions"))));
 
-	/* open relation */
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = relation_openrv(relrv, AccessShareLock);
 
 	PG_RETURN_DATUM(fbstat_relation(rel, fcinfo));
 }
+
+/* As above, but takes a reloid instead of a relation name.
+ */
 
 Datum
 fastbloatbyid(PG_FUNCTION_ARGS)
@@ -179,15 +165,17 @@ fastbloatbyid(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to use fastbloat functions"))));
 
-	/* open relation */
 	rel = relation_open(relid, AccessShareLock);
 
 	PG_RETURN_DATUM(fbstat_relation(rel, fcinfo));
 }
 
 /*
- * fbstat_relation
+ * A helper function to reject unsupported relation types. We depend on
+ * the visibility map to decide which pages we can skip, so we can't
+ * support indexes, for example, which don't have a VM.
  */
+
 static Datum
 fbstat_relation(Relation rel, FunctionCallInfo fcinfo)
 {
@@ -207,9 +195,13 @@ fbstat_relation(Relation rel, FunctionCallInfo fcinfo)
 	{
 		case RELKIND_RELATION:
 		case RELKIND_MATVIEW:
-		case RELKIND_TOASTVALUE:
-		case RELKIND_SEQUENCE:
 			return fbstat_heap(rel, fcinfo);
+		case RELKIND_TOASTVALUE:
+			err = "toast value";
+			break;
+		case RELKIND_SEQUENCE:
+			err = "sequence";
+			break;
 		case RELKIND_INDEX:
 			err = "index";
 			break;
@@ -231,12 +223,20 @@ fbstat_relation(Relation rel, FunctionCallInfo fcinfo)
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			 errmsg("\"%s\" (%s) is not supported",
 					RelationGetRelationName(rel), err)));
-	return 0;					/* should not happen */
+	return 0;
 }
 
 /*
- * fbstat_heap -- returns live/dead tuples info in a heap
+ * This function takes an already open relation and scans its pages,
+ * skipping those that have the corresponding visibility map bit set.
+ * For pages we skip, we find the free space from the free space map
+ * and approximate tuple_len on that basis. For the others, we count
+ * the exact number of dead tuples etc.
+ *
+ * This scan is loosely based on vacuumlazy.c:lazy_scan_heap(), but
+ * we do not try to avoid skipping single pages.
  */
+
 static Datum
 fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 {
@@ -245,12 +245,12 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 				blkno;
 	Buffer		vmbuffer = InvalidBuffer;
 	HeapTupleData tuple;
-	fastbloat_type stat = {0};
+	fastbloat_output_type stat = {0};
 	BufferAccessStrategy bstrategy;
 	TransactionId OldestXmin;
 
-	bstrategy = GetAccessStrategy(BAS_BULKREAD);
 	OldestXmin = GetOldestXmin(rel, true);
+	bstrategy = GetAccessStrategy(BAS_BULKREAD);
 
 	scanned = 0;
 	nblocks = RelationGetNumberOfBlocks(rel);
@@ -262,6 +262,12 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 		OffsetNumber offnum,
 					maxoff;
 		Size		freespace;
+
+		/*
+		 * If the page has only visible tuples, then we can find out the
+		 * free space from the FSM and move on. The remainder of space
+		 * on the page (including that used by line pointers)
+		 */
 
 		if (visibilitymap_test(rel, blkno, &vmbuffer))
 		{
@@ -284,12 +290,15 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 			continue;
 		}
 
-		if (PageIsEmpty(page))
-		{
-			stat.free_space += PageGetHeapFreeSpace(page);
-			ReleaseBuffer(buf);
-			continue;
-		}
+		stat.free_space += PageGetHeapFreeSpace(page);
+
+		/*
+		 * Look at each tuple on the page and decide whether it's live
+		 * or dead, then count it and its size. Unlike lazy_scan_heap,
+		 * we can afford to ignore problems and special cases. We also
+		 * do not need to hold a content lock on the buffer because of
+		 * our non-hint-bit-setting copy of HeapTupleSatisfiesVacuum.
+		 */
 
 		maxoff = PageGetMaxOffsetNumber(page);
 
@@ -315,7 +324,7 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 			tuple.t_len = ItemIdGetLength(itemid);
 			tuple.t_tableOid = RelationGetRelid(rel);
 
-			switch (HeapTupleSatisfiesUs(&tuple, OldestXmin))
+			switch (HeapTupleSatisfiesVacuumNoHint(&tuple, OldestXmin))
 			{
 				case HEAPTUPLE_DEAD:
 				case HEAPTUPLE_RECENTLY_DEAD:
@@ -335,8 +344,6 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 			}
 		}
 
-		stat.free_space += PageGetHeapFreeSpace(page);
-
 		ReleaseBuffer(buf);
 	}
 
@@ -352,15 +359,21 @@ fbstat_heap(Relation rel, FunctionCallInfo fcinfo)
 
 	relation_close(rel, AccessShareLock);
 
-	return build_fastbloat_type(&stat, fcinfo);
+	return build_output_type(&stat, fcinfo);
 }
 
-/* This is a copy of HeapTupleSatisfiesVacuum with all the hint-bit
- * setting code removed. See HTSV for comments.
+/*
+ * This is a copy of HeapTupleSatisfiesVacuum with all the hint-bit
+ * setting code removed (and thus, some tests reversed). We use this
+ * so that we don't need to hold any content locks on the buffer while
+ * scanning for dead tuples. (We could use HeapTupleIsSurelyDead(), but
+ * that's unnecessarily conservative.)
+ *
+ * See HTSV for comments.
  */
 
 static HTSV_Result
-HeapTupleSatisfiesUs(HeapTuple htup, TransactionId OldestXmin)
+HeapTupleSatisfiesVacuumNoHint(HeapTuple htup, TransactionId OldestXmin)
 {
 	HeapTupleHeader tuple = htup->t_data;
 	Assert(ItemPointerIsValid(&htup->t_self));
