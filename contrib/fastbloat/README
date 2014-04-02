@@ -58,4 +58,23 @@ on buffers as it scans other pages—see the code for details). The less
 bloated the table, the less time it takes; but even in the worst case,
 if all pages have dead tuples, it's marginally faster than pgstattuple.
 
+ams=# select * from fastbloat('x');
+ table_len  | scanned_percent | approx_tuple_count | approx_tuple_len | approx_tuple_percent | dead_tuple_count | dead_tuple_len | dead_tuple_percent | free_space | free_percent 
+------------+-----------------+--------------------+------------------+----------------------+------------------+----------------+--------------------+------------+--------------
+ 6714761216 |             100 |           20659150 |       2644371200 |                39.38 |         20659142 |     2644370176 |              39.38 | 1203068996 |        17.92
+(1 row)
+
+Time: 8924.511 ms
+
+ams=# select * from pgstattuple('x');
+ table_len  | tuple_count | tuple_len  | tuple_percent | dead_tuple_count | dead_tuple_len | dead_tuple_percent | free_space | free_percent 
+------------+-------------+------------+---------------+------------------+----------------+--------------------+------------+--------------
+ 6714761216 |    20659150 | 2644371200 |         39.38 |         20659142 |     2644370176 |              39.38 | 1203068996 |        17.92
+(1 row)
+
+Time: 13338.712 ms
+
+(Note that the statistics from fastbloat are exact in this case, because
+every page was scanned according to scanned_percent.)
+
 Author: Abhijit Menon-Sen <ams@2ndQuadrant.com>
