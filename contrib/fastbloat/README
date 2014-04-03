@@ -44,6 +44,10 @@ In the above figures, table_len is exact (being based only on the number
 of pages), as are dead_tuple_count, dead_tuple_len, dead_tuple_percent,
 free_space, and free_percent.
 
+(The free space map is not guaranteed to be completely accurate, so
+free_space and free_percent may not agree exactly with the output of
+pgstattuple, as above.)
+
 In the fastbloat output, scanned_percent is the percentage of pages that
 were scanned tuple-by-tuple (the remainder having been skipped, thanks
 to the visibility map). The approximate tuple count is quite close to
